@@ -1,0 +1,4 @@
+Pillow>=10.0
+pystray>=0.19
+winotify>=1.1
+pyinstaller>=6.0
