@@ -283,5 +283,8 @@ class Messenger:
     def get_unread_count(self, from_user_id):
         return self.db.get_unread_count(self.user_id, from_user_id)
 
+    def get_unread_messages(self, from_user_id):
+        return self.db.get_unread_messages(self.user_id, from_user_id)
+
     def mark_as_read(self, from_user_id):
         self.db.mark_as_read(self.user_id, from_user_id)

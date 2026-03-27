@@ -40,6 +40,96 @@ except ImportError:
 
 APP_NAME = 'MB Chat'
 
+# --- Idiomas ---
+LANGS = {
+    'Português': {
+        'menu_messenger': 'Messenger',
+        'menu_tools': 'Ferramentas',
+        'menu_help': 'Ajuda',
+        'menu_change_name': 'Alterar nome...',
+        'menu_preferences': 'Preferências...',
+        'menu_quit': 'Sair',
+        'menu_history': 'Histórico de mensagens',
+        'menu_transfers': 'Transferência de arquivos',
+        'menu_broadcast': 'Mensagem para todos',
+        'menu_about': 'Sobre o',
+        'btn_send': 'Enviar',
+        'btn_file': 'Arquivo',
+        'btn_refresh': 'Atualizar',
+        'status_available': 'Disponível',
+        'status_away': 'Ausente',
+        'status_busy': 'Ocupado',
+        'status_offline': 'Offline',
+        'note_placeholder': 'Digite uma nota',
+        'group_general': '  Geral',
+        'user_default': ' Usuário',
+        'ctx_send_msg': 'Enviar mensagem',
+        'ctx_send_file': 'Enviar arquivo',
+        'ctx_info': 'Ver info',
+        'typing': 'está digitando...',
+        'broadcast_title': 'Mensagem para Todos',
+        'broadcast_label': 'Mensagem:',
+        'broadcast_send': 'Enviar para Todos',
+        'file_select_contact': 'Selecione um contato primeiro.',
+        'file_complete': 'Arquivo salvo em:',
+        'file_error': 'Erro de Transferência',
+        'clear_history': 'Limpar Histórico',
+        'clear_history_confirm': 'Limpar histórico de mensagens com',
+        'history_cleared': 'Histórico limpo.',
+        'history_btn': 'Histórico',
+        'send_btn': 'Enviar',
+        'send_file_btn': 'Enviar Arquivo',
+        'font_btn': 'Fonte',
+        'prefs_language': 'Idioma',
+    },
+    'English': {
+        'menu_messenger': 'Messenger',
+        'menu_tools': 'Tools',
+        'menu_help': 'Help',
+        'menu_change_name': 'Change name...',
+        'menu_preferences': 'Preferences...',
+        'menu_quit': 'Quit',
+        'menu_history': 'Message history',
+        'menu_transfers': 'File transfers',
+        'menu_broadcast': 'Message to all',
+        'menu_about': 'About',
+        'btn_send': 'Send',
+        'btn_file': 'File',
+        'btn_refresh': 'Refresh',
+        'status_available': 'Available',
+        'status_away': 'Away',
+        'status_busy': 'Busy',
+        'status_offline': 'Offline',
+        'note_placeholder': 'Type a note',
+        'group_general': '  General',
+        'user_default': ' User',
+        'ctx_send_msg': 'Send message',
+        'ctx_send_file': 'Send file',
+        'ctx_info': 'View info',
+        'typing': 'is typing...',
+        'broadcast_title': 'Message to All',
+        'broadcast_label': 'Message:',
+        'broadcast_send': 'Send to All',
+        'file_select_contact': 'Select a contact first.',
+        'file_complete': 'File saved to:',
+        'file_error': 'Transfer Error',
+        'clear_history': 'Clear History',
+        'clear_history_confirm': 'Clear message history with',
+        'history_cleared': 'History cleared.',
+        'history_btn': 'History',
+        'send_btn': 'Send',
+        'send_file_btn': 'Send File',
+        'font_btn': 'Font',
+        'prefs_language': 'Language',
+    },
+}
+
+def _t(key):
+    """Get translated string for current language."""
+    return _CURRENT_LANG.get(key, key)
+
+_CURRENT_LANG = LANGS['Português']
+
 # --- Fonts ---
 FONT = ('Segoe UI', 9)
 FONT_BOLD = ('Segoe UI', 9, 'bold')
@@ -305,7 +395,7 @@ class PreferencesWindow(tk.Toplevel):
         self.var_minimize_close = tk.BooleanVar(
             value=db.get_setting('minimize_on_close', '0') == '1')
         self.var_language = tk.StringVar(
-            value=db.get_setting('language', 'Portuguese'))
+            value=db.get_setting('language', 'Português'))
         self.var_sound = tk.BooleanVar(
             value=db.get_setting('sound', '1') == '1')
         self.var_sound_msg = tk.BooleanVar(
@@ -333,9 +423,9 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('multicast', '239.255.100.100'))
         self.var_font_size = tk.StringVar(
             value=db.get_setting('font_size', '9'))
-        saved_theme = db.get_setting('theme', 'Clássico')
+        saved_theme = db.get_setting('theme', 'MB Contabilidade')
         if saved_theme not in THEMES:
-            saved_theme = 'Clássico'
+            saved_theme = 'MB Contabilidade'
         self.var_theme = tk.StringVar(value=saved_theme)
         self.var_enter_send = tk.BooleanVar(
             value=db.get_setting('enter_to_send', '1') == '1')
@@ -414,7 +504,7 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(row, text='Selecionar idioma:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         ttk.Combobox(row, textvariable=self.var_language,
-                     values=['Portuguese', 'English', 'Spanish'],
+                     values=list(LANGS.keys()),
                      state='readonly', font=FONT_SMALL,
                      width=15).pack(side='right')
 
@@ -824,6 +914,13 @@ class PreferencesWindow(tk.Toplevel):
         else:
             _remove_autostart()
 
+        # Apply language
+        lang = self.var_language.get()
+        if lang in LANGS:
+            global _CURRENT_LANG
+            _CURRENT_LANG = LANGS[lang]
+            self.app._rebuild_ui_language()
+
         # Update avatar in main window
         self.app._update_avatar()
 
@@ -1110,8 +1207,9 @@ class ChatWindow(tk.Toplevel):
         toolbar.pack(fill='x')
         toolbar.pack_propagate(False)
 
-        for text, cmd in [('Font', None), ('Send File', self._send_file),
-                          ('History', self._show_history)]:
+        for text, cmd in [(_t('font_btn'), None),
+                          (_t('send_file_btn'), self._send_file),
+                          (_t('history_btn'), self._show_history)]:
             tk.Button(toolbar, text=text, font=FONT_SMALL, bg=BG_HEADER,
                       relief='flat', bd=0, padx=6, command=cmd,
                       cursor='hand2').pack(side='left', padx=1, pady=2)
@@ -1176,8 +1274,13 @@ class ChatWindow(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self._on_close)
 
     def _load_history(self):
-        # Chat abre limpo - historico fica acessivel via botao History
-        # Apenas marca mensagens como lidas
+        # Carrega mensagens nao-lidas ao abrir o chat
+        unreads = self.messenger.get_unread_messages(self.peer_id)
+        for msg in unreads:
+            is_mine = msg['from_user'] != self.peer_id
+            sender = self.app.messenger.display_name if is_mine else self.peer_name
+            self._append_message(sender, msg['content'], is_mine,
+                                 timestamp=msg['timestamp'])
         self.messenger.mark_as_read(self.peer_id)
 
     def _append_message(self, sender, text, is_mine, timestamp=None):
@@ -1198,7 +1301,7 @@ class ChatWindow(tk.Toplevel):
 
     def set_typing(self, is_typing):
         self.lbl_typing.config(
-            text=f'{self.peer_name} está digitando...' if is_typing else '')
+            text=f'{self.peer_name} {_t("typing")}' if is_typing else '')
 
     def _on_enter(self, event):
         if not (event.state & 0x1):
@@ -1297,8 +1400,15 @@ class LanMessengerApp:
         """Inicializacao deferida - roda apos a janela aparecer."""
         self._init_messenger()
 
+        # Aplica idioma salvo
+        saved_lang = self.messenger.db.get_setting('language', 'Português')
+        if saved_lang in LANGS:
+            global _CURRENT_LANG
+            _CURRENT_LANG = LANGS[saved_lang]
+            self._rebuild_ui_language()
+
         # Aplica tema salvo
-        saved_theme = self.messenger.db.get_setting('theme', 'Clássico')
+        saved_theme = self.messenger.db.get_setting('theme', 'MB Contabilidade')
         self.apply_theme(saved_theme)
 
         # Carrega contatos offline salvos no DB
@@ -1340,9 +1450,64 @@ class LanMessengerApp:
             self.root.after(0, func, *args, **kwargs)
         return wrapper
 
+    def _rebuild_ui_language(self):
+        """Atualiza textos da UI apos mudanca de idioma."""
+        # Rebuild menu bar
+        menubar = tk.Menu(self.root, font=FONT)
+
+        m1 = tk.Menu(menubar, tearoff=0, font=FONT)
+        m1.add_command(label=_t('menu_change_name'), command=self._change_name)
+        m1.add_separator()
+        m1.add_command(label=_t('menu_preferences'),
+                       command=self._show_preferences)
+        m1.add_separator()
+        m1.add_command(label=_t('menu_quit'), command=self._quit)
+        menubar.add_cascade(label=_t('menu_messenger'), menu=m1)
+
+        m2 = tk.Menu(menubar, tearoff=0, font=FONT)
+        m2.add_command(label=_t('menu_history'),
+                       command=self._show_all_history)
+        m2.add_command(label=_t('menu_transfers'),
+                       command=self._show_transfers)
+        m2.add_separator()
+        m2.add_command(label=_t('menu_broadcast'),
+                       command=self._send_broadcast)
+        menubar.add_cascade(label=_t('menu_tools'), menu=m2)
+
+        m3 = tk.Menu(menubar, tearoff=0, font=FONT)
+        m3.add_command(label=f'{_t("menu_about")} {APP_NAME}',
+                       command=self._show_about)
+        menubar.add_cascade(label=_t('menu_help'), menu=m3)
+
+        self.root.config(menu=menubar)
+
+        # Update status combo
+        self.status_combo['values'] = [
+            _t('status_available'), _t('status_away'),
+            _t('status_busy'), _t('status_offline')]
+        # Map current internal status to new language
+        rev = {'online': 'status_available', 'away': 'status_away',
+               'busy': 'status_busy', 'invisible': 'status_offline'}
+        current = self.messenger.status
+        self.status_var.set(_t(rev.get(current, 'status_available')))
+
+        # Update note placeholder
+        if not self.note_entry.get().strip() or \
+           self.note_entry.get() in ('Digite uma nota', 'Type a note'):
+            self.note_entry.delete(0, 'end')
+            self.note_entry.insert(0, _t('note_placeholder'))
+
+        # Update group label
+        self.tree.item(self.group_general, text=_t('group_general'))
+
+        # Update context menu
+        self.ctx_menu.entryconfigure(0, label=_t('ctx_send_msg'))
+        self.ctx_menu.entryconfigure(1, label=_t('ctx_send_file'))
+        self.ctx_menu.entryconfigure(3, label=_t('ctx_info'))
+
     def apply_theme(self, theme_name):
         """Aplica um tema em toda a interface."""
-        t = THEMES.get(theme_name, THEMES['Clássico'])
+        t = THEMES.get(theme_name, THEMES['MB Contabilidade'])
         self._theme = t
 
         # --- Main window ---
@@ -1443,23 +1608,23 @@ class LanMessengerApp:
         menubar = tk.Menu(self.root, font=FONT)
 
         m1 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m1.add_command(label='Alterar nome...', command=self._change_name)
+        m1.add_command(label=_t('menu_change_name'), command=self._change_name)
         m1.add_separator()
-        m1.add_command(label='Preferências...', command=self._show_preferences)
+        m1.add_command(label=_t('menu_preferences'), command=self._show_preferences)
         m1.add_separator()
-        m1.add_command(label='Sair', command=self._quit)
-        menubar.add_cascade(label='Messenger', menu=m1)
+        m1.add_command(label=_t('menu_quit'), command=self._quit)
+        menubar.add_cascade(label=_t('menu_messenger'), menu=m1)
 
         m2 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m2.add_command(label='Histórico de mensagens', command=self._show_all_history)
-        m2.add_command(label='Transferência de arquivos', command=self._show_transfers)
+        m2.add_command(label=_t('menu_history'), command=self._show_all_history)
+        m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_separator()
-        m2.add_command(label='Mensagem para todos', command=self._send_broadcast)
-        menubar.add_cascade(label='Tools', menu=m2)
+        m2.add_command(label=_t('menu_broadcast'), command=self._send_broadcast)
+        menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
         m3 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m3.add_command(label=f'Sobre o {APP_NAME}', command=self._show_about)
-        menubar.add_cascade(label='Help', menu=m3)
+        m3.add_command(label=f'{_t("menu_about")} {APP_NAME}', command=self._show_about)
+        menubar.add_cascade(label=_t('menu_help'), menu=m3)
 
         self.root.config(menu=menubar)
 
@@ -1482,7 +1647,7 @@ class LanMessengerApp:
         name_status = tk.Frame(row1, bg=BG_WHITE)
         name_status.pack(side='left', fill='x', expand=True)
 
-        self.lbl_username = tk.Label(name_status, text=' User',
+        self.lbl_username = tk.Label(name_status, text=_t('user_default'),
                                      font=FONT_BOLD, bg=BG_WHITE,
                                      fg=FG_BLACK, anchor='w')
         self.lbl_username.pack(fill='x')
@@ -1490,10 +1655,11 @@ class LanMessengerApp:
         status_row = tk.Frame(name_status, bg=BG_WHITE)
         status_row.pack(fill='x')
 
-        self.status_var = tk.StringVar(value='Available')
+        self.status_var = tk.StringVar(value=_t('status_available'))
         self.status_combo = ttk.Combobox(
             status_row, textvariable=self.status_var,
-            values=['Available', 'Away', 'Busy', 'Offline'],
+            values=[_t('status_available'), _t('status_away'),
+                    _t('status_busy'), _t('status_offline')],
             state='readonly', font=FONT_SMALL, width=12)
         self.status_combo.pack(side='left')
         self.status_combo.bind('<<ComboboxSelected>>',
@@ -1510,7 +1676,7 @@ class LanMessengerApp:
                                    fg=FG_GRAY, relief='flat', bd=2,
                                    insertbackground=FG_GRAY)
         self.note_entry.pack(fill='x', ipady=2)
-        self.note_entry.insert(0, 'Type a note')
+        self.note_entry.insert(0, _t('note_placeholder'))
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
 
@@ -1520,11 +1686,9 @@ class LanMessengerApp:
         toolbar.pack(fill='x', padx=3)
         toolbar.pack_propagate(False)
 
-        for text, cmd in [('Chat', lambda: None),
-                          ('Send', self._send_broadcast),
-                          ('File', self._send_file_toolbar),
-                          ('Add', lambda: None),
-                          ('Refresh', self._refresh_peers)]:
+        for text, cmd in [(_t('btn_send'), self._send_broadcast),
+                          (_t('btn_file'), self._send_file_toolbar),
+                          (_t('btn_refresh'), self._refresh_peers)]:
             tk.Button(toolbar, text=text, font=FONT_SMALL,
                       bg=BG_HEADER, relief='flat', bd=0, padx=8,
                       pady=2, command=cmd, cursor='hand2',
@@ -1587,7 +1751,7 @@ class LanMessengerApp:
                 mid = (y1 + y2) // 2
                 y1, y2 = max(mid - 10, 0), min(mid + 10, h)
             pad = 1 if w <= self._THIN else 2
-            t = self._theme if hasattr(self, '_theme') else THEMES.get('Clássico')
+            t = self._theme if hasattr(self, '_theme') else THEMES.get('MB Contabilidade')
             thumb_color = t.get('fg_gray', '#888888')
             c.create_rectangle(pad, y1 + 2, w - pad, y2 - 2,
                                fill=thumb_color, outline='', width=0)
@@ -1644,7 +1808,7 @@ class LanMessengerApp:
         self._status_dots = {}
         self._create_status_dots()
 
-        self.group_general = self.tree.insert('', 'end', text='  General',
+        self.group_general = self.tree.insert('', 'end', text=_t('group_general'),
                                               open=True, tags=('group',))
         self.tree.tag_configure('group', background=BG_GROUP,
                                 foreground=FG_WHITE, font=FONT_BOLD)
@@ -1658,12 +1822,12 @@ class LanMessengerApp:
         self.tree.bind('<Button-3>', self._on_tree_right)
 
         self.ctx_menu = tk.Menu(self.root, tearoff=0, font=FONT)
-        self.ctx_menu.add_command(label='Enviar mensagem',
+        self.ctx_menu.add_command(label=_t('ctx_send_msg'),
                                   command=self._ctx_chat)
-        self.ctx_menu.add_command(label='Enviar arquivo',
+        self.ctx_menu.add_command(label=_t('ctx_send_file'),
                                   command=self._ctx_file)
         self.ctx_menu.add_separator()
-        self.ctx_menu.add_command(label='Ver info', command=self._ctx_info)
+        self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)
 
 
     def _create_status_dots(self):
@@ -1756,18 +1920,21 @@ class LanMessengerApp:
 
     # --- Note ---
     def _note_focus_in(self, e):
-        if self.note_entry.get() == 'Type a note':
+        if self.note_entry.get() in ('Digite uma nota', 'Type a note',
+                                        _t('note_placeholder')):
             self.note_entry.delete(0, 'end')
             self.note_entry.config(fg=FG_BLACK)
 
     def _note_focus_out(self, e):
         if not self.note_entry.get().strip():
-            self.note_entry.insert(0, 'Type a note')
+            self.note_entry.insert(0, _t('note_placeholder'))
             self.note_entry.config(fg=FG_GRAY)
 
     def _on_status_change(self, e=None):
-        m = {'Available': 'online', 'Away': 'away',
-             'Busy': 'busy', 'Offline': 'invisible'}
+        m = {_t('status_available'): 'online',
+             _t('status_away'): 'away',
+             _t('status_busy'): 'busy',
+             _t('status_offline'): 'invisible'}
         self.messenger.change_status(m.get(self.status_var.get(), 'online'))
 
     # --- Tree ---
@@ -2092,15 +2259,23 @@ class LanMessengerApp:
             show_messages()
 
     def _show_transfers(self):
-        messagebox.showinfo('Transferências', 'Nenhuma transferência ativa.')
+        download_dir = self.messenger.db.get_setting(
+            'download_dir',
+            os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
+        os.makedirs(download_dir, exist_ok=True)
+        if os.name == 'nt':
+            os.startfile(download_dir)
+        else:
+            import subprocess
+            subprocess.Popen(['xdg-open', download_dir])
 
     def _send_broadcast(self):
         win = tk.Toplevel(self.root)
-        win.title('Mensagem para Todos')
+        win.title(_t('broadcast_title'))
         win.transient(self.root)
         _center_window(win, 400, 200)
 
-        tk.Label(win, text='Mensagem:', font=FONT).pack(padx=10, pady=10, anchor='w')
+        tk.Label(win, text=f'{_t("broadcast_label")}', font=FONT).pack(padx=10, pady=10, anchor='w')
         txt = tk.Text(win, font=FONT, height=4)
         txt.pack(fill='both', expand=True, padx=10)
 
@@ -2111,13 +2286,13 @@ class LanMessengerApp:
                     self.messenger.send_message(uid, c)
                 win.destroy()
 
-        tk.Button(win, text='Enviar para Todos', font=FONT,
+        tk.Button(win, text=_t('broadcast_send'), font=FONT,
                   command=send).pack(pady=10)
 
     def _send_file_toolbar(self):
         uid = self._get_selected_peer()
         if not uid:
-            messagebox.showinfo('Enviar Arquivo', 'Selecione um contato primeiro.')
+            messagebox.showinfo(_t('send_file_btn'), _t('file_select_contact'))
             return
         fp = filedialog.askopenfilename(title='Enviar arquivo')
         if fp:
@@ -2185,18 +2360,14 @@ class LanMessengerApp:
 
     def _on_file_incoming(self, file_id, from_user, display_name,
                           filename, filesize):
-        sz = _format_size(filesize)
-        if messagebox.askyesno('Arquivo Recebido',
-                f'{display_name} quer enviar:\n{filename} ({sz})\n\nAceitar?'):
-            self.messenger.accept_file(file_id)
-            dlg = FileTransferDialog(
-                self.root, file_id, filename, display_name,
-                direction='receive', filesize=filesize,
-                on_cancel=lambda fid: self.messenger.decline_file(fid)
-            )
-            self._file_dialogs[file_id] = dlg
-        else:
-            self.messenger.decline_file(file_id)
+        # Auto-aceitar (como LAN Messenger)
+        self.messenger.accept_file(file_id)
+        dlg = FileTransferDialog(
+            self.root, file_id, filename, display_name,
+            direction='receive', filesize=filesize,
+            on_cancel=lambda fid: self.messenger.decline_file(fid)
+        )
+        self._file_dialogs[file_id] = dlg
 
     def _on_file_progress(self, file_id, transferred, total):
         if file_id in self._file_dialogs:
@@ -2207,13 +2378,13 @@ class LanMessengerApp:
             self._file_dialogs[file_id].finish()
             del self._file_dialogs[file_id]
         if filepath:
-            messagebox.showinfo('Completo', f'Arquivo salvo em:\n{filepath}')
+            messagebox.showinfo('OK', f'{_t("file_complete")}\n{filepath}')
 
     def _on_file_error(self, file_id, error):
         if file_id in self._file_dialogs:
             self._file_dialogs[file_id].finish()
             del self._file_dialogs[file_id]
-        messagebox.showerror('Erro de Transferência', error)
+        messagebox.showerror(_t('file_error'), error)
 
     def _show_toast(self, from_user, content):
         """Mostra notificacao toast nativa do Windows (clicavel via winotify)."""

@@ -197,6 +197,14 @@ class Database:
             return [dict(r) for r in rows]
         return [dict(r) for r in reversed(rows)]
 
+    def get_unread_messages(self, local_user_id, from_user_id):
+        rows = self.conn.execute("""
+            SELECT * FROM messages
+            WHERE from_user=? AND to_user=? AND is_read=0
+            ORDER BY timestamp ASC
+        """, (from_user_id, local_user_id)).fetchall()
+        return [dict(r) for r in rows]
+
     def get_unread_count(self, local_user_id, from_user_id):
         row = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM messages
