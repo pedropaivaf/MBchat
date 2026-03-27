@@ -27,7 +27,7 @@ def _add_firewall_rule():
         result = subprocess.run(
             ['netsh', 'advfirewall', 'firewall', 'show', 'rule',
              'name=MBChat'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=3,
             creationflags=0x08000000  # CREATE_NO_WINDOW
         )
         if 'MBChat' in result.stdout:
@@ -43,15 +43,15 @@ def _add_firewall_rule():
                  f'name=MBChat', 'dir=in', 'action=allow',
                  f'protocol={proto}', f'localport={ports}',
                  'profile=any'],
-                capture_output=True, timeout=10,
+                capture_output=True, timeout=3,
                 creationflags=0x08000000
             )
     except Exception:
         pass
 
 
-# Tenta configurar firewall na importacao
-_add_firewall_rule()
+# Configura firewall em background (nao bloqueia startup)
+threading.Thread(target=_add_firewall_rule, daemon=True).start()
 MULTICAST_GROUP = '239.255.100.200'
 BROADCAST_ADDR = '255.255.255.255'
 BUFFER_SIZE = 65536
@@ -162,7 +162,7 @@ class UDPDiscovery:
                                        socket.SO_RCVBUF, 262144)
         except Exception:
             pass
-        self._sock_recv.settimeout(1.0)
+        self._sock_recv.settimeout(0.3)
 
         # Sender socket
         self._sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
@@ -345,7 +345,7 @@ class TCPServer:
             except (PermissionError, OSError):
                 continue
         self._server.listen(100)
-        self._server.settimeout(1.0)
+        self._server.settimeout(0.3)
 
         self._accept_thread = threading.Thread(target=self._accept_loop,
                                                daemon=True)
@@ -564,7 +564,7 @@ class FileReceiver:
             except (PermissionError, OSError):
                 continue
         self._server.listen(100)
-        self._server.settimeout(1.0)
+        self._server.settimeout(0.3)
 
         t = threading.Thread(target=self._accept_loop, daemon=True)
         t.start()

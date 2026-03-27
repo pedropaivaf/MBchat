@@ -1271,14 +1271,14 @@ class LanMessengerApp:
                 self.root.iconbitmap(self._icon_path)
                 if HAS_PIL:
                     _ico_img = Image.open(self._icon_path)
-                    _ico_img = _ico_img.resize((256, 256), Image.LANCZOS)
+                    _ico_img = _ico_img.resize((48, 48), Image.LANCZOS)
                     self._icon_photo = ImageTk.PhotoImage(_ico_img)
                     self.root.iconphoto(True, self._icon_photo)
             except Exception:
                 pass
 
         # Posiciona no canto direito após a janela estar visível
-        self.root.after(50, self._position_right)
+        self.root.after(10, self._position_right)
 
         self.chat_windows = {}
         self.peer_items = {}
@@ -1288,8 +1288,14 @@ class LanMessengerApp:
         self._last_notif_peer = None
 
         self._build_ui()
-        self._init_messenger()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+
+        # Init pesado deferido: janela aparece rapido, depois carrega rede/DB/tray
+        self.root.after_idle(self._deferred_init)
+
+    def _deferred_init(self):
+        """Inicializacao deferida - roda apos a janela aparecer."""
+        self._init_messenger()
 
         # Aplica tema salvo
         saved_theme = self.messenger.db.get_setting('theme', 'Clássico')
@@ -1300,7 +1306,7 @@ class LanMessengerApp:
 
         # Inicia tray icon para notificacoes
         if HAS_TRAY and HAS_PIL:
-            self.root.after(500, self._start_tray)
+            self.root.after(50, self._start_tray)
 
     def _position_right(self):
         """Posiciona a janela no canto direito da tela, centralizada na vertical."""
@@ -2304,9 +2310,12 @@ class LanMessengerApp:
 
     def _restore_and_open(self, peer=None):
         self.root.deiconify()
+        self.root.state('normal')
         self.root.lift()
         self.root.focus_force()
-        if peer and peer in self.peer_info:
+        self.root.attributes('-topmost', True)
+        self.root.after(200, lambda: self.root.attributes('-topmost', False))
+        if peer and peer in self.peer_info and hasattr(self, 'messenger'):
             self._open_chat(peer)
 
     def _tray_quit(self, icon=None, item=None):
@@ -2419,7 +2428,7 @@ def _check_single_instance():
     Retorna True se esta e a unica instancia, False se ja existe outra."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
+        sock.settimeout(0.3)  # loopback e rapido, 300ms basta
         sock.connect(('127.0.0.1', SINGLE_INSTANCE_PORT))
         sock.sendall(b'SHOW')
         sock.close()
@@ -2437,7 +2446,7 @@ def _start_instance_listener(app):
     except OSError:
         return
     srv.listen(5)
-    srv.settimeout(1.0)
+    srv.settimeout(0.2)  # ciclo rapido para responder notificacoes
 
     def listen():
         while True:
@@ -2468,7 +2477,7 @@ def main():
                 peer_id = arg.split('/open/')[-1].strip('/')
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(2)
+                sock.settimeout(0.5)  # loopback rapido
                 sock.connect(('127.0.0.1', SINGLE_INSTANCE_PORT))
                 cmd = f'OPEN:{peer_id}' if peer_id else 'SHOW'
                 sock.sendall(cmd.encode())
