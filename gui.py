@@ -2716,13 +2716,98 @@ class GroupChatWindow(tk.Toplevel):
         self._btn_toggle.pack(side='right')
         _add_hover(self._btn_toggle, '#1a3f7a', '#2451a0')
 
-        # ===== Body (chat + panel) =====
-        self._body = tk.Frame(self, bg=t.get('bg_chat', '#f5f7fa'))
-        self._body.pack(fill='both', expand=True)
+        # ===== Input area (pack bottom FIRST so it gets space) =====
+        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        input_outer.pack(side='bottom', fill='x', padx=8, pady=(2, 6))
+        input_inner = tk.Frame(input_outer, bg=t.get('bg_input', '#f7fafc'))
+        input_inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        # Botao Enviar a direita, preenche toda a altura
+        btn_send = tk.Button(input_inner, text=_t('send_btn'),
+                             font=('Segoe UI', 11, 'bold'),
+                             bg='#0f2a5c', fg='#ffffff',
+                             relief='flat', bd=0, cursor='hand2',
+                             padx=22, pady=8,
+                             activebackground='#1a3f7a',
+                             activeforeground='#ffffff',
+                             command=self._send_message)
+        btn_send.pack(side='right', fill='y', padx=(4, 4), pady=0)
+        _add_hover(btn_send, '#0f2a5c', '#1a3f7a')
+
+        # Coluna esquerda: toolbar em cima + texto embaixo
+        left_frame = tk.Frame(input_inner, bg=t.get('bg_input', '#f7fafc'))
+        left_frame.pack(side='left', fill='both', expand=True)
+
+        # Toolbar compacta dentro do input
+        toolbar = tk.Frame(left_frame, bg=t.get('bg_input', '#f7fafc'))
+        toolbar.pack(side='top', fill='x', padx=4, pady=(4, 0))
+
+        # Emoji button
+        _emoji_img = _render_color_emoji('\U0001f60a', 18)
+        if _emoji_img:
+            self._toolbar_emoji_img = _emoji_img
+            btn_emoji = tk.Button(toolbar, image=_emoji_img, relief='flat',
+                                  bd=0, cursor='hand2',
+                                  bg=t.get('bg_input', '#f7fafc'),
+                                  activebackground='#e2e8f0',
+                                  command=self._show_emoji_picker)
+        else:
+            btn_emoji = tk.Button(toolbar, text='\U0001f60a',
+                                  font=('Segoe UI', 10), relief='flat',
+                                  bd=0, cursor='hand2',
+                                  bg=t.get('bg_input', '#f7fafc'),
+                                  command=self._show_emoji_picker)
+        btn_emoji.pack(side='left', padx=2)
+
+        # Font button
+        btn_font = tk.Button(toolbar, text='A', font=('Segoe UI', 10, 'bold'),
+                             relief='flat', bd=0, cursor='hand2',
+                             bg=t.get('bg_input', '#f7fafc'), fg='#4a5568',
+                             activebackground='#e2e8f0',
+                             command=self._change_font)
+        btn_font.pack(side='left', padx=2)
+
+        # Attach file button
+        _attach_ico = _create_mdl2_icon_static('\uE723', 18, '#4a5568')
+        if _attach_ico:
+            self._toolbar_attach_img = _attach_ico
+            btn_attach = tk.Button(toolbar, image=_attach_ico, relief='flat',
+                                   bd=0, cursor='hand2',
+                                   bg=t.get('bg_input', '#f7fafc'),
+                                   activebackground='#e2e8f0',
+                                   command=self._send_file)
+        else:
+            btn_attach = tk.Button(toolbar, text='\U0001f4ce',
+                                   font=('Segoe UI', 10), relief='flat',
+                                   bd=0, cursor='hand2',
+                                   bg=t.get('bg_input', '#f7fafc'),
+                                   activebackground='#e2e8f0',
+                                   command=self._send_file)
+        btn_attach.pack(side='left', padx=2)
+
+        # Campo de texto
+        self.entry = tk.Text(left_frame, font=('Segoe UI', 11),
+                             bg=t.get('bg_input', '#f7fafc'),
+                             fg=t.get('fg_black', '#1a202c'),
+                             relief='flat', bd=0, height=3,
+                             wrap='word', padx=8, pady=4,
+                             insertbackground=t.get('fg_black', '#1a202c'))
+        self.entry.pack(fill='both', expand=True, padx=1, pady=(0, 2))
+        self.entry.bind('<Return>', self._on_enter)
+        self.entry.bind('<Shift-Return>', lambda e: None)
+        self.entry.focus_set()
+
+        # ===== Separator =====
+        tk.Frame(self, bg='#e2e8f0', height=1).pack(side='bottom', fill='x')
+
+        # ===== Body (chat + panel) com splitter arrastavel =====
+        self._paned = tk.PanedWindow(self, orient='horizontal',
+                                      sashwidth=6, sashrelief='raised',
+                                      bg='#e2e8f0', bd=0)
+        self._paned.pack(fill='both', expand=True)
 
         # Chat area (left)
-        chat_frame = tk.Frame(self._body, bg=t.get('bg_chat', '#f5f7fa'))
-        chat_frame.pack(side='left', fill='both', expand=True)
+        chat_frame = tk.Frame(self._paned, bg=t.get('bg_chat', '#f5f7fa'))
 
         self.chat_text = tk.Text(chat_frame, font=('Segoe UI', 10),
                                   bg=t.get('bg_chat', '#f5f7fa'),
@@ -2751,11 +2836,7 @@ class GroupChatWindow(tk.Toplevel):
                                      foreground=t.get('fg_msg', '#1a202c'))
 
         # ===== Participants panel (right) =====
-        self._panel_sep = tk.Frame(self._body, bg='#e2e8f0', width=1)
-        self._panel_sep.pack(side='left', fill='y')
-
-        self._panel = tk.Frame(self._body, bg='#f8fafc', width=190)
-        self._panel.pack(side='left', fill='y')
+        self._panel = tk.Frame(self._paned, bg='#f8fafc', width=250)
         self._panel.pack_propagate(False)
 
         # Panel header
@@ -2786,81 +2867,18 @@ class GroupChatWindow(tk.Toplevel):
         self._panel_canvas.bind('<MouseWheel>',
             lambda e: self._panel_canvas.yview_scroll(-1*(e.delta//120), 'units'))
 
-        # ===== Separator =====
-        tk.Frame(self, bg='#e2e8f0', height=1).pack(fill='x')
-
-        # ===== Toolbar + Input =====
-        toolbar = tk.Frame(self, bg='#f5f7fa')
-        toolbar.pack(fill='x', padx=8, pady=(4, 0))
-
-        # Emoji button
-        _emoji_img = _render_color_emoji('\U0001f60a', 18)
-        if _emoji_img:
-            self._toolbar_emoji_img = _emoji_img
-            btn_emoji = tk.Button(toolbar, image=_emoji_img, relief='flat',
-                                  bd=0, cursor='hand2', bg='#f5f7fa',
-                                  activebackground='#e2e8f0',
-                                  command=self._show_emoji_picker)
-        else:
-            btn_emoji = tk.Button(toolbar, text='\U0001f60a',
-                                  font=('Segoe UI', 10), relief='flat',
-                                  bd=0, cursor='hand2', bg='#f5f7fa',
-                                  command=self._show_emoji_picker)
-        btn_emoji.pack(side='left', padx=2)
-
-        # Font button
-        btn_font = tk.Button(toolbar, text='A', font=('Segoe UI', 10, 'bold'),
-                             relief='flat', bd=0, cursor='hand2',
-                             bg='#f5f7fa', fg='#4a5568',
-                             activebackground='#e2e8f0',
-                             command=self._change_font)
-        btn_font.pack(side='left', padx=2)
-
-        # Attach file button
-        btn_attach = tk.Button(toolbar, text='\U0001f4ce',
-                               font=('Segoe UI', 10), relief='flat',
-                               bd=0, cursor='hand2', bg='#f5f7fa',
-                               activebackground='#e2e8f0',
-                               command=self._send_file)
-        btn_attach.pack(side='left', padx=2)
-
-        # Input area
-        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(fill='x', padx=8, pady=(2, 6))
-        input_inner = tk.Frame(input_outer, bg=t.get('bg_input', '#f7fafc'))
-        input_inner.pack(fill='x', padx=1, pady=1)
-
-        self.entry = tk.Text(input_inner, font=('Segoe UI', 10),
-                             bg=t.get('bg_input', '#f7fafc'),
-                             fg=t.get('fg_black', '#1a202c'),
-                             relief='flat', bd=0, height=2,
-                             wrap='word', padx=6, pady=4,
-                             insertbackground=t.get('fg_black', '#1a202c'))
-        self.entry.pack(side='left', fill='both', expand=True)
-        self.entry.bind('<Return>', self._on_enter)
-        self.entry.bind('<Shift-Return>', lambda e: None)
-        self.entry.focus_set()
-
-        btn_send = tk.Button(input_inner, text='Enviar',
-                             font=('Segoe UI', 9, 'bold'),
-                             bg='#0f2a5c', fg='#ffffff',
-                             relief='flat', bd=0, cursor='hand2',
-                             padx=12, pady=4,
-                             activebackground='#1a3f7a',
-                             activeforeground='#ffffff',
-                             command=self._send_message)
-        btn_send.pack(side='right', padx=(4, 2), pady=2)
+        # Add panes to PanedWindow
+        self._paned.add(chat_frame, minsize=300)
+        self._paned.add(self._panel, minsize=150, width=250)
 
     # ===== Panel toggle =====
     def _toggle_panel(self):
         if self._panel_visible:
-            self._panel.pack_forget()
-            self._panel_sep.pack_forget()
+            self._paned.forget(self._panel)
             self._btn_toggle.config(text='\u25c0')
             self._panel_visible = False
         else:
-            self._panel_sep.pack(side='left', fill='y')
-            self._panel.pack(side='left', fill='y')
+            self._paned.add(self._panel, minsize=150, width=250)
             self._btn_toggle.config(text='\u25b6')
             self._panel_visible = True
 
@@ -3252,7 +3270,6 @@ class GroupChatWindow(tk.Toplevel):
         def apply():
             new_size = size_var.get()
             self.chat_text.tag_configure('msg', font=('Segoe UI', new_size))
-            self.entry.configure(font=('Segoe UI', new_size))
             win.destroy()
 
         tk.Button(win, text='OK', font=FONT, width=8,
@@ -3362,6 +3379,14 @@ class LanMessengerApp:
     def _deferred_init(self):
         """Inicializacao deferida - roda apos a janela aparecer."""
         self._init_messenger()
+
+        # Carregar nota salva do banco
+        saved_note = self.messenger.note
+        if saved_note:
+            self.note_entry.delete(0, 'end')
+            self.note_entry.insert(0, saved_note)
+            self.note_entry.config(fg='#ffffff')
+            self._last_saved_note = saved_note
 
         # Aplica idioma salvo
         saved_lang = self.messenger.db.get_setting('language', 'Português')
@@ -3723,14 +3748,8 @@ class LanMessengerApp:
                                    fg='#c8d6e5', relief='flat', bd=2,
                                    insertbackground='#c8d6e5')
         self.note_entry.pack(fill='x', ipady=2)
-        # Carregar nota salva do banco
-        saved_note = self.messenger.note
-        if saved_note:
-            self.note_entry.insert(0, saved_note)
-            self.note_entry.config(fg='#ffffff')
-        else:
-            self.note_entry.insert(0, _t('note_placeholder'))
-        self._last_saved_note = saved_note
+        self.note_entry.insert(0, _t('note_placeholder'))
+        self._last_saved_note = ''
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
         self.note_entry.bind('<Return>', self._note_save)
@@ -4665,7 +4684,7 @@ class LanMessengerApp:
         toolbar.pack(fill='x', pady=(0, 6))
 
         # Font size pill buttons
-        tk.Label(toolbar, text='Tamanho:', font=('Segoe UI', 8),
+        tk.Label(toolbar, text='Tamanho da Fonte:', font=('Segoe UI', 8),
                  bg='#f5f7fa', fg='#64748b').pack(side='left', padx=(0, 4))
         pill_frame = tk.Frame(toolbar, bg='#e2e8f0')
         pill_frame.pack(side='left')
@@ -4722,7 +4741,6 @@ class LanMessengerApp:
             ep = tk.Toplevel(win)
             ep.title('')
             ep.overrideredirect(True)
-            ep.grab_set()
             ep.configure(bg='#e2e8f0')
             _center_window(ep, 310, 230)
             emojis = ['\U0001f600', '\U0001f601', '\U0001f602', '\U0001f603',

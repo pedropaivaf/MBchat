@@ -33,12 +33,12 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 
 ## Modulos
 
-### gui.py (~4800 linhas) - Apresentacao
+### gui.py (~5200 linhas) - Apresentacao
 
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
 - **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico, emojis coloridos)
-- **GroupChatWindow**: Chat em grupo estilo LAN Messenger (painel lateral de participantes com avatar/nome/nota, colapsavel, emoji colorido, fonte, envio de arquivo para grupo, adicionar participantes)
+- **GroupChatWindow**: Chat em grupo estilo LAN Messenger (PanedWindow com splitter arrastavel, painel lateral de participantes com avatar/nome/nota colapsavel, emoji colorido, fonte, envio de arquivo para grupo, adicionar participantes, layout bottom-first para input)
 - **FileTransferDialog**: Dialogo de progresso de transferencia (estilo LAN Messenger)
 - **PreferencesWindow**: 9 abas de configuracao (sidebar moderna com hover)
 - **AccountWindow**: Janela de perfil (nome + avatar)
@@ -46,6 +46,7 @@ Classes principais:
 
 Funcoes utilitarias module-level:
 - **_render_color_emoji(char, size)**: Renderiza emoji colorido via PIL + seguiemj.ttf
+- **_create_mdl2_icon_static(char, size, color)**: Renderiza icone Segoe MDL2 Assets via PIL
 - **_add_hover(widget, normal_bg, hover_bg)**: Adiciona efeito hover a qualquer widget
 - **_center_window(win, w, h)**: Centraliza janela na tela
 - **_get_icon_path()**: Localiza mbchat.ico em assets/ (dev ou frozen)
@@ -62,7 +63,8 @@ Mecanismos importantes:
 - **Canvas scrollavel**: Pattern com create_window + Configure bind para largura total
 - **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
 - **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
-- **Bate Papo**: Dialog de selecao de contatos + GroupChatWindow
+- **Bate Papo**: Dialog de selecao de contatos + GroupChatWindow com PanedWindow
+- **Icones MDL2**: _create_mdl2_icon_static() para icones profissionais (Segoe MDL2 Assets)
 - **Nota pessoal**: Entry no header navy, salva no DB local, sincroniza via UDP announce em tempo real
 - **Popups dismissaveis**: Todas as janelas popup fecham com Escape e emoji pickers fecham ao clicar fora
 

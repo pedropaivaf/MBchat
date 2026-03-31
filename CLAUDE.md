@@ -54,7 +54,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
 - Nota pessoal visivel para todos em tempo real (persistida no banco local, sincronizada via UDP)
 - Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos
-- Bate Papo em grupo estilo LAN Messenger (painel participantes com avatar/nome/nota, colapsavel, emoji, fonte, arquivo)
+- Bate Papo em grupo estilo LAN Messenger (PanedWindow com splitter arrastavel, painel participantes com avatar/nome/nota, colapsavel, emoji, fonte, arquivo)
 - Transferencia de arquivos ponto-a-ponto e para grupos
 - Historico com busca e filtro por data
 - 3 temas visuais + UI modernizada (flat design, hover effects)
@@ -71,9 +71,11 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Chat abre limpo (sem historico). Historico acessivel via botao History.
 - Contatos offline persistem no DB e aparecem com bolinha cinza.
 - Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow).
+- Icones MDL2: usar `_create_mdl2_icon_static()` (module-level) para icones Segoe MDL2 Assets.
 - Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce.
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
+- Layout GroupChatWindow: input/toolbar packam com side='bottom' ANTES do PanedWindow para garantir espaco.
 
 ## Tipos de mensagem de rede
 
@@ -93,7 +95,7 @@ Sem suite de testes automatizados. Testar manualmente:
 5. Verificar notificacao clicavel (deve abrir o chat)
 6. Fechar e reabrir (deve restaurar, nao criar novo processo)
 7. Transmitir Mensagem: emojis coloridos, layout responsivo
-8. Bate Papo: criar grupo, enviar/receber mensagens de grupo
+8. Bate Papo: criar grupo, splitter arrastavel, enviar/receber mensagens de grupo
 9. Preferencias: sidebar moderna, botoes com hover
 
 ## Workflow obrigatorio para TODA alteracao

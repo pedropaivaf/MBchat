@@ -1,27 +1,46 @@
 # MB Chat
 
 Mensageiro de rede local (LAN) para comunicacao instantanea entre computadores na mesma rede.
-Desenvolvido para **MB Contabilidade**. Reescrito em Python com interface tkinter.
+Desenvolvido por **Pedro Paiva** para **MB Contabilidade**. Reescrito em Python com interface tkinter.
 
 ## Funcionalidades
 
+### Mensagens
 - Descoberta automatica de computadores na rede (UDP multicast + broadcast)
-- Mensagens instantaneas com indicador de digitacao e emojis coloridos
-- **Nota pessoal** visivel para todos em tempo real (persistida no banco local)
-- **Transmitir Mensagem** (broadcast) para multiplos contatos selecionados
-- **Bate Papo em grupo** estilo LAN Messenger (mesh TCP, sem servidor central)
-  - Painel lateral de participantes com avatar, nome e nota (colapsavel)
-  - Emoji colorido, fonte e envio de arquivo para o grupo
-  - Adicionar participantes a grupos existentes
-- Transferencia de arquivos ponto-a-ponto e para grupos com dialogo de progresso
+- Mensagens instantaneas com indicador de digitacao
+- Emojis coloridos renderizados via PIL (seguiemj.ttf)
+- **Nota pessoal** visivel para todos em tempo real (persistida no banco local, sincronizada via UDP)
 - Historico ilimitado de mensagens (SQLite local) com pesquisa e filtro por data
+
+### Transmitir Mensagem (Broadcast)
+- Envio de mensagem para multiplos contatos selecionados
+- Suporte a emojis coloridos no input e no picker
+- Seletor de fonte e tamanho
+
+### Bate Papo em Grupo
+- Chat em grupo estilo LAN Messenger (topologia mesh TCP, sem servidor central)
+- Painel lateral de participantes com avatar, nome e nota pessoal (colapsavel)
+- Splitter arrastavel entre chat e painel de participantes
+- Emoji colorido, alteracao de fonte e envio de arquivo para o grupo
+- Adicionar participantes a grupos existentes
+
+### Transferencia de Arquivos
+- Envio ponto-a-ponto com dialogo de progresso estilo LAN Messenger
+- Envio de arquivo para grupo (envia individualmente para cada membro)
+- Aceitar/recusar transferencias recebidas
+
+### Interface
 - 3 temas visuais: Classico, Night Mode, MB Contabilidade
 - UI moderna com design flat, hover effects e bordas suaves
 - Sistema de avatares (12 presets + foto personalizada)
+- Bolinhas de status: verde (online), amarela (away), vermelha (busy), cinza (offline)
+- Contatos offline persistidos (mostra PCs ja vistos como "offline")
+- Popups fecham com Escape, emoji pickers fecham ao clicar fora
+- Icones MDL2 (Segoe MDL2 Assets) para toolbar profissional
+
+### Sistema
 - Notificacoes Windows 10/11 clicaveis (winotify) - abre direto no chat
 - Notificacoes sonoras
-- Contatos offline persistidos (mostra PCs ja vistos como "offline" com bolinha cinza)
-- Bolinhas de status: verde (online), amarela (away), vermelha (busy), cinza (offline)
 - Instancia unica - clicar no exe restaura a janela existente
 - System tray com minimizar ao fechar
 - Preferencias completas com 9 categorias
@@ -117,3 +136,7 @@ Se falhar, adicione manualmente:
 netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=UDP localport=50100,50101,50102 profile=any
 netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=TCP localport=50100,50101,50102 profile=any
 ```
+
+## Autor
+
+Desenvolvido por **Pedro Paiva** para MB Contabilidade.
