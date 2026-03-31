@@ -10,7 +10,8 @@ Arquitetura em 4 camadas com separacao clara de responsabilidades:
 |         Apresentacao (View)                  |
 |   tkinter: janelas, menus, widgets,          |
 |   treeview de contatos, chat windows,        |
-|   file transfer dialogs, system tray         |
+|   group chat, broadcast, file transfer,      |
+|   emoji colorido, system tray                |
 +----------------------+-----------------------+
                        | callbacks (_safe wrapper)
 +----------------------v-----------------------+
@@ -18,6 +19,7 @@ Arquitetura em 4 camadas com separacao clara de responsabilidades:
 |         Controller / Orquestrador            |
 |   Liga rede <-> banco <-> GUI               |
 |   Gerencia estado do usuario local           |
+|   Gerencia grupos (mesh topology)            |
 +--------+------------------------+------------+
          |                        |
 +--------v--------+   +-----------v-----------+
@@ -31,15 +33,22 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 
 ## Modulos
 
-### gui.py (~2500 linhas) - Apresentacao
+### gui.py (~4800 linhas) - Apresentacao
 
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
-- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico)
+- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico, emojis coloridos)
+- **GroupChatWindow**: Chat em grupo (header navy, lista de participantes, envio mesh)
 - **FileTransferDialog**: Dialogo de progresso de transferencia (estilo LAN Messenger)
-- **PreferencesWindow**: 9 abas de configuracao
+- **PreferencesWindow**: 9 abas de configuracao (sidebar moderna com hover)
 - **AccountWindow**: Janela de perfil (nome + avatar)
 - **SoundPlayer**: Sons de notificacao cross-platform
+
+Funcoes utilitarias module-level:
+- **_render_color_emoji(char, size)**: Renderiza emoji colorido via PIL + seguiemj.ttf
+- **_add_hover(widget, normal_bg, hover_bg)**: Adiciona efeito hover a qualquer widget
+- **_center_window(win, w, h)**: Centraliza janela na tela
+- **_get_icon_path()**: Localiza mbchat.ico em assets/ (dev ou frozen)
 
 Mecanismos importantes:
 - **Temas**: 3 temas (Classico, Night Mode, MB Contabilidade) com apply_theme() recursivo
@@ -49,15 +58,22 @@ Mecanismos importantes:
 - **Notificacoes**: winotify com protocolo mbchat:// para click-to-open
 - **System tray**: pystray com minimize-on-close
 - **Thread safety**: _safe() wrapper com root.after(0, callback)
+- **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf)
+- **Canvas scrollavel**: Pattern com create_window + Configure bind para largura total
+- **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
+- **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
+- **Bate Papo**: Dialog de selecao de contatos + GroupChatWindow
 
-### messenger.py (~290 linhas) - Controller
+### messenger.py (~360 linhas) - Controller
 
 Classe **Messenger** - orquestra a comunicacao entre camadas:
 - Inicializa Database, UDPDiscovery, TCPServer, FileReceiver
 - Gera user_id unico via MAC+hostname (generate_user_id())
 - Metodos de acao: send_message(), send_file(), change_status(), change_name()
+- Metodos de grupo: send_group_invite(), send_group_message()
 - Recebe eventos da rede e repassa para GUI via callbacks
 - Gerencia transferencias de arquivo (FileSender pool, FileReceiver)
+- Gerencia estado dos grupos (_groups dict com membros)
 
 ### network.py (~680 linhas) - Camada de Rede
 
@@ -75,8 +91,10 @@ Classes de I/O independentes da GUI:
 Protocolo:
 - Frame TCP: [4 bytes big-endian length][JSON payload UTF-8]
 - Tipos UDP: announce, depart, ping, pong
-- Tipos TCP: message, typing, status, file_request, file_accept, file_decline, file_cancel, ack
+- Tipos TCP: message, typing, status, file_request, file_accept, file_decline, file_cancel, ack, group_invite, group_message
 - File transfer: header JSON -> OKAY/DENY -> raw data chunks
+- Group invite: inclui group_id, group_name, lista de membros (uid, display_name, ip)
+- Group message: inclui group_id, from_user, display_name, content, timestamp
 
 Seguranca de rede:
 - Auto-configuracao de firewall Windows via netsh
@@ -96,20 +114,17 @@ Tabelas:
 
 Thread-safety: threading.local() para conexao por thread, PRAGMA journal_mode=WAL.
 
-### create_icon.py (~120 linhas) - Gerador de Icone
+### create_icon.py (~35 linhas) - Gerador de Icone
 
-Reproduz o logo corporativo MB Contabilidade:
-- Fundo azul escuro (#0c1a3d) com cantos arredondados
-- "MB" branco em fonte bold (Arial Bold / Impact)
-- Faixa vermelha diagonal (marca corporativa)
-- Faixa azul diagonal paralela (acento)
-- Supersampling ate 20x para tamanhos pequenos (16px, 24px)
-- Gera ICO com 7 resolucoes: 16, 24, 32, 48, 64, 128, 256
+Gera mbchat.ico a partir de mbchat_icon.png (1024x1024 em assets/):
+- Carrega PNG, converte para RGBA
+- Redimensiona com LANCZOS para 7 resolucoes: 16, 24, 32, 48, 64, 128, 256
+- Salva como ICO multi-resolucao em assets/mbchat.ico
 
 ### build.py (~50 linhas) - Build Script
 
 PyInstaller --onefile --windowed com:
-- Icone embedado (--icon + --add-data)
+- Icone embedado de assets/ (--icon + --add-data)
 - Hidden imports: messenger, network, database, winotify
 - Saida: dist/MBChat.exe
 
@@ -131,6 +146,24 @@ PyInstaller --onefile --windowed com:
 4. Database.save_message() (ambos os lados)
 5. Peer: Messenger._on_tcp_message() -> GUI._on_message()
 6. GUI -> ChatWindow.receive_message() + toast notification
+```
+
+### Transmitir Mensagem (Broadcast)
+```
+1. Usuario abre dialog Transmitir Mensagem
+2. Seleciona contatos, digita mensagem (com emojis coloridos)
+3. _get_bcast_content() reconstroi texto de imagens+texto via dump()
+4. Para cada contato selecionado: thread -> Messenger.send_message()
+```
+
+### Bate Papo em Grupo
+```
+1. Usuario abre dialog Bate Papo, seleciona contatos, nomeia grupo
+2. _create_group_window() -> abre GroupChatWindow
+3. Messenger.send_group_invite() -> envia MT_GROUP_INV para cada membro
+4. Cada membro recebe invite -> abre GroupChatWindow
+5. Mensagens: Messenger.send_group_message() -> MT_GROUP_MSG para todos
+6. Topologia mesh: cada membro envia diretamente para os demais
 ```
 
 ### Transferencia de Arquivo
@@ -174,3 +207,7 @@ PyInstaller --onefile --windowed com:
 8. **Contatos offline persistidos**: PCs ja vistos aparecem como offline no treeview
 9. **Firewall auto-config**: netsh na importacao de network.py
 10. **Protocolo URL customizado**: mbchat:// registrado em HKCU para notificacoes clicaveis
+11. **Grupo mesh**: sem servidor de grupo, cada membro envia para todos os demais via TCP
+12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True para renderizar como imagem
+13. **UI moderna flat**: _add_hover(), Frame-in-Frame borders, navy header, pill buttons
+14. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)

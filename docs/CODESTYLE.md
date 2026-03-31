@@ -11,13 +11,14 @@
 | Elemento          | Convencao              | Exemplo                          |
 |-------------------|------------------------|----------------------------------|
 | Modulos           | snake_case             | network.py, database.py         |
-| Classes           | PascalCase             | ChatWindow, UDPDiscovery        |
+| Classes           | PascalCase             | ChatWindow, UDPDiscovery, GroupChatWindow |
 | Metodos publicos  | snake_case             | send_message(), get_chat_history |
 | Metodos privados  | _snake_case (prefixo _)| _on_user_found(), _build_ui()   |
 | Constantes        | UPPER_SNAKE_CASE       | UDP_PORT, BG_WINDOW, FONT_BOLD  |
 | Variaveis tkinter | var_ prefixo           | var_display_name, var_font_size |
 | Widgets tkinter   | lbl_, btn_, txt_       | lbl_username, self.chat_text    |
 | Feature flags     | HAS_ prefixo           | HAS_PIL, HAS_TRAY, HAS_WINOTIFY|
+| Msg types         | MT_ prefixo            | MT_MESSAGE, MT_GROUP_INV        |
 
 ## Organizacao dos Arquivos
 
@@ -75,6 +76,33 @@ Padrao para dialogos de progresso:
 - update_progress() thread-safe via root.after()
 - finish() para auto-destruir
 
+### Funcoes Utilitarias Module-Level
+
+```python
+# Emoji colorido (PIL + seguiemj.ttf)
+_render_color_emoji(emoji_char, size=28)  # retorna PhotoImage ou None
+
+# Hover effect para qualquer widget
+_add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None)
+
+# Centralizar janela
+_center_window(win, w, h)
+
+# Localizar icone
+_get_icon_path()  # retorna path ou None
+```
+
+### UI Moderna
+
+Padroes visuais:
+- **Navy header**: Frame bg='#0f2a5c' com titulo em branco e subtitulo em '#8aa0cc'
+- **Frame-in-Frame border**: outer Frame bg='#e2e8f0', inner Frame padx=1 pady=1
+- **Pill buttons**: tk.Button flat com bg toggle entre navy (ativo) e '#e2e8f0' (inativo)
+- **Hover effects**: _add_hover() para botoes e rows de lista
+- **Botao primario**: bg=NAVY, fg='#ffffff', hover='#1a3f7a'
+- **Botao secundario**: bg='#e2e8f0', fg='#4a5568', hover='#cbd5e0'
+- **Canvas scrollavel**: create_window + Configure bind para largura total e scrollregion
+
 ## Threading
 
 **REGRA DE OURO**: Nunca modificar widgets tkinter fora da main thread.
@@ -96,6 +124,29 @@ threading.Thread(target=self.messenger.send_message,
 Tracking de dialogos por file_id:
 ```python
 self._file_dialogs = {}  # file_id -> FileTransferDialog
+```
+
+## Emojis Coloridos
+
+Renderizacao via PIL com fonte Segoe UI Emoji:
+```python
+# Module-level (para broadcast, dialogs)
+img = _render_color_emoji('\U0001f600', size=24)
+
+# ChatWindow method (para chat individual)
+img = self._render_emoji_image('\U0001f600', size=28)
+```
+
+Insercao em tk.Text com tracking para reconstruir texto:
+```python
+# Inserir como imagem
+txt.image_create(pos, image=img, name=img_name, padx=1)
+img_map[img_name] = emoji_char  # para reconstruir
+
+# Reconstruir texto + emojis
+for key, value, index in txt.dump('1.0', 'end', image=True, text=True):
+    if key == 'text': result.append(value)
+    elif key == 'image': result.append(img_map.get(value, ''))
 ```
 
 ## Temas
@@ -136,7 +187,7 @@ data = sock.recv(length)
 Constantes de rede (portas, enderecos) definidas APENAS em network.py.
 Outros modulos importam de la:
 ```python
-from network import TCP_PORT, UDP_PORT, MT_MESSAGE, ...
+from network import TCP_PORT, UDP_PORT, MT_MESSAGE, MT_GROUP_INV, ...
 ```
 
 ## Dependencias Opcionais
@@ -171,6 +222,6 @@ Mecanismo via TCP socket em 127.0.0.1:50199:
 - Formato: tipo: descricao curta
 - Tipos: feat, fix, refactor, docs, style, build
 - Exemplos:
-  - feat: adiciona dialogo de transferencia de arquivo
-  - fix: corrige timeout de envio de arquivo
+  - feat: adiciona bate papo em grupo e transmitir mensagem
+  - fix: corrige canvas scrollavel em dialogo de grupo
   - docs: atualiza arquitetura e padroes de codigo

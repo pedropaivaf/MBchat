@@ -3,17 +3,36 @@ MB Chat - Mensageiro de rede local
 Interface idêntica ao LAN Messenger original
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, colorchooser
+import tkinter.font as tkfont
 import threading
 import time
+import uuid
 import os
 import sys
 import platform
 import socket
 import shutil
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar as cal_mod
+import logging
+import re
 from pathlib import Path
+
+# --- Logging ---
+_log_path = os.path.join(
+    os.environ.get('APPDATA', os.path.expanduser('~')),
+    'MBChat', 'mbchat.log')
+os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+log = logging.getLogger('mbchat')
+log.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(_log_path, encoding='utf-8')
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'))
+log.addHandler(_fh)
 
 from messenger import Messenger
 
@@ -39,6 +58,25 @@ except ImportError:
     HAS_WINOTIFY = False
 
 APP_NAME = 'MB Chat'
+
+# Regex para detectar emojis Unicode (ranges principais)
+_EMOJI_RE = re.compile(
+    '['
+    '\U0001f600-\U0001f64f'  # emoticons
+    '\U0001f300-\U0001f5ff'  # symbols & pictographs
+    '\U0001f680-\U0001f6ff'  # transport & map
+    '\U0001f900-\U0001f9ff'  # supplemental symbols
+    '\U0001fa00-\U0001fa6f'  # chess symbols
+    '\U0001fa70-\U0001faff'  # symbols extended
+    '\u2600-\u26ff'          # misc symbols
+    '\u2700-\u27bf'          # dingbats
+    '\u2b50'                 # star
+    '\u2728'                 # sparkles
+    '\u270a-\u270d'          # fists/hands
+    '\u2764'                 # heart
+    '\u261d'                 # index pointing up
+    ']+[\ufe0f]?'
+)
 
 # --- Idiomas ---
 LANGS = {
@@ -164,6 +202,14 @@ THEMES = {
         'border': '#bbbbbb',
         'statusbar_bg': '#e8e8e8',
         'statusbar_fg': '#666666',
+        'chat_header_bg': '#e8e8e8',
+        'chat_header_fg': '#000000',
+        'chat_header_sub': '#666666',
+        'btn_send_bg': '#3366aa',
+        'btn_send_fg': '#ffffff',
+        'btn_flat_fg': '#666666',
+        'input_border': '#bbbbbb',
+        'avatar_border': '#3366aa',
     },
     'Night Mode': {
         'bg_window': '#1e1e1e',
@@ -190,32 +236,58 @@ THEMES = {
         'border': '#444444',
         'statusbar_bg': '#282828',
         'statusbar_fg': '#808080',
+        'chat_header_bg': '#333333',
+        'chat_header_fg': '#e0e0e0',
+        'chat_header_sub': '#888888',
+        'btn_send_bg': '#3a5070',
+        'btn_send_fg': '#f0f0f0',
+        'btn_flat_fg': '#888888',
+        'input_border': '#444444',
+        'avatar_border': '#6ca8e0',
     },
     'MB Contabilidade': {
-        'bg_window': '#0f2a5c',
-        'bg_white': '#0f2a5c',
-        'bg_header': '#152d5e',
+        'bg_window': '#f5f7fa',
+        'bg_white': '#ffffff',
+        'bg_header': '#0f2a5c',
         'bg_group': '#cc2222',
-        'bg_select': '#2a4a8a',
-        'bg_input': '#1a3a7a',
-        'bg_chat': '#0d2450',
-        'fg_black': '#ffffff',
-        'fg_gray': '#8aa0cc',
+        'bg_select': '#e8f0fe',
+        'bg_input': '#f7fafc',
+        'bg_chat': '#f5f7fa',
+        'fg_black': '#1a202c',
+        'fg_gray': '#718096',
         'fg_white': '#ffffff',
-        'fg_blue': '#80bbff',
-        'fg_green': '#66cc66',
-        'fg_red': '#ff6666',
-        'fg_orange': '#ffaa44',
-        'fg_msg': '#e0e8f0',
-        'fg_time': '#6688bb',
-        'fg_my_name': '#ffffff',
-        'fg_peer_name': '#ff8888',
-        'btn_bg': '#152d5e',
+        'fg_blue': '#0f2a5c',
+        'fg_green': '#48bb78',
+        'fg_red': '#cc2222',
+        'fg_orange': '#ecc94b',
+        'fg_msg': '#1a202c',
+        'fg_time': '#718096',
+        'fg_my_name': '#0f2a5c',
+        'fg_peer_name': '#cc2222',
+        'btn_bg': '#0f2a5c',
         'btn_fg': '#ffffff',
-        'btn_active': '#2a4a8a',
-        'border': '#0f2a5c',
-        'statusbar_bg': '#0f2a5c',
-        'statusbar_fg': '#8aa0cc',
+        'btn_active': '#1a3f7a',
+        'border': '#e2e8f0',
+        'statusbar_bg': '#f5f7fa',
+        'statusbar_fg': '#718096',
+        # Novas chaves do redesign
+        'msg_my_bg': '#e8f0fe',
+        'msg_peer_bg': '#f0f0f0',
+        'hover': '#edf2f7',
+        'accent': '#0f2a5c',
+        'online': '#48bb78',
+        'away': '#ecc94b',
+        'busy': '#f56565',
+        'offline_color': '#a0aec0',
+        'btn_send_bg': '#0f2a5c',
+        'btn_send_fg': '#ffffff',
+        'btn_flat_fg': '#718096',
+        'chat_header_bg': '#0f2a5c',
+        'chat_header_fg': '#ffffff',
+        'chat_header_sub': '#8aa0cc',
+        'input_border': '#e2e8f0',
+        'avatar_border': '#0f2a5c',
+        'select_border': '#0f2a5c',
     },
 }
 
@@ -233,6 +305,88 @@ FG_GREEN = '#008800'
 FG_RED = '#cc0000'
 FG_ORANGE = '#cc8800'
 
+class _Tooltip:
+    """Tooltip minimalista ao passar o mouse sobre um widget."""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self._tip = None
+        widget.bind('<Enter>', self._show, add='+')
+        widget.bind('<Leave>', self._hide, add='+')
+
+    def _show(self, event=None):
+        if self._tip:
+            return
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() - 28
+        self._tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f'+{x}+{y}')
+        tw.configure(bg='#1a202c')
+        tk.Label(tw, text=self.text, font=('Segoe UI', 8),
+                 bg='#1a202c', fg='#ffffff', padx=6, pady=3).pack()
+
+    def _hide(self, event=None):
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
+
+
+def _setup_scrollbar_style():
+    """Configura scrollbars ttk minimalistas em todo o app."""
+    style = ttk.Style()
+    # Scrollbar vertical clean
+    style.configure('Clean.Vertical.TScrollbar',
+                    background='#cbd5e0', troughcolor='#f5f7fa',
+                    borderwidth=0, relief='flat', width=6,
+                    arrowsize=0)
+    style.map('Clean.Vertical.TScrollbar',
+              background=[('active', '#a0aec0'), ('pressed', '#718096')])
+    # Remover setas
+    style.layout('Clean.Vertical.TScrollbar',
+                 [('Vertical.Scrollbar.trough',
+                   {'children': [('Vertical.Scrollbar.thumb',
+                                  {'expand': '1', 'sticky': 'nswe'})],
+                    'sticky': 'ns'})])
+    # Scrollbar horizontal
+    style.configure('Clean.Horizontal.TScrollbar',
+                    background='#cbd5e0', troughcolor='#f5f7fa',
+                    borderwidth=0, relief='flat', width=6,
+                    arrowsize=0)
+    style.map('Clean.Horizontal.TScrollbar',
+              background=[('active', '#a0aec0'), ('pressed', '#718096')])
+    style.layout('Clean.Horizontal.TScrollbar',
+                 [('Horizontal.Scrollbar.trough',
+                   {'children': [('Horizontal.Scrollbar.thumb',
+                                  {'expand': '1', 'sticky': 'nswe'})],
+                    'sticky': 'we'})])
+
+
+def _create_mdl2_icon_static(char, size=18, color='#718096'):
+    """Cria ícone MDL2 Assets como PhotoImage (module-level, sem self)."""
+    try:
+        from PIL import ImageDraw, ImageFont
+        font_path = 'C:/Windows/Fonts/segmdl2.ttf'
+        if not os.path.exists(font_path):
+            font_path = 'C:/Windows/Fonts/SegoeIcons.ttf'
+        if not os.path.exists(font_path):
+            return None
+        s = size * 4
+        font = ImageFont.truetype(font_path, s - 4)
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        bbox = draw.textbbox((0, 0), char, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        x = (s - tw) // 2 - bbox[0]
+        y = (s - th) // 2 - bbox[1]
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        draw.text((x, y), char, font=font, fill=(r, g, b, 255))
+        img = img.resize((size, size), Image.LANCZOS)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
+
+
 # --- Avatar colors for defaults ---
 AVATAR_COLORS = [
     ('#4488cc', 'U'), ('#44aa44', 'U'), ('#cc4444', 'U'),
@@ -248,10 +402,53 @@ def _get_icon_path():
         base = sys._MEIPASS
     else:
         base = os.path.dirname(os.path.abspath(__file__))
+    ico = os.path.join(base, 'assets', 'mbchat.ico')
+    if os.path.exists(ico):
+        return ico
     ico = os.path.join(base, 'mbchat.ico')
     if os.path.exists(ico):
         return ico
     return None
+
+
+def _add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
+    """Adiciona efeito hover suave a qualquer widget."""
+    def on_enter(e):
+        widget.config(bg=hover_bg)
+        if hover_fg:
+            widget.config(fg=hover_fg)
+
+    def on_leave(e):
+        widget.config(bg=normal_bg)
+        if normal_fg:
+            widget.config(fg=normal_fg)
+
+    widget.bind('<Enter>', on_enter)
+    widget.bind('<Leave>', on_leave)
+
+
+def _render_color_emoji(emoji_char, size=28):
+    """Renderiza emoji colorido como PhotoImage via PIL (modulo-level)."""
+    if not HAS_PIL:
+        return None
+    try:
+        from PIL import ImageFont, ImageDraw
+        font_path = 'C:/Windows/Fonts/seguiemj.ttf'
+        if not os.path.exists(font_path):
+            return None
+        font = ImageFont.truetype(font_path, size)
+        tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+        d = ImageDraw.Draw(tmp)
+        bbox = d.textbbox((0, 0), emoji_char, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        x = (size + 4 - tw) // 2 - bbox[0]
+        y = (size + 4 - th) // 2 - bbox[1]
+        draw.text((x, y), emoji_char, font=font, embedded_color=True)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
 
 
 def _center_window(win, w, h):
@@ -262,6 +459,126 @@ def _center_window(win, w, h):
     x = (sx - w) // 2
     y = (sy - h) // 2
     win.geometry(f'{w}x{h}+{x}+{y}')
+
+
+def _bind_date_mask(entry, var):
+    """Auto-format entry as dd/mm/aaaa while typing."""
+    def on_key(event):
+        if event.keysym in ('BackSpace', 'Delete', 'Left', 'Right',
+                            'Home', 'End', 'Tab'):
+            return
+        val = var.get()
+        digits = ''.join(c for c in val if c.isdigit())
+        digits = digits[:8]  # max 8 digits
+        formatted = ''
+        for i, d in enumerate(digits):
+            if i == 2 or i == 4:
+                formatted += '/'
+            formatted += d
+        if formatted != val:
+            cursor = entry.index('insert')
+            var.set(formatted)
+            new_pos = min(cursor + (len(formatted) - len(val)), len(formatted))
+            entry.icursor(new_pos)
+    entry.bind('<KeyRelease>', on_key)
+
+
+def _show_calendar(parent, date_var, entry_widget):
+    """Mini calendar popup for date selection."""
+    popup = tk.Toplevel(parent)
+    popup.overrideredirect(True)
+    popup.configure(bg='#333333', bd=1, relief='solid')
+
+    # Position below the entry
+    x = entry_widget.winfo_rootx()
+    y = entry_widget.winfo_rooty() + entry_widget.winfo_height() + 2
+    popup.geometry(f'+{x}+{y}')
+
+    # Current date or parse from entry
+    try:
+        d = datetime.strptime(date_var.get(), '%d/%m/%Y')
+        cur_year, cur_month = d.year, d.month
+    except (ValueError, AttributeError):
+        now = datetime.now()
+        cur_year, cur_month = now.year, now.month
+
+    state = {'year': cur_year, 'month': cur_month}
+
+    def draw_calendar():
+        for w in cal_frame.winfo_children():
+            w.destroy()
+        yr, mn = state['year'], state['month']
+
+        # Header: < Month Year >
+        hdr = tk.Frame(cal_frame, bg='#333333')
+        hdr.pack(fill='x')
+        tk.Button(hdr, text='\u25c0', font=('Segoe UI', 8), bg='#333333',
+                  fg='white', relief='flat', bd=0, cursor='hand2',
+                  command=lambda: nav(-1)).pack(side='left', padx=4)
+        months_pt = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+                     'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        tk.Label(hdr, text=f'{months_pt[mn]} {yr}', font=('Segoe UI', 9, 'bold'),
+                 bg='#333333', fg='white').pack(side='left', expand=True)
+        tk.Button(hdr, text='\u25b6', font=('Segoe UI', 8), bg='#333333',
+                  fg='white', relief='flat', bd=0, cursor='hand2',
+                  command=lambda: nav(1)).pack(side='right', padx=4)
+
+        # Day names
+        days_row = tk.Frame(cal_frame, bg='#333333')
+        days_row.pack(fill='x')
+        for dn in ['Se', 'Te', 'Qu', 'Qu', 'Se', 'Sa', 'Do']:
+            tk.Label(days_row, text=dn, font=('Segoe UI', 7), bg='#333333',
+                     fg='#aaaaaa', width=3).pack(side='left')
+
+        # Days grid
+        today = datetime.now()
+        matrix = cal_mod.monthcalendar(yr, mn)
+        for week in matrix:
+            row = tk.Frame(cal_frame, bg='#333333')
+            row.pack(fill='x')
+            for day in week:
+                if day == 0:
+                    tk.Label(row, text='', width=3, bg='#333333').pack(side='left')
+                else:
+                    is_today = (day == today.day and mn == today.month
+                                and yr == today.year)
+                    bg = '#0066cc' if is_today else '#333333'
+                    fg = 'white'
+                    btn = tk.Label(row, text=str(day), font=('Segoe UI', 8),
+                                   bg=bg, fg=fg, width=3, cursor='hand2',
+                                   relief='flat')
+                    btn.pack(side='left')
+                    btn.bind('<Button-1>',
+                             lambda e, d=day: select(d))
+                    btn.bind('<Enter>',
+                             lambda e, b=btn: b.configure(bg='#0055aa'))
+                    btn.bind('<Leave>',
+                             lambda e, b=btn, bg_=bg: b.configure(bg=bg_))
+
+    def nav(delta):
+        state['month'] += delta
+        if state['month'] > 12:
+            state['month'] = 1
+            state['year'] += 1
+        elif state['month'] < 1:
+            state['month'] = 12
+            state['year'] -= 1
+        draw_calendar()
+
+    def select(day):
+        date_var.set(f'{day:02d}/{state["month"]:02d}/{state["year"]}')
+        popup.destroy()
+
+    cal_frame = tk.Frame(popup, bg='#333333', padx=4, pady=4)
+    cal_frame.pack()
+    draw_calendar()
+
+    popup.focus_set()
+    popup.bind('<Escape>', lambda e: popup.destroy())
+    popup.bind('<FocusOut>', lambda e: popup.after(100, lambda: (
+        popup.destroy() if popup.winfo_exists() and
+        popup.focus_get() not in (popup,) + tuple(
+            popup.winfo_children()) else None)))
 
 
 def _get_data_dir():
@@ -328,7 +645,8 @@ class PreferencesWindow(tk.Toplevel):
         top.pack(fill='both', expand=True, padx=6, pady=(6, 0))
 
         # Left sidebar
-        left = tk.Frame(top, bg=BG_WHITE, width=160, bd=1, relief='sunken')
+        left = tk.Frame(top, bg='#f8fafc', width=160, bd=0, relief='flat',
+                        highlightthickness=1, highlightbackground='#e2e8f0')
         left.pack(side='left', fill='y')
         left.pack_propagate(False)
 
@@ -354,23 +672,45 @@ class PreferencesWindow(tk.Toplevel):
 
         for i, (name, builder) in enumerate(self.categories):
             btn = tk.Button(left, text=f'  {name}', font=FONT, anchor='w',
-                            bg=BG_WHITE, fg=FG_BLACK, relief='flat', bd=0,
+                            bg='#f8fafc', fg='#334155', relief='flat', bd=0,
                             padx=8, pady=6, cursor='hand2',
-                            activebackground=BG_SELECT,
+                            activebackground='#e2e8f0',
                             command=lambda idx=i: self._select_category(idx))
             btn.pack(fill='x')
+            _add_hover(btn, '#f8fafc', '#e2e8f0')
             self.cat_buttons.append(btn)
 
         # --- Bottom buttons (outside top, guaranteed visible) ---
         bottom = tk.Frame(self, bg=BG_WINDOW)
         bottom.pack(fill='x', padx=10, pady=8)
 
-        tk.Button(bottom, text='Cancelar', font=FONT, width=10,
-                  command=self.destroy).pack(side='right', padx=4)
-        tk.Button(bottom, text='OK', font=FONT, width=10,
-                  command=self._save_all).pack(side='right', padx=4)
-        tk.Button(bottom, text='Redefinir Preferências', font=FONT_SMALL,
-                  command=self._reset_defaults).pack(side='left', padx=4)
+        btn_cancel = tk.Button(bottom, text='Cancelar',
+                               font=('Segoe UI', 9),
+                               bg='#e2e8f0', fg='#4a5568', relief='flat',
+                               bd=0, padx=14, pady=4, cursor='hand2',
+                               activebackground='#cbd5e0',
+                               command=self.destroy)
+        btn_cancel.pack(side='right', padx=4)
+        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
+
+        btn_ok = tk.Button(bottom, text='OK',
+                           font=('Segoe UI', 9, 'bold'),
+                           bg='#0f2a5c', fg='#ffffff', relief='flat',
+                           bd=0, padx=14, pady=4, cursor='hand2',
+                           activebackground='#1a3f7a',
+                           activeforeground='#ffffff',
+                           command=self._save_all)
+        btn_ok.pack(side='right', padx=4)
+        _add_hover(btn_ok, '#0f2a5c', '#1a3f7a')
+
+        btn_reset = tk.Button(bottom, text='Redefinir Preferências',
+                              font=('Segoe UI', 8),
+                              bg='#f5f7fa', fg='#94a3b8', relief='flat',
+                              bd=0, padx=8, pady=4, cursor='hand2',
+                              activebackground='#e2e8f0',
+                              command=self._reset_defaults)
+        btn_reset.pack(side='left', padx=4)
+        _add_hover(btn_reset, '#f5f7fa', '#e2e8f0')
 
         # Settings vars
         self._init_vars()
@@ -404,8 +744,7 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('sound_online', '1') == '1')
         self.var_flash_taskbar = tk.BooleanVar(
             value=db.get_setting('flash_taskbar', '1') == '1')
-        self.var_save_history = tk.BooleanVar(
-            value=db.get_setting('save_history', '1') == '1')
+        self.var_save_history = tk.BooleanVar(value=True)
         self.var_history_path = tk.StringVar(
             value=db.get_setting('history_path',
                                  os.path.join(_get_data_dir(), 'history')))
@@ -431,6 +770,8 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('enter_to_send', '1') == '1')
         self.var_show_timestamp = tk.BooleanVar(
             value=db.get_setting('show_timestamp', '1') == '1')
+        self.var_msg_style = tk.StringVar(
+            value=db.get_setting('msg_style', 'linear'))
         self.var_avatar_index = tk.IntVar(
             value=int(db.get_setting('avatar_index', '0')))
         self.var_custom_avatar = tk.StringVar(
@@ -442,9 +783,11 @@ class PreferencesWindow(tk.Toplevel):
         # Highlight selected
         for i, btn in enumerate(self.cat_buttons):
             if i == idx:
-                btn.configure(bg=BG_SELECT, relief='flat')
+                btn.configure(bg='#dbeafe', fg='#1e3a5f', relief='flat')
+                _add_hover(btn, '#dbeafe', '#dbeafe')
             else:
-                btn.configure(bg=BG_WHITE, relief='flat')
+                btn.configure(bg='#f8fafc', fg='#334155', relief='flat')
+                _add_hover(btn, '#f8fafc', '#e2e8f0')
 
         # Clear right panel
         if self.current_frame:
@@ -658,42 +1001,22 @@ class PreferencesWindow(tk.Toplevel):
                        variable=self.var_show_timestamp, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
+        # Estilo de mensagem
+        lf2 = tk.LabelFrame(parent, text='Estilo de Mensagem', font=FONT,
+                             bg=BG_WINDOW, padx=10, pady=5)
+        lf2.pack(fill='x', padx=10, pady=(0, 8))
+
+        tk.Radiobutton(lf2, text='Linear (mensagens em sequência)',
+                       variable=self.var_msg_style, value='linear',
+                       font=FONT, bg=BG_WINDOW).pack(anchor='w')
+        tk.Radiobutton(lf2, text='Bolhas (estilo WhatsApp)',
+                       variable=self.var_msg_style, value='bubble',
+                       font=FONT, bg=BG_WINDOW).pack(anchor='w')
+
     # ----- HISTÓRICO -----
     def _build_historico(self, parent):
         tk.Label(parent, text='Histórico', font=FONT_SECTION,
                  bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
-
-        lf = tk.LabelFrame(parent, text='Salvar Histórico', font=FONT,
-                            bg=BG_WINDOW, padx=10, pady=5)
-        lf.pack(fill='x', padx=10, pady=(0, 8))
-
-        tk.Checkbutton(lf, text='Salvar histórico de mensagens',
-                       variable=self.var_save_history, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-
-        row = tk.Frame(lf, bg=BG_WINDOW)
-        row.pack(fill='x', pady=4)
-        tk.Label(row, text='Pasta:', font=FONT, bg=BG_WINDOW).pack(
-            side='left')
-        tk.Entry(row, textvariable=self.var_history_path, font=FONT_SMALL,
-                 width=25).pack(side='left', padx=4, fill='x', expand=True)
-        tk.Button(row, text='...', width=3,
-                  command=lambda: self.var_history_path.set(
-                      filedialog.askdirectory(parent=self) or
-                      self.var_history_path.get())
-                  ).pack(side='right')
-
-        tk.Button(lf, text='Limpar todo o histórico', font=FONT_SMALL,
-                  fg=FG_RED,
-                  command=self._clear_history).pack(anchor='w', pady=4)
-
-    def _clear_history(self):
-        if messagebox.askyesno('Limpar Histórico',
-                               'Tem certeza? Todas as mensagens serão apagadas.',
-                               parent=self):
-            self.messenger.db.conn.execute("DELETE FROM messages")
-            self.messenger.db.conn.commit()
-            messagebox.showinfo('Histórico', 'Histórico limpo.', parent=self)
 
     # ----- ALERTAS -----
     def _build_alertas(self, parent):
@@ -879,6 +1202,7 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_enter_send.get() else '0')
         db.set_setting('show_timestamp',
                        '1' if self.var_show_timestamp.get() else '0')
+        db.set_setting('msg_style', self.var_msg_style.get())
         db.set_setting('avatar_index', str(self.var_avatar_index.get()))
         db.set_setting('custom_avatar', self.var_custom_avatar.get())
 
@@ -1189,11 +1513,17 @@ class ChatWindow(tk.Toplevel):
         self.peer_name = peer_name
         self._typing_timer = None
         self._was_typing = False
+        self._msg_ranges = []  # [(start_idx, end_idx, text), ...] para botão copiar
+        self._chat_emoji_cache = {}  # cache de imagens emoji para o chat
+        self._entry_emoji_cache = {}  # cache de imagens emoji para o input
+        self._entry_img_map = {}     # img_name -> emoji_char para reconstruir texto
+
+        t = THEMES.get(self.app._current_theme, THEMES.get('MB Contabilidade', {}))
 
         self.title(f'{peer_name} - {APP_NAME}')
-        self.minsize(350, 300)
-        _center_window(self, 450, 400)
-        self.configure(bg=BG_WINDOW)
+        self.minsize(350, 350)
+        _center_window(self, 420, 480)
+        self.configure(bg=t.get('bg_window', '#f5f7fa'))
         ico = _get_icon_path()
         if ico:
             try:
@@ -1201,77 +1531,231 @@ class ChatWindow(tk.Toplevel):
             except Exception:
                 pass
 
-        # Toolbar
-        toolbar = tk.Frame(self, bg=BG_HEADER, height=30, bd=1,
-                           relief='raised')
-        toolbar.pack(fill='x')
-        toolbar.pack_propagate(False)
+        # Header navy integrado (avatar + nome + histórico)
+        header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
+        header_fg = t.get('chat_header_fg', '#ffffff')
+        header_sub = t.get('chat_header_sub', '#8aa0cc')
 
-        for text, cmd in [(_t('font_btn'), None),
-                          (_t('send_file_btn'), self._send_file),
-                          (_t('history_btn'), self._show_history)]:
-            tk.Button(toolbar, text=text, font=FONT_SMALL, bg=BG_HEADER,
-                      relief='flat', bd=0, padx=6, command=cmd,
-                      cursor='hand2').pack(side='left', padx=1, pady=2)
+        header = tk.Frame(self, bg=header_bg)
+        header.pack(fill='x')
 
-        # Header
-        header = tk.Frame(self, bg=BG_WHITE, bd=1, relief='sunken')
-        header.pack(fill='x', padx=4, pady=(4, 0))
+        header_row = tk.Frame(header, bg=header_bg)
+        header_row.pack(fill='x', padx=10, pady=8)
 
-        self.lbl_peer = tk.Label(header, text=f'  {peer_name}',
-                                 font=FONT_BOLD, bg=BG_WHITE, fg=FG_BLACK,
-                                 anchor='w')
-        self.lbl_peer.pack(fill='x', padx=4, pady=2)
+        # Peer avatar 40x40
+        self._chat_avatar_canvas = tk.Canvas(header_row, width=40, height=40,
+                                              bg=header_bg, highlightthickness=0)
+        self._chat_avatar_canvas.pack(side='left', padx=(0, 10))
+        self._draw_peer_avatar()
 
-        self.lbl_typing = tk.Label(header, text='', font=FONT_SMALL,
-                                   bg=BG_WHITE, fg=FG_GRAY, anchor='w')
-        self.lbl_typing.pack(fill='x', padx=8)
+        name_frame = tk.Frame(header_row, bg=header_bg)
+        name_frame.pack(side='left', fill='x', expand=True)
 
-        # Send button row (pack before text areas so it's at bottom)
-        btn_frame = tk.Frame(self, bg=BG_WINDOW)
-        btn_frame.pack(fill='x', side='bottom', padx=4)
-        tk.Button(btn_frame, text='Send', font=FONT, width=8,
-                  command=self._send_message).pack(side='right', pady=2)
+        self.lbl_peer = tk.Label(name_frame, text=peer_name,
+                                 font=('Segoe UI', 12, 'bold'),
+                                 bg=header_bg, fg=header_fg, anchor='w')
+        self.lbl_peer.pack(fill='x')
 
-        # Input area
-        input_frame = tk.Frame(self, bg=BG_WINDOW)
-        input_frame.pack(fill='x', side='bottom', padx=4, pady=4)
+        self.lbl_typing = tk.Label(name_frame, text='', font=('Segoe UI', 9),
+                                   bg=header_bg, fg=header_sub, anchor='w')
+        self.lbl_typing.pack(fill='x')
 
-        self.entry = tk.Text(input_frame, font=FONT_CHAT, bg=BG_WHITE,
-                             fg=FG_BLACK, relief='sunken', bd=1, height=3,
-                             wrap='word', padx=4, pady=4)
-        entry_scroll = ttk.Scrollbar(input_frame, command=self.entry.yview)
-        self.entry.configure(yscrollcommand=entry_scroll.set)
-        entry_scroll.pack(side='right', fill='y')
-        self.entry.pack(fill='both', expand=True)
+        # Botão Histórico no header (ícone MDL2 U+E81C)
+        ico_hist = self._create_mdl2_icon('\uE81C', 20, header_fg) if HAS_PIL else None
+        if ico_hist:
+            self._hist_icon = ico_hist
+            btn_hist = tk.Button(header_row, image=ico_hist,
+                      bg=header_bg, relief='flat', bd=0,
+                      command=self._show_history, cursor='hand2',
+                      activebackground=t.get('btn_active', '#1a3f7a'))
+        else:
+            btn_hist = tk.Button(header_row, text='\u2630', font=('Segoe UI', 12),
+                      bg=header_bg, fg=header_fg, relief='flat', bd=0,
+                      command=self._show_history, cursor='hand2',
+                      activebackground=t.get('btn_active', '#1a3f7a'))
+        btn_hist.pack(side='right', padx=4)
+        _Tooltip(btn_hist, _t('history_btn'))
+
+        # Barra de ações (bottom - pack antes do input/chat)
+        btn_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
+        btn_frame.pack(fill='x', side='bottom', padx=8, pady=(0, 6))
+
+        # Botão Enviar destacado em navy
+        send_bg = t.get('btn_send_bg', t.get('btn_bg', '#0f2a5c'))
+        send_fg = t.get('btn_send_fg', '#ffffff')
+        btn_send = tk.Button(btn_frame, text=f' {_t("send_btn")} ', font=('Segoe UI', 9, 'bold'),
+                  bg=send_bg, fg=send_fg, relief='flat', bd=0,
+                  command=self._send_message, cursor='hand2',
+                  activebackground=t.get('btn_active', '#1a3f7a'),
+                  activeforeground=send_fg, padx=12, pady=3)
+        btn_send.pack(side='right', pady=2)
+        _Tooltip(btn_send, _t('send_btn') + ' (Enter)')
+
+        # Botões flat à esquerda com ícones MDL2 + tooltips
+        flat_fg = t.get('btn_flat_fg', '#718096')
+        win_bg = t.get('bg_window', '#f5f7fa')
+        self._btn_icons = {}
+        icon_size = 20
+
+        # Ícone Fonte (U+E8D2)
+        ico_font = self._create_mdl2_icon('\uE8D2', icon_size, flat_fg) if HAS_PIL else None
+        if ico_font:
+            self._btn_icons['font'] = ico_font
+            btn_font = tk.Button(btn_frame, image=ico_font,
+                      bg=win_bg, relief='flat', bd=0, padx=3, pady=2,
+                      command=self._change_font, cursor='hand2')
+        else:
+            btn_font = tk.Button(btn_frame, text='A', font=('Segoe UI', 10, 'bold'),
+                      bg=win_bg, fg=flat_fg, relief='flat', bd=0,
+                      command=self._change_font, cursor='hand2')
+        btn_font.pack(side='left', pady=2, padx=(0, 2))
+        _Tooltip(btn_font, _t('font_btn'))
+
+        # Ícone Emoji (U+E76E)
+        ico_emoji = self._create_mdl2_icon('\uE76E', icon_size, flat_fg) if HAS_PIL else None
+        if ico_emoji:
+            self._btn_icons['emoji'] = ico_emoji
+            btn_emoji = tk.Button(btn_frame, image=ico_emoji,
+                      bg=win_bg, relief='flat', bd=0, padx=3, pady=2,
+                      command=self._show_emoji_picker, cursor='hand2')
+        else:
+            btn_emoji = tk.Button(btn_frame, text='\U0001f600', font=('Segoe UI', 11),
+                      bg=win_bg, fg=flat_fg, relief='flat', bd=0,
+                      command=self._show_emoji_picker, cursor='hand2')
+        btn_emoji.pack(side='left', pady=2, padx=(0, 2))
+        _Tooltip(btn_emoji, 'Emojis')
+
+        # Ícone Anexo/Clipe (U+E723)
+        ico_attach = self._create_mdl2_icon('\uE723', icon_size, flat_fg) if HAS_PIL else None
+        if ico_attach:
+            self._btn_icons['attach'] = ico_attach
+            btn_file = tk.Button(btn_frame, image=ico_attach,
+                      bg=win_bg, relief='flat', bd=0, padx=3, pady=2,
+                      command=self._send_file, cursor='hand2')
+        else:
+            btn_file = tk.Button(btn_frame, text='\u2736',
+                      font=('Segoe UI', 11), bg=win_bg, fg=flat_fg,
+                      relief='flat', bd=0,
+                      command=self._send_file, cursor='hand2')
+        btn_file.pack(side='left', pady=2, padx=(0, 2))
+        _Tooltip(btn_file, _t('send_file_btn'))
+
+        # Input area com borda sutil
+        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        input_outer.pack(fill='x', side='bottom', padx=8, pady=(4, 2))
+
+        self.entry = tk.Text(input_outer, font=('Segoe UI', 10),
+                             bg=t.get('bg_input', '#f7fafc'),
+                             fg=t.get('fg_black', '#1a202c'),
+                             relief='flat', bd=0, height=3,
+                             wrap='word', padx=8, pady=6,
+                             insertbackground=t.get('fg_black', '#1a202c'))
+        self.entry.pack(fill='both', expand=True, padx=1, pady=1)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.bind('<KeyRelease>', self._on_key)
         self.entry.focus_set()
 
         # Chat display
-        self.chat_text = tk.Text(self, font=FONT_CHAT, bg=BG_WHITE,
-                                 fg=FG_BLACK, relief='sunken', bd=1,
-                                 wrap='word', state='disabled', padx=6,
-                                 pady=4, cursor='arrow')
-        chat_scroll = ttk.Scrollbar(self, command=self.chat_text.yview)
-        self.chat_text.configure(yscrollcommand=chat_scroll.set)
-        chat_scroll.pack(side='right', fill='y', padx=(0, 4), pady=4)
-        self.chat_text.pack(fill='both', expand=True, padx=(4, 0), pady=4)
+        chat_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
+        chat_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
-        self.chat_text.tag_configure('time', foreground=FG_GRAY,
-                                     font=FONT_SMALL)
-        self.chat_text.tag_configure('my_name', foreground=FG_BLUE,
-                                     font=FONT_BOLD)
-        self.chat_text.tag_configure('peer_name', foreground=FG_RED,
-                                     font=FONT_BOLD)
-        self.chat_text.tag_configure('msg', font=FONT_CHAT)
+        chat_bg = t.get('bg_chat', '#f5f7fa')
+        self.chat_text = tk.Text(chat_frame, font=('Segoe UI', 10),
+                                 bg=chat_bg, fg=t.get('fg_msg', '#1a202c'),
+                                 relief='flat', bd=0,
+                                 wrap='word', state='disabled', padx=10,
+                                 pady=8, cursor='arrow')
+
+        # Minimal scrollbar
+        self._chat_scrollbar = tk.Scrollbar(chat_frame,
+                                             command=self.chat_text.yview,
+                                             width=4, relief='flat',
+                                             troughcolor=chat_bg,
+                                             bg='#cbd5e0', activebackground='#a0aec0')
+        self.chat_text.configure(yscrollcommand=self._on_chat_scroll)
+        self._chat_scrollbar.pack(side='right', fill='y')
+        self._chat_scrollbar.pack_forget()
+        self.chat_text.pack(fill='both', expand=True)
+
+        # Show/hide scrollbar on hover
+        self._scroll_visible = False
+        chat_frame.bind('<Enter>', self._show_scrollbar)
+        chat_frame.bind('<Leave>', self._hide_scrollbar)
+        self.chat_text.bind('<Enter>', self._show_scrollbar)
+        self.chat_text.bind('<Leave>', self._hide_scrollbar)
+
+        # Mouse wheel scroll
+        self.chat_text.bind('<MouseWheel>', self._on_mousewheel)
+
+        fg_time = t.get('fg_time', '#718096')
+        fg_my = t.get('fg_my_name', '#0f2a5c')
+        fg_peer = t.get('fg_peer_name', '#cc2222')
+        fg_msg = t.get('fg_msg', '#1a202c')
+
+        self.chat_text.tag_configure('time', foreground=fg_time,
+                                     font=('Segoe UI', 7))
+        self.chat_text.tag_configure('my_name', foreground=fg_my,
+                                     font=('Segoe UI', 9, 'bold'))
+        self.chat_text.tag_configure('peer_name', foreground=fg_peer,
+                                     font=('Segoe UI', 9, 'bold'))
+        self.chat_text.tag_configure('msg', foreground=fg_msg,
+                                     font=('Segoe UI', 10))
         self.chat_text.tag_configure('system',
-                                     foreground=FG_GRAY,
+                                     foreground='#718096',
                                      font=('Segoe UI', 8, 'italic'))
+
+        # Tags para modo bolha (WhatsApp style)
+        msg_my_bg = t.get('msg_my_bg', '#e8f0fe')
+        msg_peer_bg = t.get('msg_peer_bg', '#f0f0f0')
+        self.chat_text.tag_configure('my_bubble',
+                                     background=msg_my_bg,
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80,
+                                     spacing1=6, spacing3=2)
+        self.chat_text.tag_configure('my_bubble_name',
+                                     background=msg_my_bg,
+                                     foreground=fg_my,
+                                     font=('Segoe UI', 8, 'bold'),
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80,
+                                     spacing1=6)
+        self.chat_text.tag_configure('my_bubble_time',
+                                     background=msg_my_bg,
+                                     foreground=fg_time,
+                                     font=('Segoe UI', 7),
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80)
+        self.chat_text.tag_configure('peer_bubble',
+                                     background=msg_peer_bg,
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80,
+                                     spacing1=6, spacing3=2)
+        self.chat_text.tag_configure('peer_bubble_name',
+                                     background=msg_peer_bg,
+                                     foreground=fg_peer,
+                                     font=('Segoe UI', 8, 'bold'),
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80,
+                                     spacing1=6)
+        self.chat_text.tag_configure('peer_bubble_time',
+                                     background=msg_peer_bg,
+                                     foreground=fg_time,
+                                     font=('Segoe UI', 7),
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80)
+        self.chat_text.tag_configure('copy_btn',
+                                     foreground='#a0aec0',
+                                     font=('Segoe UI', 8))
+        self.chat_text.tag_bind('copy_btn', '<Button-1>', self._on_copy_click)
+        self.chat_text.tag_bind('copy_btn', '<Enter>',
+                                lambda e: self.chat_text.config(cursor='hand2'))
+        self.chat_text.tag_bind('copy_btn', '<Leave>',
+                                lambda e: self.chat_text.config(cursor='arrow'))
 
         self._load_history()
         self.protocol('WM_DELETE_WINDOW', self._on_close)
+        self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))
 
     def _load_history(self):
         # Carrega mensagens nao-lidas ao abrir o chat
@@ -1283,15 +1767,155 @@ class ChatWindow(tk.Toplevel):
                                  timestamp=msg['timestamp'])
         self.messenger.mark_as_read(self.peer_id)
 
+    def _draw_peer_avatar(self):
+        contact = self.messenger.db.get_contact(self.peer_id)
+        idx = contact.get('avatar_index', 0) if contact else 0
+        color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
+        initial = self.peer_name[0].upper() if self.peer_name else 'U'
+        self._chat_avatar_canvas.delete('all')
+        self._chat_avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
+                                              outline='white', width=2)
+        self._chat_avatar_canvas.create_text(20, 20, text=initial,
+                                              fill='white',
+                                              font=('Segoe UI', 14, 'bold'))
+
+    def _on_chat_scroll(self, first, last):
+        self._chat_scrollbar.set(first, last)
+        # Show scrollbar only when content overflows
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            if self._scroll_visible:
+                self._chat_scrollbar.pack_forget()
+                self._scroll_visible = False
+
+    def _show_scrollbar(self, event=None):
+        first, last = self.chat_text.yview()
+        if first > 0.0 or last < 1.0:
+            if not self._scroll_visible:
+                self._chat_scrollbar.pack(side='right', fill='y')
+                self.chat_text.pack_configure(padx=(0, 0))
+                self._scroll_visible = True
+
+    def _hide_scrollbar(self, event=None):
+        if self._scroll_visible:
+            # Check if mouse is still inside chat area
+            try:
+                x, y = self.winfo_pointerxy()
+                widget = self.winfo_containing(x, y)
+                if widget and (widget == self.chat_text or
+                               widget == self._chat_scrollbar):
+                    return
+            except Exception:
+                pass
+            self._chat_scrollbar.pack_forget()
+            self._scroll_visible = False
+
+    def _on_mousewheel(self, event):
+        self.chat_text.yview_scroll(-1 * (event.delta // 40), 'units')
+        self._show_scrollbar()
+        # Auto-hide after scroll if mouse leaves
+        self.after(1500, self._hide_scrollbar)
+        return 'break'
+
+    def _get_chat_emoji(self, emoji_char):
+        """Retorna imagem do emoji do cache, ou renderiza e cacheia."""
+        if emoji_char in self._chat_emoji_cache:
+            return self._chat_emoji_cache[emoji_char]
+        img = self._render_emoji_image(emoji_char, size=20)
+        if img:
+            self._chat_emoji_cache[emoji_char] = img
+        return img
+
+    def _get_entry_emoji(self, emoji_char):
+        """Retorna imagem do emoji para o input (tamanho 18px), cacheada."""
+        if emoji_char in self._entry_emoji_cache:
+            return self._entry_emoji_cache[emoji_char]
+        img = self._render_emoji_image(emoji_char, size=18)
+        if img:
+            self._entry_emoji_cache[emoji_char] = img
+        return img
+
+    def _entry_insert_emoji(self, emoji_char, pos='insert'):
+        """Insere emoji colorido como imagem no campo de entrada."""
+        img = self._get_entry_emoji(emoji_char)
+        if img:
+            img_name = f'entry_emoji_{len(self._entry_img_map)}'
+            self._entry_img_map[img_name] = emoji_char
+            self.entry.image_create(pos, image=img, name=img_name, padx=1)
+        else:
+            self.entry.insert(pos, emoji_char)
+
+    def _get_entry_content(self):
+        """Lê o conteúdo do entry reconstruindo emojis a partir das imagens."""
+        result = []
+        for key, value, index in self.entry.dump('1.0', 'end', image=True, text=True):
+            if key == 'text':
+                result.append(value)
+            elif key == 'image':
+                emoji = self._entry_img_map.get(value, '')
+                result.append(emoji)
+        return ''.join(result).strip()
+
+    def _insert_text_with_emojis(self, text, tag):
+        """Insere texto no chat substituindo emojis por imagens coloridas."""
+        parts = _EMOJI_RE.split(text)
+        emojis = _EMOJI_RE.findall(text)
+        for i, part in enumerate(parts):
+            if part:
+                self.chat_text.insert('end', part, tag)
+            if i < len(emojis):
+                img = self._get_chat_emoji(emojis[i])
+                if img:
+                    self.chat_text.image_create('end', image=img, padx=1)
+                else:
+                    self.chat_text.insert('end', emojis[i], tag)
+
     def _append_message(self, sender, text, is_mine, timestamp=None):
-        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M:%S')
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
-        tag = 'my_name' if is_mine else 'peer_name'
-        self.chat_text.insert('end', f'[{ts}] ', 'time')
-        self.chat_text.insert('end', f'{sender}: ', tag)
-        self.chat_text.insert('end', f'{text}\n', 'msg')
+
+        style = self.messenger.db.get_setting('msg_style', 'linear')
+
+        if style == 'bubble':
+            # Modo bolha (WhatsApp)
+            if is_mine:
+                name_tag = 'my_bubble_name'
+                time_tag = 'my_bubble_time'
+                msg_tag = 'my_bubble'
+            else:
+                name_tag = 'peer_bubble_name'
+                time_tag = 'peer_bubble_time'
+                msg_tag = 'peer_bubble'
+            self.chat_text.insert('end', f'{sender}', name_tag)
+            self.chat_text.insert('end', f'  {ts}\n', time_tag)
+            self._insert_text_with_emojis(text, msg_tag)
+            self.chat_text.insert('end', '\n', msg_tag)
+        else:
+            # Modo linear (padrão)
+            tag = 'my_name' if is_mine else 'peer_name'
+            self.chat_text.insert('end', f'{sender}', tag)
+            self.chat_text.insert('end', f'  {ts}\n', 'time')
+            self._insert_text_with_emojis(text, 'msg')
+            self.chat_text.insert('end', '\n', 'msg')
+
+        self._msg_ranges.append(text)
+        msg_idx = len(self._msg_ranges) - 1
+        self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
+
+    def _on_copy_click(self, event):
+        """Copia texto da mensagem clicada."""
+        try:
+            idx = self.chat_text.index(f'@{event.x},{event.y}')
+            # Pega a linha atual e copia
+            line_start = self.chat_text.index(f'{idx} linestart')
+            line_end = self.chat_text.index(f'{idx} lineend')
+            text = self.chat_text.get(line_start, line_end).strip()
+            if text:
+                self.clipboard_clear()
+                self.clipboard_append(text)
+        except Exception:
+            log.exception('Erro ao copiar mensagem')
 
     def receive_message(self, content, timestamp=None):
         self._append_message(self.peer_name, content, False, timestamp=timestamp)
@@ -1309,22 +1933,41 @@ class ChatWindow(tk.Toplevel):
             return 'break'
 
     def _on_key(self, event):
-        if not self._was_typing:
-            self._was_typing = True
-            self.messenger.send_typing(self.peer_id, True)
-        if self._typing_timer:
-            self.after_cancel(self._typing_timer)
-        self._typing_timer = self.after(2000, self._stop_typing)
+        try:
+            # Detectar emoji digitado via teclado e substituir por imagem colorida
+            idx = self.entry.index('insert')
+            if idx != '1.0':
+                prev_idx = self.entry.index(f'{idx}-1c')
+                char = self.entry.get(prev_idx, idx)
+                if char and _EMOJI_RE.match(char):
+                    self.entry.delete(prev_idx, idx)
+                    self._entry_insert_emoji(char, prev_idx)
+        except Exception:
+            pass
+        try:
+            if not self._was_typing:
+                self._was_typing = True
+                threading.Thread(target=self.messenger.send_typing,
+                                 args=(self.peer_id, True),
+                                 daemon=True).start()
+            if self._typing_timer:
+                self.after_cancel(self._typing_timer)
+            self._typing_timer = self.after(2000, self._stop_typing)
+        except Exception:
+            log.exception('Erro em _on_key')
 
     def _stop_typing(self):
         self._was_typing = False
-        self.messenger.send_typing(self.peer_id, False)
+        threading.Thread(target=self.messenger.send_typing,
+                         args=(self.peer_id, False),
+                         daemon=True).start()
 
     def _send_message(self):
-        content = self.entry.get('1.0', 'end').strip()
+        content = self._get_entry_content()
         if not content:
             return
         self.entry.delete('1.0', 'end')
+        self._entry_img_map.clear()
         self._append_message(self.messenger.display_name, content, True)
         threading.Thread(target=self.messenger.send_message,
                          args=(self.peer_id, content), daemon=True).start()
@@ -1340,7 +1983,7 @@ class ChatWindow(tk.Toplevel):
         win.title(f'Histórico - {self.peer_name}')
         _center_window(win, 500, 400)
         txt = tk.Text(win, font=FONT_SMALL, wrap='word', bg=BG_WHITE)
-        scr = ttk.Scrollbar(win, command=txt.yview)
+        scr = ttk.Scrollbar(win, command=txt.yview, style='Clean.Vertical.TScrollbar')
         txt.configure(yscrollcommand=scr.set)
         scr.pack(side='right', fill='y')
         txt.pack(fill='both', expand=True)
@@ -1350,9 +1993,818 @@ class ChatWindow(tk.Toplevel):
             txt.insert('end', f'[{ts}] {who}: {m["content"]}\n')
         txt.configure(state='disabled')
 
+    def _change_font(self):
+        try:
+            self._change_font_impl()
+        except Exception:
+            log.exception('Erro ao abrir dialogo de fonte')
+
+    def _change_font_impl(self):
+        win = tk.Toplevel(self)
+        win.title(_t('font_btn'))
+        win.resizable(False, False)
+        _center_window(win, 340, 420)
+        win.configure(bg=BG_WINDOW)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        cur_family = 'Segoe UI'
+        cur_size = 9
+        try:
+            cur = self.chat_text.cget('font') or FONT_CHAT
+            if isinstance(cur, str):
+                f = tkfont.Font(font=cur)
+                cur_family = f.actual('family')
+                cur_size = f.actual('size')
+            elif isinstance(cur, (tuple, list)) and len(cur) >= 2:
+                cur_family = cur[0]
+                cur_size = int(cur[1])
+        except Exception:
+            log.exception('Erro ao ler fonte atual')
+
+        # Font family list
+        tk.Label(win, text='Fonte:', font=FONT, bg=BG_WINDOW).pack(
+            anchor='w', padx=8, pady=(8, 2))
+        family_var = tk.StringVar(value=cur_family)
+        family_frame = tk.Frame(win, bg=BG_WINDOW)
+        family_frame.pack(fill='x', padx=8)
+        family_list = tk.Listbox(family_frame, font=FONT_SMALL, height=10,
+                                 exportselection=False)
+        family_scroll = ttk.Scrollbar(family_frame, command=family_list.yview, style='Clean.Vertical.TScrollbar')
+        family_list.configure(yscrollcommand=family_scroll.set)
+        family_scroll.pack(side='right', fill='y')
+        family_list.pack(fill='x', expand=True)
+
+        families = sorted(set(tkfont.families()), key=str.lower)
+        for fam in families:
+            family_list.insert('end', fam)
+        # Select current
+        for i, fam in enumerate(families):
+            if fam.lower() == cur_family.lower():
+                family_list.selection_set(i)
+                family_list.see(i)
+                break
+
+        # Size
+        tk.Label(win, text='Tamanho:', font=FONT, bg=BG_WINDOW).pack(
+            anchor='w', padx=8, pady=(6, 2))
+        size_var = tk.IntVar(value=cur_size)
+        size_frame = tk.Frame(win, bg=BG_WINDOW)
+        size_frame.pack(fill='x', padx=8)
+        for s in [8, 9, 10, 11, 12, 14, 16, 18, 20]:
+            tk.Radiobutton(size_frame, text=str(s), variable=size_var,
+                           value=s, font=FONT_SMALL, bg=BG_WINDOW
+                           ).pack(side='left', padx=2)
+
+        # Color
+        cur_color = self.entry.cget('fg') or FG_BLACK
+        color_var = [cur_color]
+
+        color_frame = tk.Frame(win, bg=BG_WINDOW)
+        color_frame.pack(fill='x', padx=8, pady=(6, 2))
+        tk.Label(color_frame, text='Cor da letra:', font=FONT,
+                 bg=BG_WINDOW).pack(side='left')
+        color_swatch = tk.Label(color_frame, text='   ', bg=cur_color,
+                                relief='sunken', width=4)
+        color_swatch.pack(side='left', padx=6)
+
+        def pick_color():
+            result = colorchooser.askcolor(color=color_var[0], parent=win,
+                                           title='Cor da letra')
+            if result[1]:
+                color_var[0] = result[1]
+                color_swatch.configure(bg=result[1])
+                update_preview()
+
+        tk.Button(color_frame, text='Escolher...', font=FONT_SMALL,
+                  command=pick_color).pack(side='left', padx=4)
+
+        # Preview
+        preview = tk.Label(win, text='AaBbCc 123', relief='sunken',
+                           bg='#ffffff', fg=cur_color, height=2)
+        preview.pack(fill='x', padx=8, pady=8)
+
+        def update_preview(*_):
+            try:
+                sel = family_list.curselection()
+                fam = families[sel[0]] if sel else cur_family
+                sz = size_var.get()
+                preview.configure(font=(fam, sz), fg=color_var[0])
+            except Exception:
+                log.exception('Erro ao atualizar preview de fonte')
+
+        family_list.bind('<<ListboxSelect>>', update_preview)
+        size_var.trace_add('write', update_preview)
+        update_preview()
+
+        def apply():
+            try:
+                sel = family_list.curselection()
+                fam = families[sel[0]] if sel else cur_family
+                sz = size_var.get()
+                new_font = (fam, sz)
+                fg = color_var[0]
+                self.chat_text.tag_configure('msg', font=new_font, foreground=fg)
+                self.entry.configure(font=new_font, fg=fg)
+            except Exception:
+                log.exception('Erro ao aplicar fonte')
+            win.destroy()
+
+        btn_frame = tk.Frame(win, bg=BG_WINDOW)
+        btn_frame.pack(fill='x', padx=8, pady=(0, 8))
+        tk.Button(btn_frame, text='OK', font=FONT, width=8,
+                  command=apply).pack(side='right', padx=4)
+        tk.Button(btn_frame, text='Cancelar', font=FONT, width=8,
+                  command=win.destroy).pack(side='right')
+
+    def _show_emoji_picker(self):
+        try:
+            self._show_emoji_picker_impl()
+        except Exception:
+            log.exception('Erro ao abrir emoji picker')
+
+    def _create_mdl2_icon(self, char, size=18, color='#718096'):
+        """Cria ícone usando Segoe MDL2 Assets (fonte de ícones nativa do Windows)."""
+        try:
+            from PIL import ImageDraw, ImageFont
+            font_path = 'C:/Windows/Fonts/segmdl2.ttf'
+            if not os.path.exists(font_path):
+                font_path = 'C:/Windows/Fonts/SegoeIcons.ttf'
+            if not os.path.exists(font_path):
+                return None
+            s = size * 4  # super-sample
+            font = ImageFont.truetype(font_path, s - 4)
+            img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            bbox = draw.textbbox((0, 0), char, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            x = (s - tw) // 2 - bbox[0]
+            y = (s - th) // 2 - bbox[1]
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            draw.text((x, y), char, font=font, fill=(r, g, b, 255))
+            img = img.resize((size, size), Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            log.exception('Erro ao criar ícone MDL2')
+            return None
+
+    def _create_clip_icon(self, size, color, bg_color):
+        """Desenha ícone de clipe/anexo profissional com PIL."""
+        try:
+            from PIL import ImageDraw
+            s = size * 8  # super-sample para anti-alias
+            img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            pen = (r, g, b, 255)
+            w = s // 12
+            cx = s * 0.5
+            # Outer loop
+            ow = s * 0.22
+            ot, ob = s * 0.15, s * 0.85
+            draw.arc([cx - ow, ot, cx + ow, ot + ow * 2], 180, 0, fill=pen, width=w)
+            draw.line([(cx - ow, ot + ow), (cx - ow, ob - ow)], fill=pen, width=w)
+            draw.arc([cx - ow, ob - ow * 2, cx + ow, ob], 0, 180, fill=pen, width=w)
+            draw.line([(cx + ow, ob - ow), (cx + ow, s * 0.28 + s * 0.11)], fill=pen, width=w)
+            # Inner loop
+            iw = s * 0.11
+            it, ib = s * 0.28, s * 0.72
+            draw.arc([cx - iw, it, cx + iw, it + iw * 2], 180, 0, fill=pen, width=w)
+            draw.line([(cx - iw, it + iw), (cx - iw, ib - iw)], fill=pen, width=w)
+            draw.arc([cx - iw, ib - iw * 2, cx + iw, ib], 0, 180, fill=pen, width=w)
+            draw.line([(cx + iw, ib - iw), (cx + iw, it + iw)], fill=pen, width=w)
+            # Rotacionar (inclinado como referência)
+            img = img.rotate(35, resample=Image.BICUBIC, expand=True,
+                             fillcolor=(0, 0, 0, 0))
+            bbox = img.getbbox()
+            if bbox:
+                img = img.crop(bbox)
+            mx = max(img.size)
+            out = Image.new('RGBA', (mx, mx), (0, 0, 0, 0))
+            out.paste(img, ((mx - img.size[0]) // 2, (mx - img.size[1]) // 2))
+            out = out.resize((size, size), Image.LANCZOS)
+            return ImageTk.PhotoImage(out)
+        except Exception:
+            log.exception('Erro ao criar ícone de clipe')
+            return None
+
+    def _render_emoji_image(self, emoji_char, size=28):
+        """Renderiza emoji colorido como PhotoImage via PIL."""
+        if not HAS_PIL:
+            return None
+        try:
+            from PIL import ImageFont, ImageDraw
+            font_path = 'C:/Windows/Fonts/seguiemj.ttf'
+            if not os.path.exists(font_path):
+                return None
+            font = ImageFont.truetype(font_path, size)
+            # Medir tamanho do emoji
+            tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+            d = ImageDraw.Draw(tmp)
+            bbox = d.textbbox((0, 0), emoji_char, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            # Renderizar centralizado
+            img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+            draw = ImageDraw.Draw(img)
+            x = (size + 4 - tw) // 2 - bbox[0]
+            y = (size + 4 - th) // 2 - bbox[1]
+            draw.text((x, y), emoji_char, font=font, embedded_color=True)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            log.exception('Erro ao renderizar emoji')
+            return None
+
+    def _show_emoji_picker_impl(self):
+        popup = tk.Toplevel(self)
+        popup.title('Emoticons')
+        popup.resizable(False, False)
+        popup.configure(bg='#f0f0f0')
+        popup.transient(self)
+
+        x = self.winfo_rootx() + 10
+        y = self.winfo_rooty() + 50
+        popup.geometry(f'280x230+{x}+{y}')
+
+        # Cache de imagens de emoji para evitar garbage collection
+        popup._emoji_images = {}
+
+        # Nomes em português para busca
+        _emoji_names = {
+            '\U0001f600': 'sorriso feliz', '\U0001f603': 'sorriso olhos abertos',
+            '\U0001f604': 'sorriso olhos sorrindo', '\U0001f601': 'sorriso radiante',
+            '\U0001f606': 'rindo', '\U0001f605': 'rindo suando',
+            '\U0001f602': 'chorando de rir lagrimas', '\U0001f923': 'rolando de rir',
+            '\U0001f60a': 'sorrindo corado', '\U0001f607': 'anjo aureola',
+            '\U0001f609': 'piscando piscadela', '\U0001f60d': 'olhos de coracao apaixonado',
+            '\U0001f929': 'estrelas nos olhos', '\U0001f60e': 'oculos escuros legal cool',
+            '\U0001f618': 'mandando beijo beijinho', '\U0001f617': 'beijando',
+            '\U0001f61a': 'beijo olhos fechados',
+            '\U0001f60b': 'delicioso gostoso lingua', '\U0001f61b': 'lingua pra fora',
+            '\U0001f61c': 'lingua piscando', '\U0001f92a': 'maluco doido louco',
+            '\U0001f61d': 'nojo lingua olhos fechados',
+            '\U0001f911': 'dinheiro cifrao rico', '\U0001f917': 'abraco',
+            '\U0001f914': 'pensando pensativo hmm', '\U0001f910': 'boca fechada ziper',
+            '\U0001f928': 'sobrancelha levantada desconfiado',
+            '\U0001f610': 'neutro sem expressao', '\U0001f611': 'inexpressivo',
+            '\U0001f636': 'sem boca', '\U0001f60f': 'sorriso de lado debochado',
+            '\U0001f612': 'descontente chateado', '\U0001f644': 'revirando olhos',
+            '\U0001f62c': 'cara de grimace', '\U0001f925': 'mentiroso pinoquio',
+            '\U0001f60c': 'aliviado', '\U0001f614': 'pensativo triste',
+            '\U0001f62a': 'sonolento sono', '\U0001f924': 'babando baba',
+            '\U0001f634': 'dormindo zzz', '\U0001f637': 'mascara doente',
+            '\U0001f912': 'termometro febre', '\U0001f915': 'machucado bandagem',
+            '\U0001f922': 'enjoado nausea', '\U0001f92e': 'vomitando',
+            '\U0001f927': 'espirrando espirro gripe', '\U0001f975': 'quente calor',
+            '\U0001f976': 'frio congelando gelado', '\U0001f974': 'tonto zonzo',
+            '\U0001f620': 'bravo irritado', '\U0001f621': 'raiva furioso vermelho',
+            '\U0001f624': 'triunfante bufando', '\U0001f622': 'chorando triste',
+            '\U0001f62d': 'chorando muito', '\U0001f616': 'confuso',
+            '\U0001f623': 'cansado perseverante', '\U0001f625': 'desapontado aliviado',
+            '\U0001f628': 'assustado medo', '\U0001f631': 'gritando horror',
+            '\U0001f630': 'ansioso suando', '\U0001f629': 'exausto cansado',
+            '\U0001f62b': 'cansado exausto', '\U0001f633': 'corado envergonhado',
+            '\U0001f632': 'surpreso espantado', '\U0001f61e': 'desapontado',
+            '\U0001f613': 'suando frio', '\U0001f635': 'tonto x olhos',
+            '\U0001f608': 'sorriso diabo', '\U0001f47f': 'diabo bravo demonio',
+            '\U0001f4a9': 'coco cocô', '\U0001f921': 'palhaco',
+            '\U0001f47b': 'fantasma', '\U0001f480': 'caveira cranio',
+            # Gestos
+            '\U0001f44d': 'positivo joinha legal like', '\U0001f44e': 'negativo ruim dislike',
+            '\U0001f44a': 'soco punho', '\u270a': 'punho levantado',
+            '\U0001f91b': 'punho esquerdo', '\U0001f91c': 'punho direito',
+            '\U0001f44f': 'palmas aplausos parabens', '\U0001f64c': 'maos levantadas celebrar',
+            '\U0001f450': 'maos abertas', '\U0001f932': 'palmas para cima',
+            '\U0001f91d': 'aperto de mao', '\U0001f64f': 'orar rezar por favor',
+            '\U0001f4aa': 'forca musculo braco forte', '\U0001f44b': 'acenando tchau oi',
+            '\U0001f91a': 'mao levantada', '\u270b': 'mao aberta pare',
+            '\U0001f596': 'vulcano spock', '\U0001f44c': 'ok perfeito',
+            '\U0001f91e': 'dedos cruzados sorte', '\U0001f91f': 'te amo amor',
+            '\U0001f918': 'rock chifres metal', '\U0001f448': 'apontando esquerda',
+            '\U0001f449': 'apontando direita', '\U0001f446': 'apontando cima',
+            '\U0001f447': 'apontando baixo', '\U0001f485': 'unha pintando esmalte',
+            '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
+            '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
+            '\U0001f919': 'me liga telefone hang loose',
+            '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
+            # Comida e Bebida
+            '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
+            '\U0001f350': 'pera', '\U0001f34a': 'tangerina laranja',
+            '\U0001f34b': 'limao', '\U0001f34c': 'banana',
+            '\U0001f349': 'melancia', '\U0001f347': 'uva',
+            '\U0001f353': 'morango', '\U0001f348': 'melao',
+            '\U0001f352': 'cereja', '\U0001f351': 'pessego',
+            '\U0001f95d': 'kiwi', '\U0001f345': 'tomate',
+            '\U0001f346': 'berinjela', '\U0001f955': 'cenoura',
+            '\U0001f33d': 'milho espiga', '\U0001f336\ufe0f': 'pimenta',
+            '\U0001f954': 'batata', '\U0001f360': 'batata doce',
+            '\U0001f950': 'croissant', '\U0001f35e': 'pao',
+            '\U0001f956': 'baguete pao frances', '\U0001f9c0': 'queijo',
+            '\U0001f356': 'carne osso', '\U0001f357': 'coxa frango',
+            '\U0001f354': 'hamburguer', '\U0001f35f': 'batata frita',
+            '\U0001f355': 'pizza', '\U0001f32d': 'cachorro quente hot dog',
+            '\U0001f32e': 'taco', '\U0001f32f': 'burrito',
+            '\U0001f373': 'ovo frigideira', '\U0001f958': 'panela',
+            '\U0001f372': 'sopa', '\U0001f35c': 'ramen macarrao',
+            '\U0001f363': 'sushi', '\U0001f371': 'bento',
+            '\U0001f35b': 'curry arroz', '\U0001f35a': 'arroz',
+            '\U0001f359': 'onigiri', '\U0001f370': 'bolo fatia',
+            '\U0001f382': 'aniversario bolo vela', '\U0001f36e': 'pudim',
+            '\U0001f36d': 'pirulito', '\U0001f36c': 'bala doce',
+            '\U0001f36b': 'chocolate', '\U0001f369': 'donut rosquinha',
+            '\U0001f368': 'sorvete', '\U0001f366': 'sorvete cone casquinha',
+            '\U0001f367': 'raspadinha gelo',
+            '\u2615': 'cafe xicara cha', '\U0001f375': 'cha verde',
+            '\U0001f376': 'sake', '\U0001f37a': 'cerveja chope chopp beer',
+            '\U0001f37b': 'brinde cervejas chope chopp', '\U0001f377': 'vinho taca',
+            '\U0001f378': 'coquetel martini drink', '\U0001f379': 'drink tropical',
+            '\U0001f37e': 'champagne garrafa', '\U0001f944': 'colher',
+            '\U0001f95b': 'leite copo',
+            # Corações
+            '\u2764\ufe0f': 'coracao vermelho amor', '\U0001f9e1': 'coracao laranja',
+            '\U0001f49b': 'coracao amarelo', '\U0001f49a': 'coracao verde',
+            '\U0001f499': 'coracao azul', '\U0001f49c': 'coracao roxo',
+            '\U0001f5a4': 'coracao preto', '\U0001f90e': 'coracao marrom',
+            '\U0001f90d': 'coracao branco', '\U0001f494': 'coracao partido',
+            '\U0001f495': 'dois coracoes', '\U0001f49e': 'coracoes girando',
+            '\U0001f493': 'coracao batendo', '\U0001f497': 'coracao crescendo',
+            '\U0001f496': 'coracao brilhando', '\U0001f498': 'coracao flechado cupido',
+            '\U0001f48c': 'carta amor', '\U0001f48b': 'beijo marca batom',
+            '\U0001f48d': 'anel alianca', '\U0001f48e': 'diamante joia',
+            '\U0001f4ab': 'tontura estrela', '\U0001f4a5': 'explosao boom',
+            '\U0001f4a2': 'raiva simbolo', '\U0001f4a6': 'gotas suor',
+            '\U0001f4a8': 'vento sopro', '\U0001f573\ufe0f': 'buraco',
+            '\U0001f4a3': 'bomba', '\U0001f4ac': 'balao fala', '\U0001f4ad': 'balao pensamento',
+            '\U0001f5e8\ufe0f': 'balao comentario',
+            # Viagem e Objetos
+            '\U0001f697': 'carro automovel', '\U0001f695': 'taxi',
+            '\U0001f68c': 'onibus', '\U0001f691': 'ambulancia',
+            '\U0001f692': 'bombeiro caminhao', '\U0001f693': 'policia viatura',
+            '\U0001f3ce\ufe0f': 'carro corrida formula',
+            '\u2708\ufe0f': 'aviao', '\U0001f680': 'foguete',
+            '\U0001f6f8': 'disco voador ufo', '\U0001f6a2': 'navio',
+            '\U0001f3e0': 'casa', '\U0001f3e2': 'escritorio predio',
+            '\U0001f3eb': 'escola', '\U0001f3e5': 'hospital',
+            '\U0001f3ed': 'fabrica', '\u26ea': 'igreja',
+            '\U0001f5fc': 'torre tokyo', '\U0001f4f1': 'celular telefone',
+            '\U0001f4bb': 'computador notebook laptop', '\U0001f4f7': 'camera foto',
+            '\U0001f4f9': 'camera video filmadora', '\U0001f4fa': 'televisao tv',
+            '\U0001f4fb': 'radio', '\u23f0': 'despertador alarme',
+            '\u231a': 'relogio', '\U0001f4a1': 'lampada ideia',
+            '\U0001f526': 'lanterna', '\U0001f4b0': 'dinheiro saco',
+            '\U0001f4b5': 'dinheiro nota dolar', '\U0001f4b3': 'cartao credito',
+            '\U0001f4e7': 'email', '\U0001f4e8': 'email recebido',
+            '\U0001f4e9': 'email enviado', '\U0001f4ce': 'clipe anexo',
+            '\U0001f4c1': 'pasta', '\U0001f4c2': 'pasta aberta',
+            '\U0001f4c4': 'documento pagina', '\U0001f4c5': 'calendario',
+            '\U0001f4ca': 'grafico barras', '\U0001f4cb': 'prancheta',
+            '\U0001f4cc': 'tachinha', '\U0001f4dd': 'memo nota escrita',
+            '\u270f\ufe0f': 'lapis', '\U0001f512': 'cadeado fechado',
+            '\U0001f513': 'cadeado aberto', '\U0001f527': 'chave inglesa ferramenta',
+            '\U0001f528': 'martelo', '\U0001f6e0\ufe0f': 'ferramentas',
+            # Símbolos e Esportes
+            '\U0001f3c6': 'trofeu copa', '\U0001f3c5': 'medalha esporte',
+            '\U0001f947': 'medalha ouro primeiro', '\U0001f948': 'medalha prata segundo',
+            '\U0001f949': 'medalha bronze terceiro', '\u26bd': 'futebol bola',
+            '\U0001f3c0': 'basquete', '\U0001f3c8': 'futebol americano',
+            '\U0001f3be': 'tenis', '\U0001f3d0': 'volei',
+            '\U0001f3b1': 'sinuca bilhar', '\U0001f3b3': 'boliche',
+            '\U0001f3af': 'alvo dardo', '\U0001f3ae': 'videogame joystick',
+            '\U0001f3b2': 'dado', '\U0001f3b0': 'caca niquel slot',
+            '\U0001f3b5': 'nota musical', '\U0001f3b6': 'notas musicais musica',
+            '\U0001f3a4': 'microfone karaoke', '\U0001f3a7': 'fone ouvido',
+            '\U0001f3b8': 'guitarra', '\U0001f3b9': 'teclado piano',
+            '\U0001f3ba': 'trompete', '\U0001f3bb': 'violino',
+            '\U0001f525': 'fogo chama quente', '\U0001f4af': 'cem pontos perfeito',
+            '\U0001f389': 'festa confete', '\U0001f388': 'balao festa',
+            '\U0001f381': 'presente', '\U0001f380': 'laco fita',
+            '\U0001f3c1': 'bandeira chegada', '\u2705': 'check verde ok',
+            '\u274c': 'x vermelho errado nao', '\u26a0\ufe0f': 'aviso alerta',
+            '\U0001f6ab': 'proibido', '\u2753': 'interrogacao pergunta',
+            '\u2757': 'exclamacao', '\U0001f4ac': 'balao fala conversa',
+            '\U0001f4ad': 'balao pensamento', '\U0001f6a9': 'bandeira triangular',
+            '\U0001f3f3\ufe0f': 'bandeira branca', '\U0001f3f4': 'bandeira preta',
+        }
+
+        categories = {
+            # Rostos e Pessoas
+            '\U0001f600': [
+                '\U0001f600', '\U0001f603', '\U0001f604', '\U0001f601',
+                '\U0001f606', '\U0001f605', '\U0001f602', '\U0001f923',
+                '\U0001f60a', '\U0001f607', '\U0001f609', '\U0001f60d',
+                '\U0001f929', '\U0001f60e', '\U0001f618', '\U0001f617', '\U0001f61a',
+                '\U0001f60b', '\U0001f61b', '\U0001f61c', '\U0001f92a',
+                '\U0001f61d', '\U0001f911', '\U0001f917', '\U0001f914',
+                '\U0001f910', '\U0001f928', '\U0001f610', '\U0001f611',
+                '\U0001f636', '\U0001f60f', '\U0001f612', '\U0001f644',
+                '\U0001f62c', '\U0001f925', '\U0001f60c', '\U0001f614',
+                '\U0001f62a', '\U0001f924', '\U0001f634', '\U0001f637',
+                '\U0001f912', '\U0001f915', '\U0001f922', '\U0001f92e',
+                '\U0001f927', '\U0001f975', '\U0001f976', '\U0001f974',
+                '\U0001f620', '\U0001f621', '\U0001f624', '\U0001f622',
+                '\U0001f62d', '\U0001f616', '\U0001f623', '\U0001f625',
+                '\U0001f628', '\U0001f631', '\U0001f630', '\U0001f629',
+                '\U0001f62b', '\U0001f633', '\U0001f632', '\U0001f61e',
+                '\U0001f613', '\U0001f635', '\U0001f608', '\U0001f47f',
+                '\U0001f4a9', '\U0001f921', '\U0001f47b', '\U0001f480',
+            ],
+            # Gestos e Mãos
+            '\U0001f44d': [
+                '\U0001f44d', '\U0001f44e', '\U0001f44a', '\u270a',
+                '\U0001f91b', '\U0001f91c', '\U0001f44f', '\U0001f64c',
+                '\U0001f450', '\U0001f932', '\U0001f91d', '\U0001f64f',
+                '\U0001f4aa', '\U0001f44b', '\U0001f91a', '\u270b',
+                '\U0001f596', '\U0001f44c', '\U0001f91e', '\U0001f91f',
+                '\U0001f918', '\U0001f448', '\U0001f449', '\U0001f446',
+                '\U0001f447', '\U0001f485', '\U0001f933', '\u270c\ufe0f',
+                '\U0001f590\ufe0f', '\u261d\ufe0f', '\U0001f919',
+                '\U0001f9b5', '\U0001f9b6',
+            ],
+            # Comida e Bebida
+            '\U0001f354': [
+                '\U0001f34e', '\U0001f34f', '\U0001f350', '\U0001f34a',
+                '\U0001f34b', '\U0001f34c', '\U0001f349', '\U0001f347',
+                '\U0001f353', '\U0001f348', '\U0001f352', '\U0001f351',
+                '\U0001f95d', '\U0001f345', '\U0001f346', '\U0001f955',
+                '\U0001f33d', '\U0001f336\ufe0f', '\U0001f954', '\U0001f360',
+                '\U0001f950', '\U0001f35e', '\U0001f956', '\U0001f9c0',
+                '\U0001f356', '\U0001f357', '\U0001f354', '\U0001f35f',
+                '\U0001f355', '\U0001f32d', '\U0001f32e', '\U0001f32f',
+                '\U0001f373', '\U0001f958', '\U0001f372', '\U0001f35c',
+                '\U0001f363', '\U0001f371', '\U0001f35b', '\U0001f35a',
+                '\U0001f359', '\U0001f370', '\U0001f382', '\U0001f36e',
+                '\U0001f36d', '\U0001f36c', '\U0001f36b', '\U0001f369',
+                '\U0001f368', '\U0001f366', '\U0001f367',
+                '\u2615', '\U0001f375', '\U0001f376', '\U0001f37a',
+                '\U0001f37b', '\U0001f377', '\U0001f378', '\U0001f379',
+                '\U0001f37e', '\U0001f944', '\U0001f95b',
+            ],
+            # Corações e Amor
+            '\u2764\ufe0f': [
+                '\u2764\ufe0f', '\U0001f9e1', '\U0001f49b', '\U0001f49a',
+                '\U0001f499', '\U0001f49c', '\U0001f5a4', '\U0001f90e',
+                '\U0001f90d', '\U0001f494', '\U0001f495', '\U0001f49e',
+                '\U0001f493', '\U0001f497', '\U0001f496', '\U0001f498',
+                '\U0001f48c', '\U0001f48b', '\U0001f48d', '\U0001f48e',
+                '\U0001f4ab', '\U0001f4a5', '\U0001f4a2', '\U0001f4a6',
+                '\U0001f4a8', '\U0001f573\ufe0f', '\U0001f4a3',
+                '\U0001f4ac', '\U0001f4ad', '\U0001f5e8\ufe0f',
+            ],
+            # Viagem e Objetos
+            '\U0001f3e0': [
+                '\U0001f697', '\U0001f695', '\U0001f68c', '\U0001f691',
+                '\U0001f692', '\U0001f693', '\U0001f3ce\ufe0f',
+                '\u2708\ufe0f', '\U0001f680', '\U0001f6f8',
+                '\U0001f6a2', '\U0001f3e0', '\U0001f3e2', '\U0001f3eb',
+                '\U0001f3e5', '\U0001f3ed', '\u26ea', '\U0001f5fc',
+                '\U0001f4f1', '\U0001f4bb', '\U0001f4f7', '\U0001f4f9',
+                '\U0001f4fa', '\U0001f4fb', '\u23f0', '\u231a',
+                '\U0001f4a1', '\U0001f526', '\U0001f4b0', '\U0001f4b5',
+                '\U0001f4b3', '\U0001f4e7', '\U0001f4e8', '\U0001f4e9',
+                '\U0001f4ce', '\U0001f4c1', '\U0001f4c2', '\U0001f4c4',
+                '\U0001f4c5', '\U0001f4ca', '\U0001f4cb', '\U0001f4cc',
+                '\U0001f4dd', '\u270f\ufe0f', '\U0001f512', '\U0001f513',
+                '\U0001f527', '\U0001f528', '\U0001f6e0\ufe0f',
+            ],
+            # Símbolos e Esportes
+            '\U0001f3c6': [
+                '\U0001f3c6', '\U0001f3c5', '\U0001f947', '\U0001f948',
+                '\U0001f949', '\u26bd', '\U0001f3c0', '\U0001f3c8',
+                '\U0001f3be', '\U0001f3d0', '\U0001f3b1', '\U0001f3b3',
+                '\U0001f3af', '\U0001f3ae', '\U0001f3b2', '\U0001f3b0',
+                '\U0001f3b5', '\U0001f3b6', '\U0001f3a4', '\U0001f3a7',
+                '\U0001f3b8', '\U0001f3b9', '\U0001f3ba', '\U0001f3bb',
+                '\U0001f525', '\U0001f4af', '\U0001f389', '\U0001f388',
+                '\U0001f381', '\U0001f380', '\U0001f3c1',
+                '\u2705', '\u274c', '\u26a0\ufe0f', '\U0001f6ab',
+                '\u2753', '\u2757', '\U0001f4ac', '\U0001f4ad',
+                '\U0001f6a9', '\U0001f3f3\ufe0f', '\U0001f3f4',
+            ],
+        }
+
+        # Barra de busca de emojis
+        search_frame = tk.Frame(popup, bg='#ffffff')
+        search_frame.pack(fill='x', padx=4, pady=(4, 2))
+
+        search_icon = _create_mdl2_icon_static('\uE721', size=12, color='#a0aec0')
+        if search_icon:
+            popup._emoji_images['_search'] = search_icon
+            tk.Label(search_frame, image=search_icon,
+                     bg='#ffffff').pack(side='left', padx=(4, 2))
+
+        emoji_search_var = tk.StringVar()
+        emoji_search_entry = tk.Entry(search_frame, textvariable=emoji_search_var,
+                                       font=('Segoe UI', 8), bg='#ffffff',
+                                       fg='#1a202c', relief='flat', bd=0,
+                                       insertbackground='#1a202c')
+        emoji_search_entry.pack(side='left', fill='x', expand=True, ipady=2, padx=2)
+        emoji_search_entry.insert(0, 'Buscar emoji...')
+        emoji_search_entry.config(fg='#a0aec0')
+
+        def _emoji_search_focus_in(e):
+            if emoji_search_entry.get() == 'Buscar emoji...':
+                emoji_search_entry.delete(0, 'end')
+                emoji_search_entry.config(fg='#1a202c')
+        def _emoji_search_focus_out(e):
+            if not emoji_search_entry.get().strip():
+                emoji_search_entry.insert(0, 'Buscar emoji...')
+                emoji_search_entry.config(fg='#a0aec0')
+        emoji_search_entry.bind('<FocusIn>', _emoji_search_focus_in)
+        emoji_search_entry.bind('<FocusOut>', _emoji_search_focus_out)
+
+        tk.Frame(popup, bg='#e2e8f0', height=1).pack(fill='x', padx=6)
+
+        # Category tabs
+        tab_frame = tk.Frame(popup, bg='#e8e8e8', bd=0, relief='flat')
+        tab_frame.pack(fill='x')
+
+        # Scrollable emoji grid
+        grid_frame = tk.Frame(popup, bg='#ffffff')
+        grid_frame.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(grid_frame, bg='#ffffff', highlightthickness=0)
+        inner = tk.Frame(canvas, bg='#ffffff')
+        canvas.pack(fill='both', expand=True)
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def insert_emoji(emoji):
+            self._entry_insert_emoji(emoji)
+
+        cat_keys = list(categories.keys())
+        all_emojis = []
+        for emlist in categories.values():
+            all_emojis.extend(emlist)
+
+        def _emoji_scroll(e):
+            canvas.yview_scroll(-1 * (e.delta // 60), 'units')
+
+        def _bind_wheel_recursive(widget):
+            widget.bind('<MouseWheel>', _emoji_scroll)
+            for child in widget.winfo_children():
+                _bind_wheel_recursive(child)
+
+        def _populate_grid(emojis):
+            for w in inner.winfo_children():
+                w.destroy()
+            cols = 8
+            for i, em in enumerate(emojis):
+                r, c = divmod(i, cols)
+                img = self._render_emoji_image(em, 22)
+                if img:
+                    popup._emoji_images[em] = img
+                    btn = tk.Label(inner, image=img,
+                                   bg='#ffffff', cursor='hand2',
+                                   padx=2, pady=2)
+                else:
+                    btn = tk.Label(inner, text=em,
+                                   font=('Segoe UI Emoji', 16),
+                                   bg='#ffffff', cursor='hand2',
+                                   padx=2, pady=2)
+                btn.grid(row=r, column=c, padx=0, pady=0)
+                btn.bind('<Button-1>',
+                         lambda e, emoji=em: insert_emoji(emoji))
+                btn.bind('<Enter>',
+                         lambda e, b=btn: b.configure(bg='#e8f0fe'))
+                btn.bind('<Leave>',
+                         lambda e, b=btn: b.configure(bg='#ffffff'))
+            inner.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox('all'))
+            canvas.yview_moveto(0)
+            _bind_wheel_recursive(inner)
+
+        def show_category(cat_key):
+            _populate_grid(categories[cat_key])
+            for b in tab_buttons:
+                b.configure(bg='#e8e8e8', relief='flat')
+            idx = cat_keys.index(cat_key)
+            tab_buttons[idx].configure(bg='#ffffff', relief='sunken')
+
+        def _on_emoji_search(*args):
+            query = emoji_search_var.get().strip().lower()
+            if query == 'buscar emoji...' or not query:
+                show_category(cat_keys[0])
+                return
+            # Desmarcar tabs
+            for b in tab_buttons:
+                b.configure(bg='#e8e8e8', relief='flat')
+            # Filtrar emojis por nome PT
+            results = []
+            for em, name in _emoji_names.items():
+                if query in name:
+                    results.append(em)
+            if results:
+                _populate_grid(results)
+            else:
+                _populate_grid([])
+
+        emoji_search_var.trace_add('write', _on_emoji_search)
+
+        tab_buttons = []
+        for cat_key in cat_keys:
+            tab_img = self._render_emoji_image(cat_key, 20)
+            if tab_img:
+                popup._emoji_images[f'tab_{cat_key}'] = tab_img
+                btn = tk.Label(tab_frame, image=tab_img,
+                               bg='#e8e8e8', cursor='hand2',
+                               padx=8, pady=3, relief='flat')
+            else:
+                btn = tk.Label(tab_frame, text=cat_key,
+                               font=('Segoe UI Emoji', 12),
+                               bg='#e8e8e8', cursor='hand2',
+                               padx=8, pady=2, relief='flat')
+            btn.pack(side='left', padx=1)
+            btn.bind('<Button-1>', lambda e, k=cat_key: show_category(k))
+            tab_buttons.append(btn)
+
+        canvas.bind('<MouseWheel>', _emoji_scroll)
+        inner.bind('<MouseWheel>', _emoji_scroll)
+
+        show_category(cat_keys[0])
+        _bind_wheel_recursive(inner)
+        popup.bind('<Escape>', lambda e: popup.destroy())
+
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
             del self.app.chat_windows[self.peer_id]
+        self.destroy()
+
+
+# =============================================================
+#  GROUP CHAT WINDOW
+# =============================================================
+class GroupChatWindow(tk.Toplevel):
+    """Janela de Bate Papo em grupo (multi-participantes)."""
+
+    def __init__(self, app, group_id, group_name):
+        super().__init__(app.root)
+        self.app = app
+        self.group_id = group_id
+        self.group_name = group_name
+        self._members = {}  # uid -> display_name
+
+        self.title(f'{group_name} - Bate Papo')
+        self.minsize(380, 400)
+        _center_window(self, 460, 500)
+        self.protocol('WM_DELETE_WINDOW', self._on_close)
+
+        ico = _get_icon_path()
+        if ico:
+            try:
+                self.iconbitmap(ico)
+            except Exception:
+                pass
+
+        t = THEMES.get(app._current_theme if hasattr(app, '_current_theme')
+                       else 'MB Contabilidade',
+                       THEMES.get('MB Contabilidade', {}))
+        self._build_ui(t)
+        self.bind('<FocusIn>', lambda e: app._stop_flash(self))
+
+    def _build_ui(self, t):
+        NAVY = '#0f2a5c'
+
+        # Header
+        header = tk.Frame(self, bg=NAVY, bd=0)
+        header.pack(fill='x')
+        header._navy_panel = True
+        hinner = tk.Frame(header, bg=NAVY)
+        hinner.pack(fill='x', padx=10, pady=7)
+
+        self._lbl_title = tk.Label(hinner, text=self.group_name,
+                                   font=('Segoe UI', 11, 'bold'),
+                                   bg=NAVY, fg='#ffffff')
+        self._lbl_title.pack(side='left')
+
+        self._lbl_count = tk.Label(hinner, text='0 participantes',
+                                   font=('Segoe UI', 8),
+                                   bg=NAVY, fg='#c8d6e5')
+        self._lbl_count.pack(side='left', padx=(8, 0))
+
+        btn_part = tk.Button(hinner, text='\U0001f465',
+                             font=('Segoe UI', 9), bg='#1a3f7a',
+                             fg='#ffffff', relief='flat', bd=0,
+                             cursor='hand2', padx=6, pady=1,
+                             command=self._show_participants)
+        btn_part.pack(side='right')
+
+        # Chat area
+        chat_frame = tk.Frame(self, bg=t.get('bg_chat', '#f5f7fa'))
+        chat_frame.pack(fill='both', expand=True)
+
+        self.chat_text = tk.Text(chat_frame, font=('Segoe UI', 10),
+                                  bg=t.get('bg_chat', '#f5f7fa'),
+                                  fg=t.get('fg_msg', '#1a202c'),
+                                  relief='flat', bd=0,
+                                  wrap='word', state='disabled',
+                                  padx=10, pady=8)
+        sb = tk.Scrollbar(chat_frame, command=self.chat_text.yview, width=6)
+        sb.pack(side='right', fill='y')
+        self.chat_text.configure(yscrollcommand=sb.set)
+        self.chat_text.pack(fill='both', expand=True)
+
+        self.chat_text.tag_configure('my_name',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     foreground='#2451a0')
+        self.chat_text.tag_configure('peer_name',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     foreground='#cc2222')
+        self.chat_text.tag_configure('sys_msg',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     foreground='#718096',
+                                     justify='center')
+        self.chat_text.tag_configure('time', font=('Segoe UI', 7),
+                                     foreground='#718096')
+        self.chat_text.tag_configure('msg', font=('Segoe UI', 10),
+                                     foreground=t.get('fg_msg', '#1a202c'))
+
+        # Separador
+        tk.Frame(self, bg='#e2e8f0', height=1).pack(fill='x')
+
+        # Input
+        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        input_outer.pack(fill='x', padx=8, pady=(4, 6))
+        input_inner = tk.Frame(input_outer, bg=t.get('bg_input', '#f7fafc'))
+        input_inner.pack(fill='x', padx=1, pady=1)
+
+        self.entry = tk.Text(input_inner, font=('Segoe UI', 10),
+                             bg=t.get('bg_input', '#f7fafc'),
+                             fg=t.get('fg_black', '#1a202c'),
+                             relief='flat', bd=0, height=2,
+                             wrap='word', padx=6, pady=4,
+                             insertbackground=t.get('fg_black', '#1a202c'))
+        self.entry.pack(side='left', fill='both', expand=True)
+        self.entry.bind('<Return>', self._on_enter)
+        self.entry.bind('<Shift-Return>', lambda e: None)
+        self.entry.focus_set()
+
+        btn_send = tk.Button(input_inner, text='Enviar',
+                             font=('Segoe UI', 9, 'bold'),
+                             bg='#0f2a5c', fg='#ffffff',
+                             relief='flat', bd=0, cursor='hand2',
+                             padx=12, pady=4,
+                             activebackground='#1a3f7a',
+                             activeforeground='#ffffff',
+                             command=self._send_message)
+        btn_send.pack(side='right', padx=(4, 2), pady=2)
+
+    def add_member(self, uid, display_name):
+        self._members[uid] = display_name
+        self._lbl_count.config(text=f'{len(self._members)} participante(s)')
+
+    def system_message(self, text):
+        self.chat_text.configure(state='normal')
+        self.chat_text.insert('end', f'— {text} —\n\n', 'sys_msg')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
+    def _append_message(self, sender, text, is_mine, timestamp=None):
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
+        self.chat_text.configure(state='normal')
+        name_tag = 'my_name' if is_mine else 'peer_name'
+        self.chat_text.insert('end', sender, name_tag)
+        self.chat_text.insert('end', f'  {ts}\n', 'time')
+        self.chat_text.insert('end', f'{text}\n\n', 'msg')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
+    def receive_message(self, display_name, content, timestamp=None):
+        self._append_message(display_name, content, False, timestamp)
+
+    def _on_enter(self, event):
+        if not (event.state & 1):
+            self._send_message()
+            return 'break'
+
+    def _send_message(self):
+        content = self.entry.get('1.0', 'end').strip()
+        if not content:
+            return
+        self.entry.delete('1.0', 'end')
+        self._append_message(self.app.messenger.display_name, content, True)
+        threading.Thread(target=self.app.messenger.send_group_message,
+                         args=(self.group_id, content),
+                         daemon=True).start()
+
+    def _show_participants(self):
+        win = tk.Toplevel(self)
+        win.title('Participantes')
+        _center_window(win, 240, 280)
+        win.transient(self)
+        tk.Label(win, text='Participantes do grupo',
+                 font=FONT_BOLD).pack(pady=(10, 4))
+        lb = tk.Listbox(win, font=FONT, relief='flat', bd=0,
+                        highlightthickness=0, selectmode='none')
+        lb.pack(fill='both', expand=True, padx=10, pady=4)
+        for uid, name in self._members.items():
+            lb.insert('end', f'  {name}')
+        tk.Button(win, text='Fechar', font=FONT,
+                  command=win.destroy).pack(pady=8)
+
+    def _on_close(self):
+        if self.group_id in self.app.group_windows:
+            del self.app.group_windows[self.group_id]
         self.destroy()
 
 
@@ -1363,9 +2815,14 @@ class LanMessengerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_NAME)
-        self.root.minsize(240, 350)
-        self.root.geometry('280x500')
+        self.root.minsize(260, 450)
+        self.root.geometry('280x520')
         self.root.configure(bg=BG_WINDOW)
+
+        # Captura exceções não tratadas do tkinter
+        def _tk_exception(exc_type, exc_value, exc_tb):
+            log.error('Tkinter exception', exc_info=(exc_type, exc_value, exc_tb))
+        self.root.report_callback_exception = _tk_exception
 
         # Icone da janela (iconphoto para nitidez na taskbar)
         self._icon_path = _get_icon_path()
@@ -1384,6 +2841,7 @@ class LanMessengerApp:
         self.root.after(10, self._position_right)
 
         self.chat_windows = {}
+        self.group_windows = {}  # group_id -> GroupChatWindow
         self.peer_items = {}
         self.peer_info = {}
         self._file_dialogs = {}  # file_id -> FileTransferDialog
@@ -1392,6 +2850,7 @@ class LanMessengerApp:
 
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+        self.root.bind('<FocusIn>', lambda e: self._stop_flash())
 
         # Init pesado deferido: janela aparece rapido, depois carrega rede/DB/tray
         self.root.after_idle(self._deferred_init)
@@ -1439,6 +2898,8 @@ class LanMessengerApp:
             on_file_progress=self._safe(self._on_file_progress),
             on_file_complete=self._safe(self._on_file_complete),
             on_file_error=self._safe(self._on_file_error),
+            on_group_invite=self._safe(self._on_group_invite),
+            on_group_message=self._safe(self._on_group_message),
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
@@ -1469,9 +2930,6 @@ class LanMessengerApp:
                        command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'),
                        command=self._show_transfers)
-        m2.add_separator()
-        m2.add_command(label=_t('menu_broadcast'),
-                       command=self._send_broadcast)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
         m3 = tk.Menu(menubar, tearoff=0, font=FONT)
@@ -1509,6 +2967,7 @@ class LanMessengerApp:
         """Aplica um tema em toda a interface."""
         t = THEMES.get(theme_name, THEMES['MB Contabilidade'])
         self._theme = t
+        self._current_theme = theme_name
 
         # --- Main window ---
         self.root.configure(bg=t['bg_window'])
@@ -1522,7 +2981,7 @@ class LanMessengerApp:
                         background=t['bg_white'],
                         foreground=t['fg_black'],
                         fieldbackground=t['bg_white'],
-                        rowheight=28)
+                        rowheight=44)
         style.configure('Contacts.Treeview.Heading',
                         background=t['bg_group'],
                         foreground=t['fg_white'])
@@ -1537,22 +2996,49 @@ class LanMessengerApp:
 
         # Tags do treeview
         if hasattr(self, 'tree'):
-            self.tree.tag_configure('group', background=t['bg_group'],
-                                    foreground=t['fg_white'], font=FONT_BOLD)
+            self.tree.tag_configure('group', background='#cc2222',
+                                    foreground='#ffffff',
+                                    font=('Segoe UI', 8, 'bold'))
             self.tree.tag_configure('online', foreground=t['fg_black'])
             self.tree.tag_configure('away', foreground=t['fg_orange'])
             self.tree.tag_configure('busy', foreground=t['fg_red'])
             self.tree.tag_configure('offline', foreground=t['fg_gray'])
 
 
-        # --- User info panel ---
+        # --- User info panel (navy header) ---
+        navy = t.get('accent', '#0f2a5c')
+        navy_light = t.get('btn_active', '#1a3f7a')
         if hasattr(self, 'lbl_username'):
-            self.lbl_username.configure(bg=t['bg_white'], fg=t['fg_black'])
+            self.lbl_username.configure(bg=navy, fg='#ffffff')
+            # Re-apply navy to parent frames
+            for w in (self.lbl_username.master, self.lbl_username.master.master,
+                      self.lbl_username.master.master.master):
+                try:
+                    w.configure(bg=navy)
+                except Exception:
+                    pass
         if hasattr(self, 'avatar_canvas'):
-            self.avatar_canvas.configure(bg=t['bg_white'])
+            self.avatar_canvas.configure(bg=navy)
         if hasattr(self, 'note_entry'):
-            self.note_entry.configure(bg=t['bg_white'], fg=t['fg_gray'],
-                                      insertbackground=t['fg_gray'])
+            self.note_entry.configure(bg=navy_light, fg='#c8d6e5',
+                                      insertbackground='#c8d6e5')
+            try:
+                self.note_entry.master.configure(bg=navy_light)
+                self.note_entry.master.master.configure(bg=navy)
+            except Exception:
+                pass
+        if hasattr(self, 'status_combo'):
+            st = ttk.Style()
+            st.configure('Status.TCombobox',
+                         fieldbackground=navy, background=navy,
+                         foreground='#c8d6e5')
+            st.map('Status.TCombobox',
+                   fieldbackground=[('readonly', navy)],
+                   background=[('readonly', navy_light)],
+                   foreground=[('readonly', '#c8d6e5')],
+                   bordercolor=[('readonly', navy)],
+                   lightcolor=[('readonly', navy)],
+                   darkcolor=[('readonly', navy)])
 
         # --- Chat windows abertas ---
         for cw in self.chat_windows.values():
@@ -1560,6 +3046,9 @@ class LanMessengerApp:
 
     def _apply_theme_recursive(self, widget, t):
         """Aplica cores basicas em frames e labels recursivamente."""
+        # Skip navy user panel and its children
+        if getattr(widget, '_navy_panel', False):
+            return
         wtype = widget.winfo_class()
         try:
             if wtype in ('Frame', 'Labelframe'):
@@ -1588,20 +3077,35 @@ class LanMessengerApp:
         """Aplica tema em uma ChatWindow."""
         try:
             cw.configure(bg=t['bg_window'])
-            cw.chat_text.configure(bg=t['bg_chat'], fg=t['fg_msg'],
+            chat_bg = t.get('bg_chat', t['bg_white'])
+            cw.chat_text.configure(bg=chat_bg, fg=t['fg_msg'],
                                    insertbackground=t['fg_black'])
             cw.chat_text.tag_configure('time', foreground=t['fg_time'])
             cw.chat_text.tag_configure('my_name', foreground=t['fg_my_name'])
             cw.chat_text.tag_configure('peer_name',
                                        foreground=t['fg_peer_name'])
             cw.chat_text.tag_configure('msg', foreground=t['fg_msg'])
-            cw.entry.configure(bg=t['bg_input'], fg=t['fg_black'],
+            # Bubble tags
+            msg_my_bg = t.get('msg_my_bg', '#e8f0fe')
+            msg_peer_bg = t.get('msg_peer_bg', '#f0f0f0')
+            for tag_suffix in ('', '_name', '_time'):
+                cw.chat_text.tag_configure(f'my_bubble{tag_suffix}',
+                                           background=msg_my_bg)
+                cw.chat_text.tag_configure(f'peer_bubble{tag_suffix}',
+                                           background=msg_peer_bg)
+            if hasattr(cw, '_chat_scrollbar'):
+                cw._chat_scrollbar.configure(troughcolor=chat_bg)
+            input_bg = t.get('bg_input', t['bg_white'])
+            cw.entry.configure(bg=input_bg, fg=t['fg_black'],
                                insertbackground=t['fg_black'])
-            cw.lbl_peer.configure(bg=t['bg_white'], fg=t['fg_black'])
-            cw.lbl_typing.configure(bg=t['bg_white'], fg=t['fg_gray'])
-            self._apply_theme_recursive(cw, t)
+            # Header navy
+            header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
+            header_fg = t.get('chat_header_fg', '#ffffff')
+            header_sub = t.get('chat_header_sub', t['fg_gray'])
+            cw.lbl_peer.configure(bg=header_bg, fg=header_fg)
+            cw.lbl_typing.configure(bg=header_bg, fg=header_sub)
         except Exception:
-            pass
+            log.exception('Erro ao aplicar tema no chat')
 
     def _build_ui(self):
         # Menu Bar
@@ -1618,8 +3122,6 @@ class LanMessengerApp:
         m2 = tk.Menu(menubar, tearoff=0, font=FONT)
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
-        m2.add_separator()
-        m2.add_command(label=_t('menu_broadcast'), command=self._send_broadcast)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
         m3 = tk.Menu(menubar, tearoff=0, font=FONT)
@@ -1628,88 +3130,151 @@ class LanMessengerApp:
 
         self.root.config(menu=menubar)
 
-        # User Info Panel
-        user_frame = tk.Frame(self.root, bg=BG_WHITE, bd=0, relief='flat')
-        user_frame.pack(fill='x', padx=3, pady=(3, 0))
+        # User Info Panel - Navy header (identidade MB)
+        NAVY = '#0f2a5c'
+        user_frame = tk.Frame(self.root, bg=NAVY, bd=0, relief='flat')
+        user_frame._navy_panel = True  # skip in recursive theme
+        user_frame.pack(fill='x', padx=0, pady=0)
 
-        row1 = tk.Frame(user_frame, bg=BG_WHITE)
-        row1.pack(fill='x', padx=4, pady=(6, 2))
+        user_inner = tk.Frame(user_frame, bg=NAVY)
+        user_inner.pack(fill='x', padx=10, pady=(10, 8))
 
-        # Avatar
-        self.avatar_canvas = tk.Canvas(row1, width=32, height=32,
-                                       bg=BG_WHITE, highlightthickness=0,
+        # Avatar 40x40
+        self.avatar_canvas = tk.Canvas(user_inner, width=40, height=40,
+                                       bg=NAVY, highlightthickness=0,
                                        cursor='hand2')
-        self.avatar_canvas.pack(side='left', padx=(0, 6))
+        self.avatar_canvas.pack(side='left', padx=(0, 10))
         self.avatar_canvas.bind('<Button-1>',
                                 lambda e: self._show_account())
         self._draw_default_avatar(0)
 
-        name_status = tk.Frame(row1, bg=BG_WHITE)
+        name_status = tk.Frame(user_inner, bg=NAVY)
         name_status.pack(side='left', fill='x', expand=True)
 
         self.lbl_username = tk.Label(name_status, text=_t('user_default'),
-                                     font=FONT_BOLD, bg=BG_WHITE,
-                                     fg=FG_BLACK, anchor='w')
+                                     font=('Segoe UI', 11, 'bold'),
+                                     bg=NAVY, fg='#ffffff', anchor='w')
         self.lbl_username.pack(fill='x')
 
-        status_row = tk.Frame(name_status, bg=BG_WHITE)
+        status_row = tk.Frame(name_status, bg=NAVY)
         status_row.pack(fill='x')
+
+        # Estilizar combobox moderno
+        style = ttk.Style()
+        style.configure('Status.TCombobox',
+                        fieldbackground=NAVY, background=NAVY,
+                        foreground='#c8d6e5', selectbackground=NAVY,
+                        selectforeground='#ffffff', borderwidth=0,
+                        arrowcolor='#c8d6e5')
+        style.map('Status.TCombobox',
+                  fieldbackground=[('readonly', NAVY)],
+                  background=[('readonly', '#1a3f7a')],
+                  foreground=[('readonly', '#c8d6e5')],
+                  bordercolor=[('readonly', NAVY)],
+                  lightcolor=[('readonly', NAVY)],
+                  darkcolor=[('readonly', NAVY)],
+                  arrowcolor=[('readonly', '#c8d6e5')])
 
         self.status_var = tk.StringVar(value=_t('status_available'))
         self.status_combo = ttk.Combobox(
             status_row, textvariable=self.status_var,
             values=[_t('status_available'), _t('status_away'),
                     _t('status_busy'), _t('status_offline')],
-            state='readonly', font=FONT_SMALL, width=12)
+            state='readonly', font=('Segoe UI', 8), width=12,
+            style='Status.TCombobox')
         self.status_combo.pack(side='left')
         self.status_combo.bind('<<ComboboxSelected>>',
                                self._on_status_change)
 
-        row2 = tk.Frame(user_frame, bg=BG_WHITE)
-        row2.pack(fill='x', padx=8, pady=(2, 6))
+        # Botões de ação rápida: Transmitir e Bate Papo
+        action_row = tk.Frame(user_frame, bg=NAVY)
+        action_row.pack(fill='x', padx=10, pady=(0, 4))
 
-        # Wrapper para dar borda sutil ao campo de nota
-        note_border = tk.Frame(row2, bg='#aaaaaa', bd=0)
+        btn_bcast = tk.Button(action_row, text='\U0001f4e2  Transmitir',
+                              font=('Segoe UI', 8, 'bold'), bg='#1a3f7a',
+                              fg='#ffffff', relief='flat', bd=0,
+                              cursor='hand2', padx=10, pady=3,
+                              activebackground='#2451a0',
+                              activeforeground='#ffffff',
+                              command=self._show_broadcast)
+        btn_bcast.pack(side='left', padx=(0, 6))
+
+        btn_grp = tk.Button(action_row, text='\U0001f4ac  Bate Papo',
+                            font=('Segoe UI', 8, 'bold'), bg='#1a3f7a',
+                            fg='#ffffff', relief='flat', bd=0,
+                            cursor='hand2', padx=10, pady=3,
+                            activebackground='#2451a0',
+                            activeforeground='#ffffff',
+                            command=self._show_group_chat_dialog)
+        btn_grp.pack(side='left')
+
+        # Nota do usuário
+        note_row = tk.Frame(user_frame, bg=NAVY)
+        note_row.pack(fill='x', padx=10, pady=(0, 8))
+
+        note_border = tk.Frame(note_row, bg='#1a3f7a', bd=0)
         note_border.pack(fill='x')
 
-        self.note_entry = tk.Entry(note_border, font=FONT, bg=BG_WHITE,
-                                   fg=FG_GRAY, relief='flat', bd=2,
-                                   insertbackground=FG_GRAY)
+        self.note_entry = tk.Entry(note_border, font=FONT, bg='#1a3f7a',
+                                   fg='#c8d6e5', relief='flat', bd=2,
+                                   insertbackground='#c8d6e5')
         self.note_entry.pack(fill='x', ipady=2)
         self.note_entry.insert(0, _t('note_placeholder'))
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
 
-        # Toolbar
-        toolbar = tk.Frame(self.root, bg=BG_HEADER, height=30, bd=0,
-                           relief='flat')
-        toolbar.pack(fill='x', padx=3)
-        toolbar.pack_propagate(False)
+        # Separador
+        tk.Frame(self.root, bg='#e2e8f0', height=1).pack(fill='x')
 
-        for text, cmd in [(_t('btn_send'), self._send_broadcast),
-                          (_t('btn_file'), self._send_file_toolbar),
-                          (_t('btn_refresh'), self._refresh_peers)]:
-            tk.Button(toolbar, text=text, font=FONT_SMALL,
-                      bg=BG_HEADER, relief='flat', bd=0, padx=8,
-                      pady=2, command=cmd, cursor='hand2',
-                      activebackground='#d0d0d0'
-                      ).pack(side='left', padx=2, pady=2)
+        # Barra de Busca (borda arredondada via Canvas)
+        search_frame = tk.Frame(self.root, bg=BG_WINDOW)
+        search_frame.pack(fill='x', padx=8, pady=6)
+
+        # Borda via Frame-in-Frame (portátil em qualquer PC)
+        search_border = tk.Frame(search_frame, bg='#d0d5dd', bd=0,
+                                  highlightthickness=0)
+        search_border.pack(fill='x')
+
+        search_inner = tk.Frame(search_border, bg='#ffffff', bd=0,
+                                highlightthickness=0)
+        search_inner.pack(fill='x', padx=1, pady=1)
+
+        self._search_icon = _create_mdl2_icon_static('\uE721', size=14, color='#a0aec0')
+        if self._search_icon:
+            tk.Label(search_inner, image=self._search_icon,
+                     bg='#ffffff').pack(side='left', padx=(6, 2))
+        else:
+            tk.Label(search_inner, text='\u2315', font=('Segoe UI', 9),
+                     bg='#ffffff', fg='#a0aec0').pack(side='left', padx=(6, 2))
+
+        self._search_var = tk.StringVar()
+        self._search_entry = tk.Entry(search_inner, textvariable=self._search_var,
+                                       font=('Segoe UI', 9), bg='#ffffff',
+                                       fg='#1a202c', relief='flat', bd=0,
+                                       insertbackground='#1a202c')
+        self._search_entry.pack(side='left', fill='x', expand=True, ipady=4, padx=2)
+        self._search_entry.insert(0, 'Buscar contatos...')
+        self._search_entry.config(fg='#a0aec0')
+        self._search_entry.bind('<FocusIn>', self._search_focus_in)
+        self._search_entry.bind('<FocusOut>', self._search_focus_out)
+        self._search_var.trace_add('write', self._filter_contacts)
 
         # Contact Treeview
         tree_frame = tk.Frame(self.root, bg=BG_WHITE, bd=0,
                               highlightthickness=0)
-        tree_frame.pack(fill='both', expand=True, padx=3, pady=(0, 3))
+        tree_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure('Contacts.Treeview', background=BG_WHITE,
-                         foreground=FG_BLACK, fieldbackground=BG_WHITE,
-                         font=FONT, rowheight=28, borderwidth=0)
-        style.configure('Contacts.Treeview.Heading', background=BG_GROUP,
-                         foreground=FG_WHITE, font=FONT_BOLD)
+        _setup_scrollbar_style()
+        style.configure('Contacts.Treeview', background='#ffffff',
+                         foreground='#1a202c', fieldbackground='#ffffff',
+                         font=('Segoe UI', 10), rowheight=44, borderwidth=0)
+        style.configure('Contacts.Treeview.Heading', background='#cc2222',
+                         foreground='#ffffff', font=FONT_BOLD)
         style.map('Contacts.Treeview',
-                   background=[('selected', BG_SELECT)],
-                   foreground=[('selected', FG_BLACK)])
+                   background=[('selected', '#e8f0fe')],
+                   foreground=[('selected', '#1a202c')])
         style.layout('Contacts.Treeview',
                       [('Treeview.treearea', {'sticky': 'nswe'})])
 
@@ -1810,8 +3375,9 @@ class LanMessengerApp:
 
         self.group_general = self.tree.insert('', 'end', text=_t('group_general'),
                                               open=True, tags=('group',))
-        self.tree.tag_configure('group', background=BG_GROUP,
-                                foreground=FG_WHITE, font=FONT_BOLD)
+        self.tree.tag_configure('group', background='#cc2222',
+                                foreground='#ffffff',
+                                font=('Segoe UI', 8, 'bold'))
         self.tree.tag_configure('online', foreground=FG_BLACK)
         self.tree.tag_configure('away', foreground=FG_ORANGE)
         self.tree.tag_configure('busy', foreground=FG_RED)
@@ -1833,15 +3399,14 @@ class LanMessengerApp:
     def _create_status_dots(self):
         """Cria imagens de bolinha colorida para cada status."""
         dot_colors = {
-            'online': '#00cc44',
-            'away': '#ccaa00',
-            'busy': '#cc2222',
-            'offline': '#888888',
+            'online': '#48bb78',
+            'away': '#ecc94b',
+            'busy': '#f56565',
+            'offline': '#a0aec0',
         }
         size = 10
         for status, color in dot_colors.items():
             img = tk.PhotoImage(width=size, height=size)
-            # Draw filled circle using pixel-by-pixel
             cx, cy, r = size // 2, size // 2, size // 2 - 1
             for y in range(size):
                 for x in range(size):
@@ -1849,6 +3414,68 @@ class LanMessengerApp:
                     if dx * dx + dy * dy <= r * r:
                         img.put(color, (x, y))
             self._status_dots[status] = img
+        # Contact avatar images cache
+        self._contact_avatars = {}
+
+    def _create_contact_avatar(self, uid, name, status='online'):
+        """Cria imagem de avatar circular com status dot para o treeview."""
+        size = 36
+        dot_size = 10
+        dot_colors = {
+            'online': '#48bb78', 'away': '#ecc94b',
+            'busy': '#f56565', 'offline': '#a0aec0',
+        }
+        # Get avatar color
+        contact = self.messenger.db.get_contact(uid)
+        idx = contact.get('avatar_index', 0) if contact else 0
+        av_color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
+
+        if HAS_PIL:
+            from PIL import ImageDraw
+            img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            # Avatar circle com borda
+            draw.ellipse([1, 1, size - 2, size - 2], fill=av_color,
+                         outline='#0f2a5c', width=2)
+            # Initial letter
+            initial = name[0].upper() if name else 'U'
+            try:
+                from PIL import ImageFont
+                font = ImageFont.truetype('segoeui.ttf', 15)
+            except Exception:
+                font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), initial, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text(((size - tw) / 2 - bbox[0],
+                       (size - th) / 2 - bbox[1]),
+                      initial, fill='white', font=font)
+            # Status dot (bottom-right) com borda branca
+            dot_color = dot_colors.get(status, '#a0aec0')
+            dx, dy = size - dot_size - 1, size - dot_size - 1
+            draw.ellipse([dx - 1, dy - 1, dx + dot_size + 1, dy + dot_size + 1],
+                         fill='white')
+            draw.ellipse([dx, dy, dx + dot_size, dy + dot_size],
+                         fill=dot_color)
+            photo = ImageTk.PhotoImage(img)
+        else:
+            photo = tk.PhotoImage(width=size, height=size)
+            cx, cy, r = size // 2, size // 2, size // 2 - 2
+            for y in range(size):
+                for x in range(size):
+                    ddx, ddy = x - cx, y - cy
+                    if ddx * ddx + ddy * ddy <= r * r:
+                        photo.put(av_color, (x, y))
+            dot_color = dot_colors.get(status, '#a0aec0')
+            dcx, dcy = size - dot_size // 2 - 2, size - dot_size // 2 - 2
+            dr = dot_size // 2
+            for y in range(size):
+                for x in range(size):
+                    ddx, ddy = x - dcx, y - dcy
+                    if ddx * ddx + ddy * ddy <= dr * dr:
+                        photo.put(dot_color, (x, y))
+
+        self._contact_avatars[f'{uid}_{status}'] = photo
+        return photo
 
     def _load_saved_contacts(self):
         """Carrega contatos offline do DB no treeview ao iniciar."""
@@ -1864,10 +3491,10 @@ class LanMessengerApp:
             name = c.get('display_name', 'Unknown')
             suffix = ' (offline)' if tag == 'offline' else ''
             display = f'  {name}{suffix}'
-            dot = self._status_dots.get(tag)
+            avatar = self._create_contact_avatar(uid, name, tag)
             iid = self.tree.insert(self.group_general, 'end',
                                    text=display, tags=(tag,),
-                                   image=dot if dot else '')
+                                   image=avatar)
             self.peer_items[uid] = iid
             self.peer_info[uid] = {
                 'display_name': name,
@@ -1880,10 +3507,10 @@ class LanMessengerApp:
     def _draw_default_avatar(self, idx):
         self.avatar_canvas.delete('all')
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
-        self.avatar_canvas.create_rectangle(2, 2, 30, 30, fill=color,
-                                            outline='#336699')
-        self.avatar_canvas.create_text(16, 16, text='U', fill='white',
-                                       font=('Segoe UI', 12, 'bold'))
+        self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
+                                       outline='#ffffff', width=2)
+        self.avatar_canvas.create_text(20, 20, text='U', fill='white',
+                                       font=('Segoe UI', 14, 'bold'))
 
     def _update_avatar(self):
         db = self.messenger.db
@@ -1895,7 +3522,7 @@ class LanMessengerApp:
             try:
                 if HAS_PIL:
                     img = Image.open(custom)
-                    img = img.resize((28, 28), Image.LANCZOS)
+                    img = img.resize((36, 36), Image.LANCZOS)
                     self._avatar_img = ImageTk.PhotoImage(img)
                 else:
                     self._avatar_img = tk.PhotoImage(file=custom)
@@ -1904,31 +3531,56 @@ class LanMessengerApp:
                     if w > 0 and h > 0:
                         factor = max(w // 28, h // 28, 1)
                         self._avatar_img = self._avatar_img.subsample(factor)
-                self.avatar_canvas.create_image(16, 16,
+                self.avatar_canvas.create_image(20, 20,
                                                 image=self._avatar_img)
                 return
             except Exception:
                 pass
 
-        # Default colored avatar
+        # Default colored avatar (circular)
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
         initial = self.messenger.display_name[0].upper() if self.messenger.display_name else 'U'
-        self.avatar_canvas.create_rectangle(2, 2, 30, 30, fill=color,
-                                            outline='#336699')
-        self.avatar_canvas.create_text(16, 16, text=initial, fill='white',
-                                       font=('Segoe UI', 12, 'bold'))
+        self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
+                                       outline='#0f2a5c', width=2)
+        self.avatar_canvas.create_text(20, 20, text=initial, fill='white',
+                                       font=('Segoe UI', 14, 'bold'))
+
+    # --- Search bar ---
+    def _search_focus_in(self, e):
+        if self._search_entry.get() == 'Buscar contatos...':
+            self._search_entry.delete(0, 'end')
+            self._search_entry.config(fg='#1a202c')
+
+    def _search_focus_out(self, e):
+        if not self._search_entry.get().strip():
+            self._search_entry.insert(0, 'Buscar contatos...')
+            self._search_entry.config(fg='#a0aec0')
+
+    def _filter_contacts(self, *args):
+        query = self._search_var.get().strip().lower()
+        if query == 'buscar contatos...' or not query:
+            # Mostrar todos
+            for uid, iid in self.peer_items.items():
+                self.tree.reattach(iid, self.group_general, 'end')
+            return
+        for uid, iid in self.peer_items.items():
+            name = self.peer_info.get(uid, {}).get('display_name', '').lower()
+            if query in name:
+                self.tree.reattach(iid, self.group_general, 'end')
+            else:
+                self.tree.detach(iid)
 
     # --- Note ---
     def _note_focus_in(self, e):
         if self.note_entry.get() in ('Digite uma nota', 'Type a note',
                                         _t('note_placeholder')):
             self.note_entry.delete(0, 'end')
-            self.note_entry.config(fg=FG_BLACK)
+            self.note_entry.config(fg='#ffffff')
 
     def _note_focus_out(self, e):
         if not self.note_entry.get().strip():
             self.note_entry.insert(0, _t('note_placeholder'))
-            self.note_entry.config(fg=FG_GRAY)
+            self.note_entry.config(fg='#c8d6e5')
 
     def _on_status_change(self, e=None):
         m = {_t('status_available'): 'online',
@@ -1956,14 +3608,14 @@ class LanMessengerApp:
         name = info.get('display_name', 'Unknown')
         suffix = ' (offline)' if tag == 'offline' else ''
         display = f'  {name}{suffix}'
-        dot = self._status_dots.get(tag)
+        avatar = self._create_contact_avatar(uid, name, tag)
         if uid in self.peer_items:
             self.tree.item(self.peer_items[uid], text=display,
-                           tags=(tag,), image=dot if dot else '')
+                           tags=(tag,), image=avatar)
         else:
             iid = self.tree.insert(self.group_general, 'end',
                                    text=display, tags=(tag,),
-                                   image=dot if dot else '')
+                                   image=avatar)
             self.peer_items[uid] = iid
         self.peer_info[uid] = info
 
@@ -1971,11 +3623,11 @@ class LanMessengerApp:
         """Marca peer como offline no treeview (nao remove)."""
         if uid in self.peer_items:
             name = self.peer_info.get(uid, {}).get('display_name', 'Unknown')
-            dot = self._status_dots.get('offline')
+            avatar = self._create_contact_avatar(uid, name, 'offline')
             self.tree.item(self.peer_items[uid],
                            text=f'  {name} (offline)',
                            tags=('offline',),
-                           image=dot if dot else '')
+                           image=avatar)
 
     def _mark_unread(self, uid):
         if uid in self.peer_items:
@@ -1988,9 +3640,9 @@ class LanMessengerApp:
             unread = self.messenger.get_unread_count(uid)
             status_tag = [t for t in tags if t in ('online','away','busy','offline')]
             status = status_tag[0] if status_tag else 'online'
-            dot = self._status_dots.get(status)
+            avatar = self._create_contact_avatar(uid, name, status)
             self.tree.item(item, text=f'  {name} ({unread})',
-                           image=dot if dot else '')
+                           image=avatar)
 
     def _clear_unread(self, uid):
         if uid in self.peer_items:
@@ -1999,9 +3651,9 @@ class LanMessengerApp:
             self.tree.item(item, tags=tuple(tags) if tags else ())
             name = self.peer_info.get(uid, {}).get('display_name', '')
             status = tags[0] if tags and tags[0] != 'group' else 'online'
-            dot = self._status_dots.get(status)
+            avatar = self._create_contact_avatar(uid, name, status)
             self.tree.item(item, text=f'  {name}',
-                           image=dot if dot else '')
+                           image=avatar)
 
     def _on_tree_dbl(self, e):
         uid = self._get_selected_peer()
@@ -2105,17 +3757,28 @@ class LanMessengerApp:
         tk.Label(filter_bar, text='De:', font=FONT_SMALL,
                  bg=BG_WINDOW).pack(side='left')
         date_from_var = tk.StringVar()
-        tk.Entry(filter_bar, textvariable=date_from_var,
-                 font=FONT_SMALL, width=10).pack(side='left', padx=2)
+        date_from_entry = tk.Entry(filter_bar, textvariable=date_from_var,
+                 font=FONT_SMALL, width=10)
+        date_from_entry.pack(side='left', padx=2)
+        _bind_date_mask(date_from_entry, date_from_var)
+        tk.Button(filter_bar, text='\u25bc', font=('Segoe UI', 6),
+                  relief='flat', bd=0, cursor='hand2',
+                  command=lambda: _show_calendar(win, date_from_var,
+                                                  date_from_entry)
+                  ).pack(side='left')
 
         tk.Label(filter_bar, text='Até:', font=FONT_SMALL,
                  bg=BG_WINDOW).pack(side='left')
         date_to_var = tk.StringVar()
-        tk.Entry(filter_bar, textvariable=date_to_var,
-                 font=FONT_SMALL, width=10).pack(side='left', padx=2)
-
-        tk.Label(filter_bar, text='(dd/mm/aaaa)', font=FONT_SMALL,
-                 fg=FG_GRAY, bg=BG_WINDOW).pack(side='left', padx=4)
+        date_to_entry = tk.Entry(filter_bar, textvariable=date_to_var,
+                 font=FONT_SMALL, width=10)
+        date_to_entry.pack(side='left', padx=2)
+        _bind_date_mask(date_to_entry, date_to_var)
+        tk.Button(filter_bar, text='\u25bc', font=('Segoe UI', 6),
+                  relief='flat', bd=0, cursor='hand2',
+                  command=lambda: _show_calendar(win, date_to_var,
+                                                  date_to_entry)
+                  ).pack(side='left')
 
         # --- Main split: left contacts | right messages ---
         main = tk.Frame(win, bg=BG_WINDOW)
@@ -2133,7 +3796,8 @@ class LanMessengerApp:
         contact_tree.column('nome', width=120, minwidth=80)
         contact_tree.column('data', width=110, minwidth=80)
         ct_scroll = ttk.Scrollbar(left, orient='vertical',
-                                   command=contact_tree.yview)
+                                   command=contact_tree.yview,
+                                   style='Clean.Vertical.TScrollbar')
         contact_tree.configure(yscrollcommand=ct_scroll.set)
         ct_scroll.pack(side='right', fill='y')
         contact_tree.pack(fill='both', expand=True)
@@ -2144,7 +3808,7 @@ class LanMessengerApp:
 
         msg_text = tk.Text(right, font=FONT, wrap='word', bg=BG_WHITE,
                            fg=FG_BLACK, state='disabled', padx=6, pady=4)
-        msg_scroll = ttk.Scrollbar(right, command=msg_text.yview)
+        msg_scroll = ttk.Scrollbar(right, command=msg_text.yview, style='Clean.Vertical.TScrollbar')
         msg_text.configure(yscrollcommand=msg_scroll.set)
         msg_scroll.pack(side='right', fill='y')
         msg_text.pack(fill='both', expand=True)
@@ -2158,19 +3822,6 @@ class LanMessengerApp:
         bottom = tk.Frame(win, bg=BG_WINDOW)
         bottom.pack(fill='x', padx=6, pady=(2, 6))
 
-        def clear_history():
-            if messagebox.askyesno('Limpar Histórico',
-                    'Tem certeza? Todas as mensagens serão apagadas.',
-                    parent=win):
-                db.conn.execute("DELETE FROM messages")
-                db.conn.commit()
-                contact_tree.delete(*contact_tree.get_children())
-                msg_text.configure(state='normal')
-                msg_text.delete('1.0', 'end')
-                msg_text.configure(state='disabled')
-
-        tk.Button(bottom, text='Limpar histórico', font=FONT_SMALL,
-                  command=clear_history).pack(side='left')
         tk.Button(bottom, text='Fechar', font=FONT_SMALL,
                   command=win.destroy).pack(side='right')
 
@@ -2270,24 +3921,562 @@ class LanMessengerApp:
             subprocess.Popen(['xdg-open', download_dir])
 
     def _send_broadcast(self):
+        self._show_broadcast()
+
+    def _show_broadcast(self):
+        """Janela Transmitir Mensagem — envia para contatos selecionados."""
+        NAVY = '#0f2a5c'
         win = tk.Toplevel(self.root)
-        win.title(_t('broadcast_title'))
+        win.title('Transmitir Mensagem')
         win.transient(self.root)
-        _center_window(win, 400, 200)
+        win.grab_set()
+        win.configure(bg='#f5f7fa')
+        _center_window(win, 660, 430)
+        win.minsize(560, 360)
 
-        tk.Label(win, text=f'{_t("broadcast_label")}', font=FONT).pack(padx=10, pady=10, anchor='w')
-        txt = tk.Text(win, font=FONT, height=4)
-        txt.pack(fill='both', expand=True, padx=10)
+        ico = _get_icon_path()
+        if ico:
+            try:
+                win.iconbitmap(ico)
+            except Exception:
+                pass
 
-        def send():
-            c = txt.get('1.0', 'end').strip()
-            if c:
-                for uid in self.peer_items:
-                    self.messenger.send_message(uid, c)
-                win.destroy()
+        # Cache de emojis coloridos para este dialog
+        _bcast_emoji_cache = {}
+        _bcast_img_map = {}  # img_name -> emoji_char (para reconstruir texto)
 
-        tk.Button(win, text=_t('broadcast_send'), font=FONT,
-                  command=send).pack(pady=10)
+        def _get_bcast_emoji(emoji_char, size=18):
+            key = (emoji_char, size)
+            if key in _bcast_emoji_cache:
+                return _bcast_emoji_cache[key]
+            img = _render_color_emoji(emoji_char, size)
+            if img:
+                _bcast_emoji_cache[key] = img
+            return img
+
+        def _bcast_insert_emoji(emoji_char, pos='insert'):
+            img = _get_bcast_emoji(emoji_char, size=18)
+            if img:
+                img_name = f'bcast_emoji_{len(_bcast_img_map)}'
+                _bcast_img_map[img_name] = emoji_char
+                txt.image_create(pos, image=img, name=img_name, padx=1)
+            else:
+                txt.insert(pos, emoji_char)
+
+        def _get_bcast_content():
+            result = []
+            for key, value, index in txt.dump('1.0', 'end',
+                                               image=True, text=True):
+                if key == 'text':
+                    result.append(value)
+                elif key == 'image':
+                    emoji = _bcast_img_map.get(value, '')
+                    result.append(emoji)
+            return ''.join(result).strip()
+
+        # Header navy
+        header = tk.Frame(win, bg=NAVY, bd=0)
+        header.pack(fill='x')
+        header_inner = tk.Frame(header, bg=NAVY)
+        header_inner.pack(fill='x', padx=14, pady=10)
+
+        # Icone colorido no header
+        _hdr_icon = _render_color_emoji('\U0001f4e2', 22)
+        hdr_lbl = tk.Frame(header_inner, bg=NAVY)
+        hdr_lbl.pack(anchor='w')
+        if _hdr_icon:
+            il = tk.Label(hdr_lbl, image=_hdr_icon, bg=NAVY)
+            il.image = _hdr_icon
+            il.pack(side='left', padx=(0, 6))
+        tk.Label(hdr_lbl, text='Transmitir Mensagem',
+                 font=('Segoe UI', 12, 'bold'),
+                 bg=NAVY, fg='#ffffff').pack(side='left')
+        tk.Label(header_inner, text='Envie uma mensagem para múltiplos contatos',
+                 font=('Segoe UI', 8), bg=NAVY,
+                 fg='#8aa0cc').pack(anchor='w')
+
+        font_var = tk.StringVar(value='Médio')
+
+        # Layout principal: esquerda (mensagem) | direita (lista)
+        main = tk.Frame(win, bg='#f5f7fa')
+        main.pack(fill='both', expand=True, padx=12, pady=10)
+
+        # --- Painel direito (pack ANTES do left para reservar espaço) ---
+        right = tk.Frame(main, width=230, bg='#f5f7fa')
+        right.pack(side='right', fill='y', padx=(10, 0))
+        right.pack_propagate(False)
+
+        tk.Label(right, text='Enviar para:', font=('Segoe UI', 9, 'bold'),
+                 bg='#f5f7fa', fg='#334155').pack(anchor='w', pady=(0, 4))
+
+        list_border = tk.Frame(right, bg='#e2e8f0', bd=0)
+        list_border.pack(fill='both', expand=True)
+        list_inner = tk.Frame(list_border, bg='#ffffff', bd=0)
+        list_inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        canvas_r = tk.Canvas(list_inner, bg='#ffffff', highlightthickness=0)
+        canvas_r.pack(fill='both', expand=True)
+
+        inner_r = tk.Frame(canvas_r, bg='#ffffff')
+        win_id_r = canvas_r.create_window((0, 0), window=inner_r, anchor='nw')
+
+        # Fix: inner_r preenche largura total e scrollregion correto
+        def _on_canvas_r_cfg(e):
+            canvas_r.itemconfig(win_id_r, width=e.width)
+        canvas_r.bind('<Configure>', _on_canvas_r_cfg)
+        inner_r.bind('<Configure>',
+                     lambda e: canvas_r.configure(
+                         scrollregion=(0, 0, e.width, e.height)))
+
+        peer_vars = {}
+
+        # Linha "Todos" (seleciona todos)
+        all_var = tk.BooleanVar(value=True)
+
+        def toggle_all():
+            v = all_var.get()
+            for pv in peer_vars.values():
+                pv.set(v)
+
+        gen_row = tk.Frame(inner_r, bg='#e8f0fe', bd=0)
+        gen_row.pack(fill='x')
+        gen_inner = tk.Frame(gen_row, bg='#e8f0fe')
+        gen_inner.pack(fill='x', padx=6, pady=5)
+        tk.Checkbutton(gen_inner,
+                       text='  Todos os contatos',
+                       variable=all_var,
+                       font=('Segoe UI', 9, 'bold'), bg='#e8f0fe',
+                       fg='#1a202c', activebackground='#e8f0fe',
+                       selectcolor='#e8f0fe', anchor='w',
+                       command=toggle_all).pack(fill='x')
+
+        # Cada contato
+        for uid, info in self.peer_info.items():
+            var = tk.BooleanVar(value=True)
+            peer_vars[uid] = var
+            name = info.get('display_name', uid)
+            status = info.get('status', 'offline')
+
+            p_row = tk.Frame(inner_r, bg='#ffffff')
+            p_row.pack(fill='x')
+
+            # Separador sutil
+            tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
+
+            p_content = tk.Frame(p_row, bg='#ffffff')
+            p_content.pack(fill='x', padx=6, pady=4)
+
+            cb = tk.Checkbutton(p_content, text=f'  {name}', variable=var,
+                                font=('Segoe UI', 9), anchor='w',
+                                bg='#ffffff', fg='#1a202c',
+                                activebackground='#ffffff',
+                                selectcolor='#ffffff')
+            cb.pack(side='left', fill='x', expand=True)
+
+            try:
+                av = self._create_contact_avatar(uid, name, status)
+                lbl_av = tk.Label(p_content, image=av, bg='#ffffff')
+                lbl_av.image = av
+                lbl_av.pack(side='right', padx=2)
+            except Exception:
+                pass
+
+        canvas_r.bind('<MouseWheel>',
+                      lambda e: canvas_r.yview_scroll(
+                          -1 * (e.delta // 120), 'units'))
+
+        # Botões seleção
+        sel_frame = tk.Frame(right, bg='#f5f7fa')
+        sel_frame.pack(fill='x', pady=(4, 0))
+
+        def select_all():
+            all_var.set(True)
+            for v in peer_vars.values():
+                v.set(True)
+
+        def cancel_sel():
+            all_var.set(False)
+            for v in peer_vars.values():
+                v.set(False)
+
+        btn_sel = tk.Button(sel_frame, text='Todos',
+                            font=('Segoe UI', 7, 'bold'),
+                            bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                            padx=8, pady=2, cursor='hand2',
+                            command=select_all)
+        btn_sel.pack(side='left')
+        _add_hover(btn_sel, '#e2e8f0', '#cbd5e0')
+
+        btn_none = tk.Button(sel_frame, text='Nenhum',
+                             font=('Segoe UI', 7, 'bold'),
+                             bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                             padx=8, pady=2, cursor='hand2',
+                             command=cancel_sel)
+        btn_none.pack(side='left', padx=(4, 0))
+        _add_hover(btn_none, '#e2e8f0', '#cbd5e0')
+
+        # --- Painel esquerdo ---
+        left = tk.Frame(main, bg='#f5f7fa')
+        left.pack(side='left', fill='both', expand=True)
+
+        toolbar = tk.Frame(left, bg='#f5f7fa')
+        toolbar.pack(fill='x', pady=(0, 6))
+
+        # Font size pill buttons
+        tk.Label(toolbar, text='Tamanho:', font=('Segoe UI', 8),
+                 bg='#f5f7fa', fg='#64748b').pack(side='left', padx=(0, 4))
+        pill_frame = tk.Frame(toolbar, bg='#e2e8f0')
+        pill_frame.pack(side='left')
+        font_pills = {}
+        for fname in ('Pequeno', 'Médio', 'Grande'):
+            is_sel = fname == 'Médio'
+            pb = tk.Button(pill_frame, text=fname, font=('Segoe UI', 7),
+                           bg=NAVY if is_sel else '#e2e8f0',
+                           fg='#ffffff' if is_sel else '#4a5568',
+                           relief='flat', bd=0, padx=8, pady=2,
+                           cursor='hand2')
+            pb.pack(side='left', padx=0)
+            font_pills[fname] = pb
+
+        txt_border = tk.Frame(left, bg='#d0d5dd')
+        txt_border.pack(fill='both', expand=True)
+        txt_inner = tk.Frame(txt_border, bg='#ffffff')
+        txt_inner.pack(fill='both', expand=True, padx=1, pady=1)
+        txt = tk.Text(txt_inner, font=('Segoe UI', 10), relief='flat',
+                      bd=0, padx=8, pady=6, wrap='word')
+        txt.pack(fill='both', expand=True)
+
+        # Detectar emojis digitados e substituir por imagens coloridas
+        def _on_bcast_key(event):
+            try:
+                idx = txt.index('insert')
+                if idx != '1.0':
+                    prev_idx = txt.index(f'{idx}-1c')
+                    char = txt.get(prev_idx, idx)
+                    if char and _EMOJI_RE.match(char):
+                        txt.delete(prev_idx, idx)
+                        _bcast_insert_emoji(char, prev_idx)
+            except Exception:
+                pass
+        txt.bind('<KeyRelease>', _on_bcast_key)
+
+        def on_pill_click(sel_name):
+            sizes = {'Pequeno': 9, 'Médio': 10, 'Grande': 13}
+            txt.configure(font=('Segoe UI', sizes.get(sel_name, 10)))
+            font_var.set(sel_name)
+            for n, b in font_pills.items():
+                if n == sel_name:
+                    b.config(bg=NAVY, fg='#ffffff')
+                else:
+                    b.config(bg='#e2e8f0', fg='#4a5568')
+
+        for fname, pbtn in font_pills.items():
+            pbtn.config(command=lambda n=fname: on_pill_click(n))
+
+        # Emoji button colorido
+        _emoji_btn_img = _render_color_emoji('\U0001f60a', 20)
+
+        def open_bcast_emoji():
+            ep = tk.Toplevel(win)
+            ep.title('')
+            ep.overrideredirect(True)
+            ep.grab_set()
+            ep.configure(bg='#e2e8f0')
+            _center_window(ep, 310, 230)
+            emojis = ['\U0001f600', '\U0001f601', '\U0001f602', '\U0001f603',
+                      '\U0001f604', '\U0001f605', '\U0001f606', '\U0001f607',
+                      '\U0001f608', '\U0001f609', '\U0001f60a', '\U0001f60b',
+                      '\U0001f60d', '\U0001f60e', '\U0001f60f', '\U0001f610',
+                      '\U0001f611', '\U0001f612', '\U0001f613', '\U0001f614',
+                      '\U0001f615', '\U0001f616', '\U0001f617', '\U0001f618',
+                      '\U0001f619', '\U0001f61a', '\U0001f61b', '\U0001f61c',
+                      '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
+                      '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
+                      '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f']
+            fr = tk.Frame(ep, bg='#ffffff')
+            fr.pack(fill='both', expand=True, padx=1, pady=1)
+            ep._emoji_imgs = {}  # manter referencia para GC
+            col, row = 0, 0
+            for em in emojis:
+                img = _get_bcast_emoji(em, size=24)
+                def ins(e=em):
+                    _bcast_insert_emoji(e)
+                    ep.destroy()
+                if img:
+                    ep._emoji_imgs[em] = img
+                    b = tk.Button(fr, image=img, relief='flat', bd=0,
+                                  cursor='hand2', command=ins,
+                                  bg='#ffffff', activebackground='#f0f5ff',
+                                  width=30, height=30)
+                else:
+                    b = tk.Button(fr, text=em, font=('Segoe UI', 14),
+                                  relief='flat', bd=0, cursor='hand2',
+                                  command=ins, bg='#ffffff',
+                                  activebackground='#f0f5ff')
+                b.grid(row=row, column=col, padx=1, pady=1)
+                col += 1
+                if col >= 8:
+                    col = 0
+                    row += 1
+            ep.bind('<Escape>', lambda e: ep.destroy())
+            ep.bind('<FocusOut>', lambda e: ep.destroy())
+
+        if _emoji_btn_img:
+            btn_emoji = tk.Button(toolbar, image=_emoji_btn_img,
+                                  relief='flat', bd=0, cursor='hand2',
+                                  bg='#f5f7fa', activebackground='#e2e8f0',
+                                  command=open_bcast_emoji)
+            btn_emoji.image = _emoji_btn_img
+        else:
+            btn_emoji = tk.Button(toolbar, text='\U0001f60a',
+                                  font=('Segoe UI', 12),
+                                  relief='flat', bd=0, cursor='hand2',
+                                  bg='#f5f7fa', activebackground='#e2e8f0',
+                                  command=open_bcast_emoji)
+        btn_emoji.pack(side='left', padx=(8, 0))
+
+        # Botões principais
+        bottom = tk.Frame(win, bg='#f5f7fa')
+        bottom.pack(fill='x', padx=12, pady=(0, 12))
+
+        def do_send():
+            content = _get_bcast_content()
+            if not content:
+                messagebox.showwarning('Transmitir', 'Digite uma mensagem.',
+                                       parent=win)
+                return
+            sent = 0
+            for uid, var in peer_vars.items():
+                if var.get():
+                    threading.Thread(target=self.messenger.send_message,
+                                     args=(uid, content), daemon=True).start()
+                    sent += 1
+            win.destroy()
+            if sent:
+                messagebox.showinfo('Transmitir',
+                                    f'Mensagem enviada para {sent} contato(s).')
+
+        btn_send = tk.Button(bottom, text='  Enviar  ',
+                             font=('Segoe UI', 9, 'bold'),
+                             bg=NAVY, fg='#ffffff', relief='flat', bd=0,
+                             padx=16, pady=5, cursor='hand2',
+                             activebackground='#1a3f7a',
+                             activeforeground='#ffffff',
+                             command=do_send)
+        btn_send.pack(side='left')
+        _add_hover(btn_send, NAVY, '#1a3f7a')
+
+        btn_cancel = tk.Button(bottom, text='  Cancelar  ',
+                               font=('Segoe UI', 9),
+                               bg='#e2e8f0', fg='#4a5568', relief='flat',
+                               bd=0, padx=16, pady=5, cursor='hand2',
+                               activebackground='#cbd5e0',
+                               command=win.destroy)
+        btn_cancel.pack(side='left', padx=(8, 0))
+        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
+
+        txt.focus_set()
+
+    def _show_group_chat_dialog(self):
+        """Dialog moderno para criar um Bate Papo em grupo."""
+        NAVY = '#0f2a5c'
+        win = tk.Toplevel(self.root)
+        win.title('Bate Papo - Selecionar Contatos')
+        win.transient(self.root)
+        win.grab_set()
+        win.configure(bg='#f5f7fa')
+        _center_window(win, 340, 460)
+        win.resizable(False, False)
+
+        ico = _get_icon_path()
+        if ico:
+            try:
+                win.iconbitmap(ico)
+            except Exception:
+                pass
+
+        # Header navy
+        header = tk.Frame(win, bg=NAVY, bd=0)
+        header.pack(fill='x')
+        header_inner = tk.Frame(header, bg=NAVY)
+        header_inner.pack(fill='x', padx=14, pady=10)
+        tk.Label(header_inner, text='Selecionar Contatos',
+                 font=('Segoe UI', 12, 'bold'),
+                 bg=NAVY, fg='#ffffff').pack(anchor='w')
+        tk.Label(header_inner, text='Escolha quem participará do grupo',
+                 font=('Segoe UI', 8), bg=NAVY,
+                 fg='#8aa0cc').pack(anchor='w')
+
+        content = tk.Frame(win, bg='#f5f7fa')
+        content.pack(fill='both', expand=True, padx=12, pady=(10, 0))
+
+        # "Bate papo público" option
+        pub_var = tk.BooleanVar(value=False)
+        peer_vars = {}
+
+        pub_row = tk.Frame(content, bg='#e8f0fe', bd=0)
+        pub_row.pack(fill='x', pady=(0, 6))
+        pub_inner = tk.Frame(pub_row, bg='#e8f0fe')
+        pub_inner.pack(fill='x', padx=8, pady=6)
+
+        def toggle_pub():
+            for v in peer_vars.values():
+                v.set(pub_var.get())
+
+        cb_pub = tk.Checkbutton(pub_inner,
+                                text='\U0001f310  Bate Papo Público (todos)',
+                                variable=pub_var, font=('Segoe UI', 9, 'bold'),
+                                bg='#e8f0fe', fg='#1a202c',
+                                activebackground='#e8f0fe', anchor='w',
+                                selectcolor='#e8f0fe', command=toggle_pub)
+        cb_pub.pack(fill='x')
+
+        # Lista de contatos com canvas scrollável
+        list_border = tk.Frame(content, bg='#e2e8f0', bd=0)
+        list_border.pack(fill='both', expand=True)
+        list_inner = tk.Frame(list_border, bg='#ffffff', bd=0)
+        list_inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        canvas_g = tk.Canvas(list_inner, bg='#ffffff', highlightthickness=0)
+        canvas_g.pack(fill='both', expand=True)
+
+        inner_g = tk.Frame(canvas_g, bg='#ffffff')
+        win_id = canvas_g.create_window((0, 0), window=inner_g, anchor='nw')
+
+        # Fix: inner_g preenche largura total e scrollregion correto
+        def _on_canvas_cfg(e):
+            canvas_g.itemconfig(win_id, width=e.width)
+        canvas_g.bind('<Configure>', _on_canvas_cfg)
+        inner_g.bind('<Configure>',
+                     lambda e: canvas_g.configure(
+                         scrollregion=(0, 0, e.width, e.height)))
+
+        for uid, info in self.peer_info.items():
+            var = tk.BooleanVar(value=False)
+            peer_vars[uid] = var
+            name = info.get('display_name', uid)
+            status = info.get('status', 'offline')
+
+            p_row = tk.Frame(inner_g, bg='#ffffff', cursor='hand2')
+            p_row.pack(fill='x')
+
+            # Separador sutil entre itens
+            tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
+
+            p_content = tk.Frame(p_row, bg='#ffffff')
+            p_content.pack(fill='x', padx=6, pady=5)
+
+            cb = tk.Checkbutton(p_content, text=f'  {name}', variable=var,
+                                font=('Segoe UI', 9), anchor='w',
+                                bg='#ffffff', fg='#1a202c',
+                                activebackground='#f0f5ff',
+                                selectcolor='#ffffff')
+            cb.pack(side='left', fill='x', expand=True)
+
+            try:
+                av = self._create_contact_avatar(uid, name, status)
+                lbl_av = tk.Label(p_content, image=av, bg='#ffffff')
+                lbl_av.image = av
+                lbl_av.pack(side='right', padx=2)
+            except Exception:
+                pass
+
+        canvas_g.bind('<MouseWheel>',
+                      lambda e: canvas_g.yview_scroll(
+                          -1 * (e.delta // 120), 'units'))
+
+        # Nome do grupo
+        name_frame = tk.Frame(content, bg='#f5f7fa')
+        name_frame.pack(fill='x', pady=(8, 0))
+        tk.Label(name_frame, text='Nome do grupo:', font=('Segoe UI', 9),
+                 bg='#f5f7fa', fg='#4a5568').pack(side='left')
+
+        name_border = tk.Frame(name_frame, bg='#d0d5dd', bd=0)
+        name_border.pack(side='left', fill='x', expand=True, padx=(8, 0))
+        name_inner = tk.Frame(name_border, bg='#ffffff', bd=0)
+        name_inner.pack(fill='x', padx=1, pady=1)
+
+        name_var = tk.StringVar(value='Grupo')
+        name_entry = tk.Entry(name_inner, textvariable=name_var,
+                              font=('Segoe UI', 9), bg='#ffffff',
+                              fg='#1a202c', relief='flat', bd=0,
+                              insertbackground='#1a202c')
+        name_entry.pack(fill='x', ipady=3, padx=4)
+
+        # Botões modernos
+        btn_frame = tk.Frame(win, bg='#f5f7fa')
+        btn_frame.pack(fill='x', padx=12, pady=(8, 12))
+
+        def criar_grupo():
+            selected = [uid for uid, v in peer_vars.items() if v.get()]
+            if not selected:
+                messagebox.showwarning('Bate Papo',
+                                       'Selecione pelo menos um contato.',
+                                       parent=win)
+                return
+            group_id = str(uuid.uuid4()).replace('-', '')[:12]
+            group_name = name_var.get().strip() or 'Grupo'
+            win.destroy()
+            self._create_group_window(group_id, group_name, selected)
+
+        btn_criar = tk.Button(btn_frame, text='  Criar  ',
+                              font=('Segoe UI', 9, 'bold'),
+                              bg=NAVY, fg='#ffffff', relief='flat', bd=0,
+                              padx=16, pady=5, cursor='hand2',
+                              activebackground='#1a3f7a',
+                              activeforeground='#ffffff',
+                              command=criar_grupo)
+        btn_criar.pack(side='left')
+        _add_hover(btn_criar, NAVY, '#1a3f7a')
+
+        btn_cancel = tk.Button(btn_frame, text='  Cancelar  ',
+                               font=('Segoe UI', 9),
+                               bg='#e2e8f0', fg='#4a5568', relief='flat',
+                               bd=0, padx=16, pady=5, cursor='hand2',
+                               activebackground='#cbd5e0',
+                               command=win.destroy)
+        btn_cancel.pack(side='left', padx=(8, 0))
+        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
+
+    def _create_group_window(self, group_id, group_name, member_ids):
+        """Cria GroupChatWindow e envia convites."""
+        if group_id in self.group_windows:
+            self.group_windows[group_id].lift()
+            return
+        gw = GroupChatWindow(self, group_id, group_name)
+        self.group_windows[group_id] = gw
+        threading.Thread(target=self.messenger.send_group_invite,
+                         args=(group_id, group_name, member_ids),
+                         daemon=True).start()
+        # Adicionar próprio usuário à lista de membros exibida
+        gw.add_member(self.messenger.user_id, self.messenger.display_name)
+        for uid in member_ids:
+            info = self.peer_info.get(uid, {})
+            gw.add_member(uid, info.get('display_name', uid))
+
+    def _on_group_invite(self, group_id, group_name, from_uid, members):
+        """Recebe convite de grupo — abre GroupChatWindow."""
+        if group_id in self.group_windows:
+            return
+        gw = GroupChatWindow(self, group_id, group_name)
+        self.group_windows[group_id] = gw
+        for m in members:
+            gw.add_member(m['uid'], m['display_name'])
+        from_name = self.peer_info.get(from_uid, {}).get('display_name',
+                                                          from_uid)
+        gw.system_message(f'{from_name} criou este grupo.')
+        self._flash_window(gw)
+
+    def _on_group_message(self, group_id, from_uid, display_name,
+                           content, timestamp):
+        """Roteia mensagem de grupo para a janela correspondente."""
+        if group_id not in self.group_windows:
+            # Janela fechada — reabrir silenciosamente
+            gw = GroupChatWindow(self, group_id, 'Grupo')
+            self.group_windows[group_id] = gw
+        gw = self.group_windows[group_id]
+        gw.receive_message(display_name, content, timestamp)
+        self._flash_window(gw)
 
     def _send_file_toolbar(self):
         uid = self._get_selected_peer()
@@ -2344,11 +4533,14 @@ class LanMessengerApp:
             try:
                 if not cw.focus_displayof():
                     self._show_toast(from_user, content)
+                    self._flash_window(cw)
+                    self._flash_window()
             except Exception:
                 pass
         else:
             self._mark_unread(from_user)
             self._show_toast(from_user, content)
+            self._flash_window()
             try:
                 self.root.bell()
             except Exception:
@@ -2385,6 +4577,72 @@ class LanMessengerApp:
             self._file_dialogs[file_id].finish()
             del self._file_dialogs[file_id]
         messagebox.showerror(_t('file_error'), error)
+
+    def _flash_window(self, widget=None):
+        """Pisca o ícone na barra de tarefas (Windows FlashWindowEx)."""
+        try:
+            flash_on = self.messenger.db.get_setting('flash_taskbar', '1') == '1'
+            if not flash_on:
+                return
+        except Exception:
+            pass
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wintypes.UINT),
+                    ('hwnd', wintypes.HWND),
+                    ('dwFlags', wintypes.DWORD),
+                    ('uCount', wintypes.UINT),
+                    ('dwTimeout', wintypes.DWORD),
+                ]
+
+            FLASHW_ALL = 3
+            FLASHW_TIMERNOFG = 12
+
+            target = widget or self.root
+            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
+            finfo = FLASHWINFO(
+                cbSize=ctypes.sizeof(FLASHWINFO),
+                hwnd=hwnd,
+                dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+                uCount=0,
+                dwTimeout=0,
+            )
+            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
+        except Exception:
+            pass
+
+    def _stop_flash(self, widget=None):
+        """Para de piscar a barra de tarefas."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wintypes.UINT),
+                    ('hwnd', wintypes.HWND),
+                    ('dwFlags', wintypes.DWORD),
+                    ('uCount', wintypes.UINT),
+                    ('dwTimeout', wintypes.DWORD),
+                ]
+
+            FLASHW_STOP = 0
+            target = widget or self.root
+            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
+            finfo = FLASHWINFO(
+                cbSize=ctypes.sizeof(FLASHWINFO),
+                hwnd=hwnd,
+                dwFlags=FLASHW_STOP,
+                uCount=0,
+                dwTimeout=0,
+            )
+            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
+        except Exception:
+            pass
 
     def _show_toast(self, from_user, content):
         """Mostra notificacao toast nativa do Windows (clicavel via winotify)."""
@@ -2671,4 +4929,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        log.exception('Erro fatal no MB Chat')
+        raise

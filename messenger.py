@@ -10,7 +10,8 @@ from network import (
     UDPDiscovery, TCPServer, TCPClient, FileSender, FileReceiver,
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
-    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK, TCP_PORT
+    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
+    MT_GROUP_INV, MT_GROUP_MSG, TCP_PORT
 )
 from database import Database
 
@@ -22,7 +23,8 @@ class Messenger:
                  on_user_lost=None, on_message=None, on_status=None,
                  on_typing=None, on_file_incoming=None,
                  on_file_progress=None, on_file_complete=None,
-                 on_file_error=None):
+                 on_file_error=None, on_group_invite=None,
+                 on_group_message=None):
         self.db = Database()
         self._msg_counter = 0
         self._lock = threading.Lock()
@@ -39,6 +41,9 @@ class Messenger:
         self.on_file_progress = on_file_progress
         self.on_file_complete = on_file_complete
         self.on_file_error = on_file_error
+        self.on_group_invite = on_group_invite
+        self.on_group_message = on_group_message
+        self._groups = {}  # group_id -> {name, members: [{uid, display_name, ip}]}
 
         # Setup user
         self.user_id = generate_user_id()
@@ -153,6 +158,23 @@ class Messenger:
 
         elif msg_type == MT_ACK:
             pass  # Could update delivery status
+
+        elif msg_type == MT_GROUP_INV:
+            group_id = msg.get('group_id')
+            group_name = msg.get('group_name', 'Grupo')
+            members = msg.get('members', [])
+            self._groups[group_id] = {'name': group_name, 'members': members}
+            if self.on_group_invite:
+                self.on_group_invite(group_id, group_name, from_user, members)
+
+        elif msg_type == MT_GROUP_MSG:
+            group_id = msg.get('group_id')
+            content = msg.get('content', '')
+            timestamp = msg.get('timestamp', time.time())
+            display_name = msg.get('display_name', from_user)
+            if self.on_group_message:
+                self.on_group_message(group_id, from_user, display_name,
+                                      content, timestamp)
 
     # --- Send actions ---
     def send_message(self, to_user_id, content):
@@ -269,6 +291,51 @@ class Messenger:
         self.db.update_file_transfer(file_id, status='error')
         if self.on_file_error:
             self.on_file_error(file_id, error)
+
+    # --- Group chat ---
+    def send_group_invite(self, group_id, group_name, member_ids):
+        """Cria grupo e convida membros."""
+        members_info = [{'uid': self.user_id, 'display_name': self.display_name,
+                         'ip': get_local_ip()}]
+        for uid in member_ids:
+            contact = self.db.get_contact(uid)
+            if contact:
+                members_info.append({'uid': uid,
+                                     'display_name': contact['display_name'],
+                                     'ip': contact['ip_address']})
+        self._groups[group_id] = {'name': group_name, 'members': members_info}
+        for uid in member_ids:
+            contact = self.db.get_contact(uid)
+            if contact:
+                TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                    'type': MT_GROUP_INV,
+                    'from_user': self.user_id,
+                    'display_name': self.display_name,
+                    'group_id': group_id,
+                    'group_name': group_name,
+                    'members': members_info,
+                })
+
+    def send_group_message(self, group_id, content):
+        """Envia mensagem para todos os membros do grupo."""
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        timestamp = time.time()
+        msg_id = self._next_msg_id()
+        for member in group['members']:
+            uid = member['uid']
+            if uid == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_GROUP_MSG,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'group_id': group_id,
+                'msg_id': msg_id,
+                'content': content,
+                'timestamp': timestamp,
+            })
 
     # --- History ---
     def get_chat_history(self, peer_id, limit=None):

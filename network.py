@@ -73,6 +73,8 @@ MT_FILE_CANCEL = 'file_cancel'
 MT_STATUS = 'status_change'
 MT_TYPING = 'typing'
 MT_ACK = 'ack'
+MT_GROUP_INV = 'group_invite'
+MT_GROUP_MSG = 'group_message'
 
 
 def get_local_ip():

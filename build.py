@@ -7,16 +7,14 @@ import sys
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ICON = os.path.join(HERE, 'mbchat.ico')
+ICON = os.path.join(HERE, 'assets', 'mbchat.ico')
 MAIN = os.path.join(HERE, 'gui.py')
 
 
 def build():
-    # Gera o icone se nao existir
-    if not os.path.exists(ICON):
-        print('Gerando icone...')
-        from create_icon import save_icon
-        save_icon(ICON)
+    print('Gerando icone...')
+    from create_icon import save_icon
+    save_icon(ICON)
 
     cmd = [
         'pyinstaller',
@@ -24,7 +22,7 @@ def build():
         '--onefile',
         '--windowed',           # Sem console / terminal
         f'--icon={ICON}',
-        f'--add-data={ICON};.',  # Inclui o ICO no bundle
+        f'--add-data={ICON};assets',  # Inclui o ICO no bundle
         '--paths=.',            # Encontrar modulos locais
         '--hidden-import=messenger',
         '--hidden-import=network',
