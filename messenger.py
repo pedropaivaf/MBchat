@@ -56,6 +56,7 @@ class Messenger:
             self.display_name = os.getlogin() if hasattr(os, 'getlogin') else 'User'
 
         self.status = 'online'
+        self.note = self.db.get_local_note()
         self.db.set_local_user(self.user_id, self.display_name, self.status)
 
         # Mark all contacts offline on start
@@ -67,6 +68,7 @@ class Messenger:
             on_peer_found=self._on_peer_found,
             on_peer_lost=self._on_peer_lost
         )
+        self.discovery.note = self.note
         self.tcp_server = TCPServer(
             on_message=self._on_tcp_message,
             on_file_request=self._on_file_request
@@ -108,7 +110,8 @@ class Messenger:
             uid, info['display_name'], info['ip'],
             hostname=info.get('hostname', ''),
             os_info=info.get('os', ''),
-            status=info.get('status', 'online')
+            status=info.get('status', 'online'),
+            note=info.get('note', '')
         )
         if self.on_user_found:
             self.on_user_found(uid, info)
@@ -219,6 +222,11 @@ class Messenger:
         self.db.set_local_user(self.user_id, name, self.status)
         self.discovery.update_name(name)
 
+    def change_note(self, note):
+        self.note = note
+        self.db.update_local_note(note)
+        self.discovery.update_note(note)
+
     # --- File transfer ---
     def send_file(self, to_user_id, filepath):
         contact = self.db.get_contact(to_user_id)
@@ -315,6 +323,21 @@ class Messenger:
                     'group_name': group_name,
                     'members': members_info,
                 })
+
+    def send_file_to_group(self, group_id, filepath):
+        """Envia arquivo para todos os membros do grupo (individualmente)."""
+        group = self._groups.get(group_id)
+        if not group:
+            return []
+        file_ids = []
+        for member in group['members']:
+            uid = member['uid']
+            if uid == self.user_id:
+                continue
+            fid = self.send_file(uid, filepath)
+            if fid:
+                file_ids.append(fid)
+        return file_ids
 
     def send_group_message(self, group_id, content):
         """Envia mensagem para todos os membros do grupo."""

@@ -52,13 +52,15 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 ## Funcionalidades principais
 
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
+- Nota pessoal visivel para todos em tempo real (persistida no banco local, sincronizada via UDP)
 - Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos
-- Bate Papo em grupo (mesh TCP, sem servidor) com GroupChatWindow
-- Transferencia de arquivos ponto-a-ponto
+- Bate Papo em grupo estilo LAN Messenger (painel participantes com avatar/nome/nota, colapsavel, emoji, fonte, arquivo)
+- Transferencia de arquivos ponto-a-ponto e para grupos
 - Historico com busca e filtro por data
 - 3 temas visuais + UI modernizada (flat design, hover effects)
 - Notificacoes Windows clicaveis (winotify)
 - System tray, instancia unica, auto-start
+- Popups fecham com Escape, emoji pickers fecham ao clicar fora
 
 ## Convencoes importantes
 
@@ -68,7 +70,8 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Temas: dicts em THEMES com chaves padronizadas de cor.
 - Chat abre limpo (sem historico). Historico acessivel via botao History.
 - Contatos offline persistem no DB e aparecem com bolinha cinza.
-- Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow).
+- Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow).
+- Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce.
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
 

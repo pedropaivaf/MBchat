@@ -637,6 +637,7 @@ class PreferencesWindow(tk.Toplevel):
         self.transient(app.root)
         self.grab_set()
         self.configure(bg=BG_WINDOW)
+        self.bind('<Escape>', lambda e: self.destroy())
 
         _center_window(self, 580, 450)
 
@@ -1283,6 +1284,7 @@ class AccountWindow(tk.Toplevel):
         self.transient(app.root)
         self.grab_set()
         self.configure(bg=BG_WINDOW)
+        self.bind('<Escape>', lambda e: self.destroy())
 
         _center_window(self, 340, 420)
 
@@ -1982,6 +1984,7 @@ class ChatWindow(tk.Toplevel):
         win = tk.Toplevel(self)
         win.title(f'Histórico - {self.peer_name}')
         _center_window(win, 500, 400)
+        win.bind('<Escape>', lambda e: win.destroy())
         txt = tk.Text(win, font=FONT_SMALL, wrap='word', bg=BG_WHITE)
         scr = ttk.Scrollbar(win, command=txt.yview, style='Clean.Vertical.TScrollbar')
         txt.configure(yscrollcommand=scr.set)
@@ -2010,6 +2013,7 @@ class ChatWindow(tk.Toplevel):
             win.grab_set()
         except Exception:
             pass
+        win.bind('<Escape>', lambda e: win.destroy())
 
         cur_family = 'Segoe UI'
         cur_size = 9
@@ -2625,6 +2629,19 @@ class ChatWindow(tk.Toplevel):
         _bind_wheel_recursive(inner)
         popup.bind('<Escape>', lambda e: popup.destroy())
 
+        # Fechar ao clicar fora do popup
+        def _check_focus():
+            if not popup.winfo_exists():
+                return
+            try:
+                focused = popup.focus_get()
+                if focused is None or not str(focused).startswith(str(popup)):
+                    popup.destroy()
+            except Exception:
+                popup.destroy()
+        popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
+        popup.focus_set()
+
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
             del self.app.chat_windows[self.peer_id]
@@ -2635,19 +2652,26 @@ class ChatWindow(tk.Toplevel):
 #  GROUP CHAT WINDOW
 # =============================================================
 class GroupChatWindow(tk.Toplevel):
-    """Janela de Bate Papo em grupo (multi-participantes)."""
+    """Janela de Bate Papo em grupo (multi-participantes) - estilo LAN Messenger."""
 
     def __init__(self, app, group_id, group_name):
         super().__init__(app.root)
         self.app = app
         self.group_id = group_id
         self.group_name = group_name
-        self._members = {}  # uid -> display_name
+        self._members = {}  # uid -> {display_name, ip, status, note}
+        self._panel_visible = True
+        self._chat_emoji_cache = {}
+        self._entry_emoji_cache = {}
+        self._entry_img_map = {}
+        self._participant_widgets = {}  # uid -> {frame, name_lbl, note_lbl, avatar_lbl}
+        self._participant_avatars = {}  # cache de imagens
 
         self.title(f'{group_name} - Bate Papo')
-        self.minsize(380, 400)
-        _center_window(self, 460, 500)
+        self.minsize(500, 420)
+        _center_window(self, 700, 520)
         self.protocol('WM_DELETE_WINDOW', self._on_close)
+        self.bind('<Escape>', lambda e: self._on_close())
 
         ico = _get_icon_path()
         if ico:
@@ -2659,13 +2683,14 @@ class GroupChatWindow(tk.Toplevel):
         t = THEMES.get(app._current_theme if hasattr(app, '_current_theme')
                        else 'MB Contabilidade',
                        THEMES.get('MB Contabilidade', {}))
+        self._theme = t
         self._build_ui(t)
         self.bind('<FocusIn>', lambda e: app._stop_flash(self))
 
     def _build_ui(self, t):
         NAVY = '#0f2a5c'
 
-        # Header
+        # ===== Header =====
         header = tk.Frame(self, bg=NAVY, bd=0)
         header.pack(fill='x')
         header._navy_panel = True
@@ -2682,16 +2707,22 @@ class GroupChatWindow(tk.Toplevel):
                                    bg=NAVY, fg='#c8d6e5')
         self._lbl_count.pack(side='left', padx=(8, 0))
 
-        btn_part = tk.Button(hinner, text='\U0001f465',
-                             font=('Segoe UI', 9), bg='#1a3f7a',
-                             fg='#ffffff', relief='flat', bd=0,
-                             cursor='hand2', padx=6, pady=1,
-                             command=self._show_participants)
-        btn_part.pack(side='right')
+        # Botao toggle painel participantes
+        self._btn_toggle = tk.Button(hinner, text='\u25b6',
+                                     font=('Segoe UI', 9), bg='#1a3f7a',
+                                     fg='#ffffff', relief='flat', bd=0,
+                                     cursor='hand2', padx=6, pady=1,
+                                     command=self._toggle_panel)
+        self._btn_toggle.pack(side='right')
+        _add_hover(self._btn_toggle, '#1a3f7a', '#2451a0')
 
-        # Chat area
-        chat_frame = tk.Frame(self, bg=t.get('bg_chat', '#f5f7fa'))
-        chat_frame.pack(fill='both', expand=True)
+        # ===== Body (chat + panel) =====
+        self._body = tk.Frame(self, bg=t.get('bg_chat', '#f5f7fa'))
+        self._body.pack(fill='both', expand=True)
+
+        # Chat area (left)
+        chat_frame = tk.Frame(self._body, bg=t.get('bg_chat', '#f5f7fa'))
+        chat_frame.pack(side='left', fill='both', expand=True)
 
         self.chat_text = tk.Text(chat_frame, font=('Segoe UI', 10),
                                   bg=t.get('bg_chat', '#f5f7fa'),
@@ -2719,12 +2750,83 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.tag_configure('msg', font=('Segoe UI', 10),
                                      foreground=t.get('fg_msg', '#1a202c'))
 
-        # Separador
+        # ===== Participants panel (right) =====
+        self._panel_sep = tk.Frame(self._body, bg='#e2e8f0', width=1)
+        self._panel_sep.pack(side='left', fill='y')
+
+        self._panel = tk.Frame(self._body, bg='#f8fafc', width=190)
+        self._panel.pack(side='left', fill='y')
+        self._panel.pack_propagate(False)
+
+        # Panel header
+        ph = tk.Frame(self._panel, bg='#edf2f7')
+        ph.pack(fill='x')
+        tk.Label(ph, text='Participantes', font=('Segoe UI', 9, 'bold'),
+                 bg='#edf2f7', fg='#2d3748').pack(side='left', padx=8, pady=5)
+
+        btn_add = tk.Button(ph, text='+', font=('Segoe UI', 10, 'bold'),
+                            bg='#edf2f7', fg='#2451a0', relief='flat',
+                            bd=0, cursor='hand2', padx=6,
+                            command=self._add_participants_dialog)
+        btn_add.pack(side='right', padx=4)
+        _add_hover(btn_add, '#edf2f7', '#e2e8f0')
+
+        # Panel scrollable list
+        self._panel_canvas = tk.Canvas(self._panel, bg='#f8fafc',
+                                        highlightthickness=0)
+        self._panel_inner = tk.Frame(self._panel_canvas, bg='#f8fafc')
+        self._panel_canvas.pack(fill='both', expand=True)
+        self._panel_canvas.create_window((0, 0), window=self._panel_inner,
+                                          anchor='nw', tags='inner')
+        self._panel_inner.bind('<Configure>',
+            lambda e: self._panel_canvas.configure(
+                scrollregion=self._panel_canvas.bbox('all')))
+        self._panel_canvas.bind('<Configure>',
+            lambda e: self._panel_canvas.itemconfig('inner', width=e.width))
+        self._panel_canvas.bind('<MouseWheel>',
+            lambda e: self._panel_canvas.yview_scroll(-1*(e.delta//120), 'units'))
+
+        # ===== Separator =====
         tk.Frame(self, bg='#e2e8f0', height=1).pack(fill='x')
 
-        # Input
+        # ===== Toolbar + Input =====
+        toolbar = tk.Frame(self, bg='#f5f7fa')
+        toolbar.pack(fill='x', padx=8, pady=(4, 0))
+
+        # Emoji button
+        _emoji_img = _render_color_emoji('\U0001f60a', 18)
+        if _emoji_img:
+            self._toolbar_emoji_img = _emoji_img
+            btn_emoji = tk.Button(toolbar, image=_emoji_img, relief='flat',
+                                  bd=0, cursor='hand2', bg='#f5f7fa',
+                                  activebackground='#e2e8f0',
+                                  command=self._show_emoji_picker)
+        else:
+            btn_emoji = tk.Button(toolbar, text='\U0001f60a',
+                                  font=('Segoe UI', 10), relief='flat',
+                                  bd=0, cursor='hand2', bg='#f5f7fa',
+                                  command=self._show_emoji_picker)
+        btn_emoji.pack(side='left', padx=2)
+
+        # Font button
+        btn_font = tk.Button(toolbar, text='A', font=('Segoe UI', 10, 'bold'),
+                             relief='flat', bd=0, cursor='hand2',
+                             bg='#f5f7fa', fg='#4a5568',
+                             activebackground='#e2e8f0',
+                             command=self._change_font)
+        btn_font.pack(side='left', padx=2)
+
+        # Attach file button
+        btn_attach = tk.Button(toolbar, text='\U0001f4ce',
+                               font=('Segoe UI', 10), relief='flat',
+                               bd=0, cursor='hand2', bg='#f5f7fa',
+                               activebackground='#e2e8f0',
+                               command=self._send_file)
+        btn_attach.pack(side='left', padx=2)
+
+        # Input area
         input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(fill='x', padx=8, pady=(4, 6))
+        input_outer.pack(fill='x', padx=8, pady=(2, 6))
         input_inner = tk.Frame(input_outer, bg=t.get('bg_input', '#f7fafc'))
         input_inner.pack(fill='x', padx=1, pady=1)
 
@@ -2749,13 +2851,428 @@ class GroupChatWindow(tk.Toplevel):
                              command=self._send_message)
         btn_send.pack(side='right', padx=(4, 2), pady=2)
 
-    def add_member(self, uid, display_name):
-        self._members[uid] = display_name
-        self._lbl_count.config(text=f'{len(self._members)} participante(s)')
+    # ===== Panel toggle =====
+    def _toggle_panel(self):
+        if self._panel_visible:
+            self._panel.pack_forget()
+            self._panel_sep.pack_forget()
+            self._btn_toggle.config(text='\u25c0')
+            self._panel_visible = False
+        else:
+            self._panel_sep.pack(side='left', fill='y')
+            self._panel.pack(side='left', fill='y')
+            self._btn_toggle.config(text='\u25b6')
+            self._panel_visible = True
 
+    # ===== Members =====
+    def add_member(self, uid, display_name, info=None):
+        self._members[uid] = {
+            'display_name': display_name,
+            'ip': info.get('ip', '') if info else '',
+            'status': info.get('status', 'online') if info else 'online',
+            'note': info.get('note', '') if info else '',
+        }
+        self._lbl_count.config(text=f'{len(self._members)} participante(s)')
+        self._add_participant_widget(uid)
+
+    def update_member_info(self, uid, info):
+        """Atualiza info de um membro (nota, status, etc)."""
+        if uid not in self._members:
+            return
+        self._members[uid]['display_name'] = info.get('display_name',
+            self._members[uid]['display_name'])
+        self._members[uid]['status'] = info.get('status', 'online')
+        self._members[uid]['note'] = info.get('note', '')
+        self._refresh_participant_widget(uid)
+
+    def _add_participant_widget(self, uid):
+        """Cria widget de participante no painel."""
+        member = self._members[uid]
+        name = member['display_name']
+        note = member.get('note', '')
+        status = member.get('status', 'online')
+
+        row = tk.Frame(self._panel_inner, bg='#f8fafc')
+        row.pack(fill='x', padx=4, pady=2)
+
+        # Avatar
+        avatar = self._create_member_avatar(uid, name, status)
+        av_lbl = tk.Label(row, image=avatar, bg='#f8fafc')
+        av_lbl.pack(side='left', padx=(4, 6), pady=2)
+
+        # Name + Note
+        info_frame = tk.Frame(row, bg='#f8fafc')
+        info_frame.pack(side='left', fill='x', expand=True)
+
+        name_lbl = tk.Label(info_frame, text=name, font=('Segoe UI', 8, 'bold'),
+                            bg='#f8fafc', fg='#2d3748', anchor='w')
+        name_lbl.pack(fill='x')
+
+        note_lbl = tk.Label(info_frame, text=note if note else '',
+                            font=('Segoe UI', 7, 'italic'),
+                            bg='#f8fafc', fg='#718096', anchor='w')
+        if note:
+            note_lbl.pack(fill='x')
+
+        self._participant_widgets[uid] = {
+            'frame': row, 'name_lbl': name_lbl,
+            'note_lbl': note_lbl, 'avatar_lbl': av_lbl
+        }
+
+    def _refresh_participant_widget(self, uid):
+        """Atualiza widget de participante existente."""
+        if uid not in self._participant_widgets:
+            return
+        member = self._members[uid]
+        w = self._participant_widgets[uid]
+        w['name_lbl'].config(text=member['display_name'])
+        note = member.get('note', '')
+        w['note_lbl'].config(text=note)
+        if note:
+            w['note_lbl'].pack(fill='x')
+        else:
+            w['note_lbl'].pack_forget()
+        # Atualizar avatar com status
+        avatar = self._create_member_avatar(uid, member['display_name'],
+                                             member.get('status', 'online'))
+        w['avatar_lbl'].config(image=avatar)
+
+    def _create_member_avatar(self, uid, name, status='online'):
+        """Cria avatar 30x30 para painel de participantes."""
+        size = 30
+        dot_size = 8
+        dot_colors = {
+            'online': '#48bb78', 'away': '#ecc94b',
+            'busy': '#f56565', 'offline': '#a0aec0',
+        }
+        contact = self.app.messenger.db.get_contact(uid)
+        idx = contact.get('avatar_index', 0) if contact else 0
+        av_color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
+
+        if HAS_PIL:
+            from PIL import ImageDraw, ImageFont
+            img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse([1, 1, size - 2, size - 2], fill=av_color,
+                         outline='#0f2a5c', width=1)
+            initial = name[0].upper() if name else 'U'
+            try:
+                font = ImageFont.truetype('segoeui.ttf', 12)
+            except Exception:
+                font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), initial, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text(((size - tw) / 2 - bbox[0],
+                       (size - th) / 2 - bbox[1]),
+                      initial, fill='white', font=font)
+            dot_color = dot_colors.get(status, '#a0aec0')
+            dx, dy = size - dot_size - 1, size - dot_size - 1
+            draw.ellipse([dx - 1, dy - 1, dx + dot_size + 1, dy + dot_size + 1],
+                         fill='white')
+            draw.ellipse([dx, dy, dx + dot_size, dy + dot_size],
+                         fill=dot_color)
+            photo = ImageTk.PhotoImage(img)
+        else:
+            photo = tk.PhotoImage(width=size, height=size)
+
+        self._participant_avatars[f'{uid}_{status}'] = photo
+        return photo
+
+    # ===== Add participants dialog =====
+    def _add_participants_dialog(self):
+        NAVY = '#0f2a5c'
+        win = tk.Toplevel(self)
+        win.title('Adicionar Participantes')
+        win.transient(self)
+        win.grab_set()
+        win.configure(bg='#f5f7fa')
+        _center_window(win, 300, 380)
+        win.resizable(False, False)
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        header = tk.Frame(win, bg=NAVY)
+        header.pack(fill='x')
+        tk.Label(header, text='Adicionar ao Grupo', font=('Segoe UI', 10, 'bold'),
+                 bg=NAVY, fg='#ffffff').pack(padx=10, pady=8)
+
+        content = tk.Frame(win, bg='#f5f7fa')
+        content.pack(fill='both', expand=True, padx=8, pady=8)
+
+        peer_vars = {}
+        # Filtrar peers que ja estao no grupo
+        existing_uids = set(self._members.keys())
+        for uid, info in self.app.peer_info.items():
+            if uid in existing_uids:
+                continue
+            if info.get('status', 'offline') == 'offline':
+                continue
+            var = tk.BooleanVar(value=False)
+            peer_vars[uid] = var
+            row = tk.Frame(content, bg='#ffffff')
+            row.pack(fill='x', pady=1)
+            cb = tk.Checkbutton(row, text=f"  {info.get('display_name', uid)}",
+                                variable=var, font=('Segoe UI', 9),
+                                bg='#ffffff', fg='#1a202c',
+                                activebackground='#ffffff', anchor='w',
+                                selectcolor='#ffffff')
+            cb.pack(fill='x', padx=4, pady=2)
+
+        if not peer_vars:
+            tk.Label(content, text='Nenhum contato disponivel',
+                     font=('Segoe UI', 9, 'italic'),
+                     bg='#f5f7fa', fg='#718096').pack(pady=20)
+
+        def add_selected():
+            new_ids = [uid for uid, var in peer_vars.items() if var.get()]
+            if not new_ids:
+                win.destroy()
+                return
+            # Adicionar novos membros
+            for uid in new_ids:
+                info = self.app.peer_info.get(uid, {})
+                name = info.get('display_name', uid)
+                self.add_member(uid, name, info)
+                self.system_message(f'{name} foi adicionado ao grupo')
+            # Atualizar grupo no messenger e enviar convites
+            group = self.app.messenger._groups.get(self.group_id)
+            if group:
+                for uid in new_ids:
+                    info = self.app.peer_info.get(uid, {})
+                    group['members'].append({
+                        'uid': uid,
+                        'display_name': info.get('display_name', uid),
+                        'ip': info.get('ip', '')
+                    })
+                # Enviar convite para novos membros com lista completa
+                for uid in new_ids:
+                    info = self.app.peer_info.get(uid, {})
+                    ip = info.get('ip', '')
+                    if ip:
+                        from network import TCPClient, TCP_PORT, MT_GROUP_INV
+                        TCPClient.send_message(ip, TCP_PORT, {
+                            'type': MT_GROUP_INV,
+                            'from_user': self.app.messenger.user_id,
+                            'display_name': self.app.messenger.display_name,
+                            'group_id': self.group_id,
+                            'group_name': self.group_name,
+                            'members': group['members'],
+                        })
+            win.destroy()
+
+        btn_frame = tk.Frame(win, bg='#f5f7fa')
+        btn_frame.pack(fill='x', padx=8, pady=8)
+        btn_add = tk.Button(btn_frame, text='Adicionar',
+                            font=('Segoe UI', 9, 'bold'),
+                            bg=NAVY, fg='#ffffff', relief='flat',
+                            bd=0, padx=14, pady=4, cursor='hand2',
+                            command=add_selected)
+        btn_add.pack(side='left')
+        _add_hover(btn_add, NAVY, '#1a3f7a')
+        btn_cancel = tk.Button(btn_frame, text='Cancelar',
+                               font=('Segoe UI', 9),
+                               bg='#e2e8f0', fg='#4a5568', relief='flat',
+                               bd=0, padx=14, pady=4, cursor='hand2',
+                               command=win.destroy)
+        btn_cancel.pack(side='left', padx=(6, 0))
+        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
+
+    # ===== Emoji =====
+    def _render_emoji_image(self, emoji_char, size=28):
+        if not HAS_PIL:
+            return None
+        try:
+            from PIL import ImageFont, ImageDraw
+            font_path = 'C:/Windows/Fonts/seguiemj.ttf'
+            if not os.path.exists(font_path):
+                return None
+            font = ImageFont.truetype(font_path, size)
+            tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+            d = ImageDraw.Draw(tmp)
+            bbox = d.textbbox((0, 0), emoji_char, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+            draw = ImageDraw.Draw(img)
+            x = (size + 4 - tw) // 2 - bbox[0]
+            y = (size + 4 - th) // 2 - bbox[1]
+            draw.text((x, y), emoji_char, font=font, embedded_color=True)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def _get_chat_emoji(self, emoji_char):
+        if emoji_char in self._chat_emoji_cache:
+            return self._chat_emoji_cache[emoji_char]
+        img = self._render_emoji_image(emoji_char, size=20)
+        if img:
+            self._chat_emoji_cache[emoji_char] = img
+        return img
+
+    def _get_entry_emoji(self, emoji_char):
+        if emoji_char in self._entry_emoji_cache:
+            return self._entry_emoji_cache[emoji_char]
+        img = self._render_emoji_image(emoji_char, size=18)
+        if img:
+            self._entry_emoji_cache[emoji_char] = img
+        return img
+
+    def _entry_insert_emoji(self, emoji_char, pos='insert'):
+        img = self._get_entry_emoji(emoji_char)
+        if img:
+            img_name = f'gentry_emoji_{len(self._entry_img_map)}'
+            self._entry_img_map[img_name] = emoji_char
+            self.entry.image_create(pos, image=img, name=img_name, padx=1)
+        else:
+            self.entry.insert(pos, emoji_char)
+
+    def _get_entry_content(self):
+        result = []
+        for key, value, index in self.entry.dump('1.0', 'end', image=True, text=True):
+            if key == 'text':
+                result.append(value)
+            elif key == 'image':
+                emoji = self._entry_img_map.get(value, '')
+                result.append(emoji)
+        return ''.join(result).strip()
+
+    def _insert_text_with_emojis(self, text, tag):
+        parts = _EMOJI_RE.split(text)
+        emojis = _EMOJI_RE.findall(text)
+        for i, part in enumerate(parts):
+            if part:
+                self.chat_text.insert('end', part, tag)
+            if i < len(emojis):
+                img = self._get_chat_emoji(emojis[i])
+                if img:
+                    self.chat_text.image_create('end', image=img, padx=1)
+                else:
+                    self.chat_text.insert('end', emojis[i], tag)
+
+    def _show_emoji_picker(self):
+        """Abre emoji picker (reutiliza logica do ChatWindow)."""
+        popup = tk.Toplevel(self)
+        popup.title('Emoticons')
+        popup.resizable(False, False)
+        popup.configure(bg='#f0f0f0')
+        popup.transient(self)
+
+        x = self.winfo_rootx() + 10
+        y = self.winfo_rooty() + self.winfo_height() - 280
+        popup.geometry(f'280x230+{x}+{y}')
+        popup._emoji_images = {}
+
+        emojis_list = [
+            '\U0001f600', '\U0001f603', '\U0001f604', '\U0001f601',
+            '\U0001f606', '\U0001f605', '\U0001f602', '\U0001f923',
+            '\U0001f60a', '\U0001f607', '\U0001f609', '\U0001f60d',
+            '\U0001f929', '\U0001f60e', '\U0001f618', '\U0001f617',
+            '\U0001f61a', '\U0001f60b', '\U0001f61b', '\U0001f61c',
+            '\U0001f92a', '\U0001f61d', '\U0001f911', '\U0001f917',
+            '\U0001f914', '\U0001f910', '\U0001f928', '\U0001f610',
+            '\U0001f611', '\U0001f636', '\U0001f60f', '\U0001f612',
+            '\U0001f620', '\U0001f621', '\U0001f622', '\U0001f62d',
+            '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
+        ]
+
+        grid_frame = tk.Frame(popup, bg='#ffffff')
+        grid_frame.pack(fill='both', expand=True, padx=1, pady=1)
+
+        col, row = 0, 0
+        for em in emojis_list:
+            img = self._render_emoji_image(em, 22)
+            def ins(emoji=em):
+                self._entry_insert_emoji(emoji)
+                popup.destroy()
+            if img:
+                popup._emoji_images[em] = img
+                b = tk.Button(grid_frame, image=img, relief='flat', bd=0,
+                              cursor='hand2', command=ins, bg='#ffffff',
+                              activebackground='#f0f5ff', width=30, height=30)
+            else:
+                b = tk.Button(grid_frame, text=em, font=('Segoe UI', 14),
+                              relief='flat', bd=0, cursor='hand2',
+                              command=ins, bg='#ffffff',
+                              activebackground='#f0f5ff')
+            b.grid(row=row, column=col, padx=1, pady=1)
+            col += 1
+            if col >= 8:
+                col = 0
+                row += 1
+
+        popup.bind('<Escape>', lambda e: popup.destroy())
+        def _check_focus():
+            if not popup.winfo_exists():
+                return
+            try:
+                focused = popup.focus_get()
+                if focused is None or not str(focused).startswith(str(popup)):
+                    popup.destroy()
+            except Exception:
+                popup.destroy()
+        popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
+        popup.focus_set()
+
+    # ===== Font =====
+    def _change_font(self):
+        try:
+            self._change_font_impl()
+        except Exception:
+            log.exception('Erro ao abrir dialogo de fonte no grupo')
+
+    def _change_font_impl(self):
+        win = tk.Toplevel(self)
+        win.title('Fonte')
+        win.resizable(False, False)
+        _center_window(win, 280, 200)
+        win.configure(bg=BG_WINDOW)
+        win.transient(self)
+        win.bind('<Escape>', lambda e: win.destroy())
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        cur_font = self.chat_text.tag_cget('msg', 'font') or 'Segoe UI 10'
+        parts = cur_font.split()
+        cur_size = 10
+        for p in parts:
+            if p.isdigit():
+                cur_size = int(p)
+
+        tk.Label(win, text='Tamanho da fonte:', font=FONT,
+                 bg=BG_WINDOW).pack(padx=10, pady=(10, 4), anchor='w')
+
+        size_var = tk.IntVar(value=cur_size)
+        sizes_frame = tk.Frame(win, bg=BG_WINDOW)
+        sizes_frame.pack(padx=10, fill='x')
+        for s in [8, 9, 10, 11, 12, 14, 16]:
+            rb = tk.Radiobutton(sizes_frame, text=str(s), variable=size_var,
+                                value=s, font=FONT, bg=BG_WINDOW)
+            rb.pack(side='left', padx=4)
+
+        def apply():
+            new_size = size_var.get()
+            self.chat_text.tag_configure('msg', font=('Segoe UI', new_size))
+            self.entry.configure(font=('Segoe UI', new_size))
+            win.destroy()
+
+        tk.Button(win, text='OK', font=FONT, width=8,
+                  command=apply).pack(pady=10)
+
+    # ===== File send =====
+    def _send_file(self):
+        filepath = filedialog.askopenfilename(parent=self, title='Enviar arquivo')
+        if not filepath:
+            return
+        threading.Thread(target=self.app.messenger.send_file_to_group,
+                         args=(self.group_id, filepath),
+                         daemon=True).start()
+        filename = os.path.basename(filepath)
+        self.system_message(f'Enviando "{filename}" para o grupo...')
+
+    # ===== Messages =====
     def system_message(self, text):
         self.chat_text.configure(state='normal')
-        self.chat_text.insert('end', f'— {text} —\n\n', 'sys_msg')
+        self.chat_text.insert('end', f'\u2014 {text} \u2014\n\n', 'sys_msg')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
@@ -2765,7 +3282,8 @@ class GroupChatWindow(tk.Toplevel):
         name_tag = 'my_name' if is_mine else 'peer_name'
         self.chat_text.insert('end', sender, name_tag)
         self.chat_text.insert('end', f'  {ts}\n', 'time')
-        self.chat_text.insert('end', f'{text}\n\n', 'msg')
+        self._insert_text_with_emojis(text, 'msg')
+        self.chat_text.insert('end', '\n\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
@@ -2778,29 +3296,15 @@ class GroupChatWindow(tk.Toplevel):
             return 'break'
 
     def _send_message(self):
-        content = self.entry.get('1.0', 'end').strip()
+        content = self._get_entry_content()
         if not content:
             return
         self.entry.delete('1.0', 'end')
+        self._entry_img_map.clear()
         self._append_message(self.app.messenger.display_name, content, True)
         threading.Thread(target=self.app.messenger.send_group_message,
                          args=(self.group_id, content),
                          daemon=True).start()
-
-    def _show_participants(self):
-        win = tk.Toplevel(self)
-        win.title('Participantes')
-        _center_window(win, 240, 280)
-        win.transient(self)
-        tk.Label(win, text='Participantes do grupo',
-                 font=FONT_BOLD).pack(pady=(10, 4))
-        lb = tk.Listbox(win, font=FONT, relief='flat', bd=0,
-                        highlightthickness=0, selectmode='none')
-        lb.pack(fill='both', expand=True, padx=10, pady=4)
-        for uid, name in self._members.items():
-            lb.insert('end', f'  {name}')
-        tk.Button(win, text='Fechar', font=FONT,
-                  command=win.destroy).pack(pady=8)
 
     def _on_close(self):
         if self.group_id in self.app.group_windows:
@@ -3219,9 +3723,17 @@ class LanMessengerApp:
                                    fg='#c8d6e5', relief='flat', bd=2,
                                    insertbackground='#c8d6e5')
         self.note_entry.pack(fill='x', ipady=2)
-        self.note_entry.insert(0, _t('note_placeholder'))
+        # Carregar nota salva do banco
+        saved_note = self.messenger.note
+        if saved_note:
+            self.note_entry.insert(0, saved_note)
+            self.note_entry.config(fg='#ffffff')
+        else:
+            self.note_entry.insert(0, _t('note_placeholder'))
+        self._last_saved_note = saved_note
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
+        self.note_entry.bind('<Return>', self._note_save)
 
         # Separador
         tk.Frame(self.root, bg='#e2e8f0', height=1).pack(fill='x')
@@ -3578,9 +4090,29 @@ class LanMessengerApp:
             self.note_entry.config(fg='#ffffff')
 
     def _note_focus_out(self, e):
-        if not self.note_entry.get().strip():
+        text = self.note_entry.get().strip()
+        if not text:
             self.note_entry.insert(0, _t('note_placeholder'))
             self.note_entry.config(fg='#c8d6e5')
+            # Se tinha nota antes, agora limpou
+            if self._last_saved_note:
+                self._last_saved_note = ''
+                self.messenger.change_note('')
+        else:
+            # Salvar se mudou
+            if text != self._last_saved_note:
+                self._last_saved_note = text
+                self.messenger.change_note(text)
+
+    def _note_save(self, e=None):
+        text = self.note_entry.get().strip()
+        placeholders = ('Digite uma nota', 'Type a note', _t('note_placeholder'))
+        note = '' if text in placeholders else text
+        if note != self._last_saved_note:
+            self._last_saved_note = note
+            self.messenger.change_note(note)
+        # Tirar foco do entry
+        self.root.focus_set()
 
     def _on_status_change(self, e=None):
         m = {_t('status_available'): 'online',
@@ -3606,8 +4138,11 @@ class LanMessengerApp:
         status = info.get('status', 'online')
         tag = status if status in ('online', 'away', 'busy') else 'offline'
         name = info.get('display_name', 'Unknown')
+        note = info.get('note', '')
         suffix = ' (offline)' if tag == 'offline' else ''
         display = f'  {name}{suffix}'
+        if note:
+            display += f'  -  {note}'
         avatar = self._create_contact_avatar(uid, name, tag)
         if uid in self.peer_items:
             self.tree.item(self.peer_items[uid], text=display,
@@ -3618,6 +4153,10 @@ class LanMessengerApp:
                                    image=avatar)
             self.peer_items[uid] = iid
         self.peer_info[uid] = info
+        # Atualizar nota nos grupos abertos
+        for gw in self.group_windows.values():
+            if uid in gw._members:
+                gw.update_member_info(uid, info)
 
     def _remove_contact(self, uid):
         """Marca peer como offline no treeview (nao remove)."""
@@ -3709,6 +4248,7 @@ class LanMessengerApp:
         _center_window(win, 300, 120)
         win.transient(self.root)
         win.grab_set()
+        win.bind('<Escape>', lambda e: win.destroy())
 
         tk.Label(win, text='Novo nome:', font=FONT).pack(padx=15, pady=(15, 5), anchor='w')
         var = tk.StringVar(value=self.messenger.display_name)
@@ -3739,6 +4279,7 @@ class LanMessengerApp:
         win.title('Histórico de Mensagens')
         win.configure(bg=BG_WINDOW)
         _center_window(win, 700, 480)
+        win.bind('<Escape>', lambda e: win.destroy())
 
         db = self.messenger.db
         user_id = self.messenger.user_id
@@ -3933,6 +4474,7 @@ class LanMessengerApp:
         win.configure(bg='#f5f7fa')
         _center_window(win, 660, 430)
         win.minsize(560, 360)
+        win.bind('<Escape>', lambda e: win.destroy())
 
         ico = _get_icon_path()
         if ico:
@@ -4219,7 +4761,18 @@ class LanMessengerApp:
                     col = 0
                     row += 1
             ep.bind('<Escape>', lambda e: ep.destroy())
-            ep.bind('<FocusOut>', lambda e: ep.destroy())
+            # Fechar ao clicar fora
+            def _check_ep_focus():
+                if not ep.winfo_exists():
+                    return
+                try:
+                    focused = ep.focus_get()
+                    if focused is None or not str(focused).startswith(str(ep)):
+                        ep.destroy()
+                except Exception:
+                    ep.destroy()
+            ep.bind('<FocusOut>', lambda e: ep.after(100, _check_ep_focus))
+            ep.focus_set()
 
         if _emoji_btn_img:
             btn_emoji = tk.Button(toolbar, image=_emoji_btn_img,
@@ -4287,6 +4840,7 @@ class LanMessengerApp:
         win.configure(bg='#f5f7fa')
         _center_window(win, 340, 460)
         win.resizable(False, False)
+        win.bind('<Escape>', lambda e: win.destroy())
 
         ico = _get_icon_path()
         if ico:
@@ -4448,11 +5002,12 @@ class LanMessengerApp:
         threading.Thread(target=self.messenger.send_group_invite,
                          args=(group_id, group_name, member_ids),
                          daemon=True).start()
-        # Adicionar próprio usuário à lista de membros exibida
-        gw.add_member(self.messenger.user_id, self.messenger.display_name)
+        # Adicionar proprio usuario a lista de membros exibida
+        my_info = {'ip': '', 'status': 'online', 'note': self.messenger.note}
+        gw.add_member(self.messenger.user_id, self.messenger.display_name, my_info)
         for uid in member_ids:
             info = self.peer_info.get(uid, {})
-            gw.add_member(uid, info.get('display_name', uid))
+            gw.add_member(uid, info.get('display_name', uid), info)
 
     def _on_group_invite(self, group_id, group_name, from_uid, members):
         """Recebe convite de grupo — abre GroupChatWindow."""
@@ -4461,7 +5016,9 @@ class LanMessengerApp:
         gw = GroupChatWindow(self, group_id, group_name)
         self.group_windows[group_id] = gw
         for m in members:
-            gw.add_member(m['uid'], m['display_name'])
+            m_info = self.peer_info.get(m['uid'], {'ip': m.get('ip', ''),
+                        'status': 'online', 'note': ''})
+            gw.add_member(m['uid'], m['display_name'], m_info)
         from_name = self.peer_info.get(from_uid, {}).get('display_name',
                                                           from_uid)
         gw.system_message(f'{from_name} criou este grupo.')

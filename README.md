@@ -7,9 +7,13 @@ Desenvolvido para **MB Contabilidade**. Reescrito em Python com interface tkinte
 
 - Descoberta automatica de computadores na rede (UDP multicast + broadcast)
 - Mensagens instantaneas com indicador de digitacao e emojis coloridos
+- **Nota pessoal** visivel para todos em tempo real (persistida no banco local)
 - **Transmitir Mensagem** (broadcast) para multiplos contatos selecionados
-- **Bate Papo em grupo** (mesh TCP, sem servidor central)
-- Transferencia de arquivos ponto-a-ponto com dialogo de progresso
+- **Bate Papo em grupo** estilo LAN Messenger (mesh TCP, sem servidor central)
+  - Painel lateral de participantes com avatar, nome e nota (colapsavel)
+  - Emoji colorido, fonte e envio de arquivo para o grupo
+  - Adicionar participantes a grupos existentes
+- Transferencia de arquivos ponto-a-ponto e para grupos com dialogo de progresso
 - Historico ilimitado de mensagens (SQLite local) com pesquisa e filtro por data
 - 3 temas visuais: Classico, Night Mode, MB Contabilidade
 - UI moderna com design flat, hover effects e bordas suaves
@@ -97,11 +101,12 @@ Linux:   ~/.mbchat/
 
 ## Protocolo de Rede
 
-- **Descoberta**: JSON via UDP multicast/broadcast a cada 5s. Campos: app_id, user_id, display_name, ip, status, hostname, os.
+- **Descoberta**: JSON via UDP multicast/broadcast a cada 5s. Campos: app_id, user_id, display_name, ip, status, note, hostname, os.
 - **Mensagens TCP**: Frame = [4 bytes big-endian length][JSON payload UTF-8].
 - **Tipos de mensagem**: message, typing, status, ack, file_request, file_accept, file_decline, file_cancel, group_invite, group_message.
-- **Grupo**: Topologia mesh - cada membro envia diretamente para todos os outros. Convite inclui lista completa de membros.
-- **Transferencia de arquivo**: Header JSON com file_id/filename/filesize, seguido de OKAY/DENY handshake, seguido de dados em chunks de 64KB.
+- **Nota pessoal**: Campo `note` no pacote UDP announce. Atualiza em tempo real para todos os peers.
+- **Grupo**: Topologia mesh - cada membro envia diretamente para todos os outros. Convite inclui lista completa de membros. Suporta adicionar participantes a grupos existentes.
+- **Transferencia de arquivo**: Header JSON com file_id/filename/filesize, seguido de OKAY/DENY handshake, seguido de dados em chunks de 64KB. Suporta envio para grupo (envia individualmente para cada membro).
 
 ## Firewall
 

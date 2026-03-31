@@ -38,7 +38,7 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
 - **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico, emojis coloridos)
-- **GroupChatWindow**: Chat em grupo (header navy, lista de participantes, envio mesh)
+- **GroupChatWindow**: Chat em grupo estilo LAN Messenger (painel lateral de participantes com avatar/nome/nota, colapsavel, emoji colorido, fonte, envio de arquivo para grupo, adicionar participantes)
 - **FileTransferDialog**: Dialogo de progresso de transferencia (estilo LAN Messenger)
 - **PreferencesWindow**: 9 abas de configuracao (sidebar moderna com hover)
 - **AccountWindow**: Janela de perfil (nome + avatar)
@@ -63,14 +63,16 @@ Mecanismos importantes:
 - **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
 - **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
 - **Bate Papo**: Dialog de selecao de contatos + GroupChatWindow
+- **Nota pessoal**: Entry no header navy, salva no DB local, sincroniza via UDP announce em tempo real
+- **Popups dismissaveis**: Todas as janelas popup fecham com Escape e emoji pickers fecham ao clicar fora
 
 ### messenger.py (~360 linhas) - Controller
 
 Classe **Messenger** - orquestra a comunicacao entre camadas:
 - Inicializa Database, UDPDiscovery, TCPServer, FileReceiver
 - Gera user_id unico via MAC+hostname (generate_user_id())
-- Metodos de acao: send_message(), send_file(), change_status(), change_name()
-- Metodos de grupo: send_group_invite(), send_group_message()
+- Metodos de acao: send_message(), send_file(), change_status(), change_name(), change_note()
+- Metodos de grupo: send_group_invite(), send_group_message(), send_file_to_group()
 - Recebe eventos da rede e repassa para GUI via callbacks
 - Gerencia transferencias de arquivo (FileSender pool, FileReceiver)
 - Gerencia estado dos grupos (_groups dict com membros)
@@ -90,7 +92,7 @@ Classes de I/O independentes da GUI:
 
 Protocolo:
 - Frame TCP: [4 bytes big-endian length][JSON payload UTF-8]
-- Tipos UDP: announce, depart, ping, pong
+- Tipos UDP: announce (inclui campo note), depart, ping, pong
 - Tipos TCP: message, typing, status, file_request, file_accept, file_decline, file_cancel, ack, group_invite, group_message
 - File transfer: header JSON -> OKAY/DENY -> raw data chunks
 - Group invite: inclui group_id, group_name, lista de membros (uid, display_name, ip)
@@ -107,7 +109,7 @@ Classe **Database** - wrapper SQLite thread-safe:
 
 Tabelas:
 - **local_user**: id(=1), user_id, display_name, status, avatar_index, note
-- **contacts**: user_id(PK), display_name, ip_address, hostname, os_info, status, last_seen, first_seen
+- **contacts**: user_id(PK), display_name, ip_address, hostname, os_info, status, note, avatar_index, last_seen, first_seen
 - **messages**: id(auto), msg_id, from_user, to_user, content, msg_type, timestamp, is_sent, is_read, is_delivered
 - **file_transfers**: file_id(unique), from_user, to_user, filename, filepath, filesize, status, progress
 - **settings**: key(PK), value

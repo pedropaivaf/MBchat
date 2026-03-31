@@ -112,6 +112,7 @@ class UDPDiscovery:
         self.user_id = user_id
         self.display_name = display_name
         self.status = status
+        self.note = ''
         self.on_peer_found = on_peer_found
         self.on_peer_lost = on_peer_lost
         self.peers = {}  # user_id -> {info + last_seen}
@@ -207,6 +208,10 @@ class UDPDiscovery:
         self.display_name = name
         self._send_announce()
 
+    def update_note(self, note):
+        self.note = note
+        self._send_announce()
+
     def _make_packet(self, msg_type, extra=None):
         data = {
             'app': 'mbchat',
@@ -214,6 +219,7 @@ class UDPDiscovery:
             'user_id': self.user_id,
             'display_name': self.display_name,
             'status': self.status,
+            'note': self.note,
             'ip': get_local_ip(),
             'hostname': socket.gethostname(),
             'os': f"{platform.system()} {platform.release()}",
@@ -287,6 +293,7 @@ class UDPDiscovery:
                 'hostname': pkt.get('hostname', ''),
                 'os': pkt.get('os', ''),
                 'status': pkt.get('status', 'online'),
+                'note': pkt.get('note', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
                 'last_seen': time.time()
             }

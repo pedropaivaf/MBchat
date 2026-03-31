@@ -123,23 +123,40 @@ class Database:
             (status, time.time()))
         self.conn.commit()
 
+    def update_local_note(self, note):
+        self.conn.execute(
+            "UPDATE local_user SET note=?, updated_at=? WHERE id=1",
+            (note, time.time()))
+        self.conn.commit()
+
+    def get_local_note(self):
+        row = self.conn.execute(
+            "SELECT note FROM local_user WHERE id=1").fetchone()
+        return row['note'] if row and row['note'] else ''
+
     # --- Contacts ---
     def upsert_contact(self, user_id, display_name, ip_address,
-                       hostname='', os_info='', status='online'):
+                       hostname='', os_info='', status='online', note=''):
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
-                                  os_info, status, last_seen, first_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  os_info, status, note, last_seen, first_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name=excluded.display_name,
                 ip_address=excluded.ip_address,
                 hostname=excluded.hostname,
                 os_info=excluded.os_info,
                 status=excluded.status,
+                note=excluded.note,
                 last_seen=excluded.last_seen
-        """, (user_id, display_name, ip_address, hostname, os_info, status, now, now))
+        """, (user_id, display_name, ip_address, hostname, os_info, status, note, now, now))
         self.conn.commit()
+
+    def get_contact_note(self, user_id):
+        row = self.conn.execute(
+            "SELECT note FROM contacts WHERE user_id=?", (user_id,)).fetchone()
+        return row['note'] if row and row['note'] else ''
 
     def set_contact_offline(self, user_id):
         self.conn.execute(
