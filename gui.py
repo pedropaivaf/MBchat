@@ -2668,8 +2668,8 @@ class GroupChatWindow(tk.Toplevel):
         self._participant_avatars = {}  # cache de imagens
 
         self.title(f'{group_name} - Bate Papo')
-        self.minsize(500, 420)
-        _center_window(self, 700, 520)
+        self.minsize(480, 380)
+        _center_window(self, 620, 480)
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
 
@@ -2718,28 +2718,32 @@ class GroupChatWindow(tk.Toplevel):
 
         # ===== Input area (pack bottom FIRST so it gets space) =====
         input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(side='bottom', fill='x', padx=8, pady=(2, 6))
-        input_inner = tk.Frame(input_outer, bg=t.get('bg_input', '#f7fafc'))
-        input_inner.pack(fill='both', expand=True, padx=1, pady=1)
+        input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 5))
 
-        # Botao Enviar a direita, preenche toda a altura
-        btn_send = tk.Button(input_inner, text=_t('send_btn'),
-                             font=('Segoe UI', 11, 'bold'),
-                             bg='#0f2a5c', fg='#ffffff',
+        # Row: campo de texto (esquerda) + botao enviar (direita, separado)
+        input_row = tk.Frame(input_outer, bg=t.get('input_border', '#e2e8f0'))
+        input_row.pack(fill='both', expand=True, padx=1, pady=1)
+
+        # Botao Enviar separado do campo de texto
+        send_bg = t.get('btn_send_bg', t.get('btn_bg', '#0f2a5c'))
+        send_fg = t.get('btn_send_fg', '#ffffff')
+        btn_send = tk.Button(input_row, text=f' {_t("send_btn")} ',
+                             font=('Segoe UI', 9, 'bold'),
+                             bg=send_bg, fg=send_fg,
                              relief='flat', bd=0, cursor='hand2',
-                             padx=22, pady=8,
-                             activebackground='#1a3f7a',
-                             activeforeground='#ffffff',
+                             padx=10, pady=3,
+                             activebackground=t.get('btn_active', '#1a3f7a'),
+                             activeforeground=send_fg,
                              command=self._send_message)
-        btn_send.pack(side='right', fill='y', padx=(4, 4), pady=0)
+        btn_send.pack(side='right', fill='y', padx=(4, 2), pady=2)
         _add_hover(btn_send, '#0f2a5c', '#1a3f7a')
 
-        # Coluna esquerda: toolbar em cima + texto embaixo
-        left_frame = tk.Frame(input_inner, bg=t.get('bg_input', '#f7fafc'))
-        left_frame.pack(side='left', fill='both', expand=True)
+        # Container do texto com margem
+        input_inner = tk.Frame(input_row, bg=t.get('bg_input', '#f7fafc'))
+        input_inner.pack(side='left', fill='both', expand=True)
 
         # Toolbar compacta dentro do input
-        toolbar = tk.Frame(left_frame, bg=t.get('bg_input', '#f7fafc'))
+        toolbar = tk.Frame(input_inner, bg=t.get('bg_input', '#f7fafc'))
         toolbar.pack(side='top', fill='x', padx=4, pady=(4, 0))
 
         # Emoji button
@@ -2786,7 +2790,7 @@ class GroupChatWindow(tk.Toplevel):
         btn_attach.pack(side='left', padx=2)
 
         # Campo de texto
-        self.entry = tk.Text(left_frame, font=('Segoe UI', 11),
+        self.entry = tk.Text(input_inner, font=('Segoe UI', 11),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=3,
@@ -5495,11 +5499,10 @@ def main():
 
     _register_url_protocol()
 
-    silent = '--silent' in sys.argv or '--minimized' in sys.argv
     app = LanMessengerApp()
     _start_instance_listener(app)
-    if silent:
-        app.root.withdraw()
+    # Sempre inicia minimizado na bandeja
+    app.root.withdraw()
     app.run()
 
 
