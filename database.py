@@ -96,8 +96,30 @@ class Database:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS groups (
+                group_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                group_type TEXT NOT NULL DEFAULT 'temp',
+                created_at REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id TEXT NOT NULL,
+                uid TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                ip TEXT DEFAULT '',
+                PRIMARY KEY (group_id, uid),
+                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
+            );
         """)
         c.commit()
+        # Migration: add avatar_data column if missing
+        try:
+            c.execute("ALTER TABLE contacts ADD COLUMN avatar_data TEXT DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
 
     # --- Local User ---
     def get_local_user(self):
@@ -136,12 +158,14 @@ class Database:
 
     # --- Contacts ---
     def upsert_contact(self, user_id, display_name, ip_address,
-                       hostname='', os_info='', status='online', note=''):
+                       hostname='', os_info='', status='online', note='',
+                       avatar_index=0, avatar_data=''):
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
-                                  os_info, status, note, last_seen, first_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  os_info, status, note, avatar_index,
+                                  avatar_data, last_seen, first_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name=excluded.display_name,
                 ip_address=excluded.ip_address,
@@ -149,8 +173,11 @@ class Database:
                 os_info=excluded.os_info,
                 status=excluded.status,
                 note=excluded.note,
+                avatar_index=excluded.avatar_index,
+                avatar_data=excluded.avatar_data,
                 last_seen=excluded.last_seen
-        """, (user_id, display_name, ip_address, hostname, os_info, status, note, now, now))
+        """, (user_id, display_name, ip_address, hostname, os_info, status,
+              note, avatar_index, avatar_data, now, now))
         self.conn.commit()
 
     def get_contact_note(self, user_id):
@@ -293,6 +320,47 @@ class Database:
         vals = list(kwargs.values()) + [file_id]
         self.conn.execute(
             f"UPDATE file_transfers SET {sets} WHERE file_id=?", vals)
+        self.conn.commit()
+
+    # --- Groups ---
+    def save_group(self, group_id, name, group_type='temp'):
+        self.conn.execute("""
+            INSERT OR REPLACE INTO groups (group_id, name, group_type, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (group_id, name, group_type, time.time()))
+        self.conn.commit()
+
+    def get_groups(self, group_type=None):
+        if group_type:
+            rows = self.conn.execute(
+                "SELECT * FROM groups WHERE group_type=? ORDER BY created_at DESC",
+                (group_type,)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM groups ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_group(self, group_id):
+        self.conn.execute("DELETE FROM groups WHERE group_id=?", (group_id,))
+        self.conn.commit()
+
+    def save_group_member(self, group_id, uid, display_name, ip=''):
+        self.conn.execute("""
+            INSERT OR REPLACE INTO group_members (group_id, uid, display_name, ip)
+            VALUES (?, ?, ?, ?)
+        """, (group_id, uid, display_name, ip))
+        self.conn.commit()
+
+    def get_group_members(self, group_id):
+        rows = self.conn.execute(
+            "SELECT * FROM group_members WHERE group_id=?",
+            (group_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_group_member(self, group_id, uid):
+        self.conn.execute(
+            "DELETE FROM group_members WHERE group_id=? AND uid=?",
+            (group_id, uid))
         self.conn.commit()
 
     # --- Settings ---

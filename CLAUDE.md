@@ -54,10 +54,21 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
 - Nota pessoal visivel para todos em tempo real (persistida no banco local, sincronizada via UDP)
 - Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos
-- Bate Papo em grupo estilo LAN Messenger (PanedWindow com splitter arrastavel, painel participantes com avatar/nome/nota, colapsavel, emoji, fonte, arquivo)
-- Transferencia de arquivos ponto-a-ponto e para grupos
+- Criar Grupo com 2 tipos: Temporario e Fixo, ambos aparecem na secao Grupos do TreeView
+  - Temporario: fechar janela pergunta se quer sair; "Nao" esconde janela mas permanece no grupo
+  - Fixo: fechar janela apenas esconde (permanece no grupo); sair via botao "Sair do Grupo"
+  - Notificacoes de entrada/saida: "X entrou no grupo" e "X saiu do grupo" para todos os membros
+  - Ao sair: remove participante do painel de todos, remove grupo do TreeView de quem saiu
+- Avatares com foto personalizada sincronizada via rede (thumbnail JPEG 48x48 no UDP announce)
+  - Recorte circular com antialias 2x (PIL mask), sem borda
+  - Fotos quadradas recortadas automaticamente para circulo
+- Contatos online em "Geral", offline em secao "Offline" recolhida (sem interacao)
+- Transferencia de arquivos ponto-a-ponto e para grupos (ate 100MB, chunks 256KB, temp file)
+  - Dialogo de transferencia com progresso em MB, velocidade, estado visual
+  - Quem envia ve "Envio concluido"; quem recebe ve "Abrir Pasta" + "Fechar"
 - Historico com busca e filtro por data
 - 3 temas visuais + UI modernizada (flat design, hover effects)
+- Bordas arredondadas DWM em todas as janelas (Windows 11+)
 - Notificacoes Windows clicaveis (winotify)
 - System tray, instancia unica, auto-start
 - Popups fecham com Escape, emoji pickers fecham ao clicar fora
@@ -69,12 +80,15 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Banco: threading.local() para conexao por thread, parametros ? em SQL.
 - Temas: dicts em THEMES com chaves padronizadas de cor.
 - Chat abre limpo (sem historico). Historico acessivel via botao History.
-- Contatos offline persistem no DB e aparecem com bolinha cinza.
+- Contatos offline vao para secao "Offline" do TreeView (group_offline). Bloqueia chat/menu.
+- Grupos: tabelas `groups` e `group_members` no DB, carregados no startup. Todos (temp e fixo) no TreeView com sufixo "(Temporário)" ou "(Fixo)".
+- Avatares: `_make_circular_avatar()` (module-level) recorta foto para circulo com antialias 2x. `_create_contact_avatar()` usa avatar_data do peer via rede.
 - Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow).
 - Icones MDL2: usar `_create_mdl2_icon_static()` (module-level) para icones Segoe MDL2 Assets.
 - Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce.
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
+- Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
 - Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
 
 ## Tipos de mensagem de rede
@@ -84,6 +98,8 @@ Constantes em network.py:
 - `MT_FILE_REQ`, `MT_FILE_ACC`, `MT_FILE_DEC`, `MT_FILE_CANCEL` - transferencia de arquivos
 - `MT_GROUP_INV` - convite para grupo (inclui lista de membros)
 - `MT_GROUP_MSG` - mensagem de grupo (mesh: cada membro envia para todos)
+- `MT_GROUP_LEAVE` - notificacao de saida do grupo (remove membro do painel de todos)
+- `MT_GROUP_JOIN` - notificacao de entrada no grupo (adiciona membro ao painel de todos)
 
 ## Testes
 
@@ -97,6 +113,9 @@ Sem suite de testes automatizados. Testar manualmente:
 7. Transmitir Mensagem: emojis coloridos, layout responsivo
 8. Bate Papo: criar grupo, splitter arrastavel, enviar/receber mensagens de grupo
 9. Preferencias: sidebar moderna, botoes com hover
+10. Avatares: foto personalizada visivel em todas as maquinas, recorte circular
+11. Grupos: temp fecha/permanece, fixo esconde, notificacoes entrada/saida
+12. Transferencia: dialogo diferente para quem envia vs quem recebe
 
 ## Workflow obrigatorio para TODA alteracao
 

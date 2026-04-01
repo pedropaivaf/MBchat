@@ -181,7 +181,7 @@ THEMES = {
         'bg_window': '#f0f0f0',
         'bg_white': '#ffffff',
         'bg_header': '#e8e8e8',
-        'bg_group': '#3366aa',
+        'bg_group': '#e0e0e0',
         'bg_select': '#cce8ff',
         'bg_input': '#ffffff',
         'bg_chat': '#ffffff',
@@ -192,6 +192,7 @@ THEMES = {
         'fg_green': '#008800',
         'fg_red': '#cc0000',
         'fg_orange': '#cc8800',
+        'fg_group': '#555555',
         'fg_msg': '#000000',
         'fg_time': '#666666',
         'fg_my_name': '#0066cc',
@@ -215,7 +216,7 @@ THEMES = {
         'bg_window': '#1e1e1e',
         'bg_white': '#2d2d2d',
         'bg_header': '#333333',
-        'bg_group': '#3a3a5c',
+        'bg_group': '#3a3a3a',
         'bg_select': '#3a5070',
         'bg_input': '#383838',
         'bg_chat': '#252525',
@@ -226,6 +227,7 @@ THEMES = {
         'fg_green': '#5cb85c',
         'fg_red': '#e05555',
         'fg_orange': '#e0a030',
+        'fg_group': '#c0c0c0',
         'fg_msg': '#d0d0d0',
         'fg_time': '#707070',
         'fg_my_name': '#6ca8e0',
@@ -249,7 +251,7 @@ THEMES = {
         'bg_window': '#f5f7fa',
         'bg_white': '#ffffff',
         'bg_header': '#0f2a5c',
-        'bg_group': '#cc2222',
+        'bg_group': '#e2e2e2',
         'bg_select': '#e8f0fe',
         'bg_input': '#f7fafc',
         'bg_chat': '#f5f7fa',
@@ -260,6 +262,7 @@ THEMES = {
         'fg_green': '#48bb78',
         'fg_red': '#cc2222',
         'fg_orange': '#ecc94b',
+        'fg_group': '#4a5568',
         'fg_msg': '#1a202c',
         'fg_time': '#718096',
         'fg_my_name': '#0f2a5c',
@@ -362,6 +365,30 @@ def _setup_scrollbar_style():
                     'sticky': 'we'})])
 
 
+def _make_circular_avatar(img_or_path, size=36, antialias=2):
+    """Cria avatar circular a partir de imagem PIL ou path. Retorna PIL Image RGBA."""
+    if not HAS_PIL:
+        return None
+    from PIL import ImageDraw
+    if isinstance(img_or_path, str):
+        img = Image.open(img_or_path)
+    else:
+        img = img_or_path
+    img = img.convert('RGBA')
+    w, h = img.size
+    s = min(w, h)
+    left = (w - s) // 2
+    top = (h - s) // 2
+    img = img.crop((left, top, left + s, top + s))
+    big = size * antialias
+    img = img.resize((big, big), Image.LANCZOS)
+    mask = Image.new('L', (big, big), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, big - 1, big - 1], fill=255)
+    img.putalpha(mask)
+    img = img.resize((size, size), Image.LANCZOS)
+    return img
+
+
 def _create_mdl2_icon_static(char, size=18, color='#718096'):
     """Cria ícone MDL2 Assets como PhotoImage (module-level, sem self)."""
     try:
@@ -459,6 +486,20 @@ def _center_window(win, w, h):
     x = (sx - w) // 2
     y = (sy - h) // 2
     win.geometry(f'{w}x{h}+{x}+{y}')
+
+
+def _apply_rounded_corners(win):
+    """Aplica bordas levemente arredondadas via DWM API (Windows 11+)."""
+    try:
+        import ctypes
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(ctypes.c_int(DWMWCP_ROUND)), 4)
+    except Exception:
+        pass  # Windows 10 ou anterior — sem suporte
 
 
 def _bind_date_mask(entry, var):
@@ -640,6 +681,7 @@ class PreferencesWindow(tk.Toplevel):
         self.bind('<Escape>', lambda e: self.destroy())
 
         _center_window(self, 580, 450)
+        _apply_rounded_corners(self)
 
         # --- Main layout: top area (left+right) and bottom buttons ---
         top = tk.Frame(self, bg=BG_WINDOW)
@@ -1204,8 +1246,10 @@ class PreferencesWindow(tk.Toplevel):
         db.set_setting('show_timestamp',
                        '1' if self.var_show_timestamp.get() else '0')
         db.set_setting('msg_style', self.var_msg_style.get())
-        db.set_setting('avatar_index', str(self.var_avatar_index.get()))
-        db.set_setting('custom_avatar', self.var_custom_avatar.get())
+        # Apply avatar change via messenger (syncs to network)
+        self.messenger.change_avatar(
+            self.var_avatar_index.get(),
+            self.var_custom_avatar.get())
 
         # Apply name change (uses StringVar, safe even if Conta tab not visible)
         new_name = self.var_display_name.get().strip()
@@ -1287,6 +1331,7 @@ class AccountWindow(tk.Toplevel):
         self.bind('<Escape>', lambda e: self.destroy())
 
         _center_window(self, 340, 420)
+        _apply_rounded_corners(self)
 
         db = self.messenger.db
         self.var_display_name = tk.StringVar(value=self.messenger.display_name)
@@ -1432,9 +1477,10 @@ class AccountWindow(tk.Toplevel):
         if new_name and new_name != self.messenger.display_name:
             self.messenger.change_name(new_name)
             self.app.lbl_username.config(text=f' {new_name}')
-        # Save avatar
-        db.set_setting('avatar_index', str(self.var_avatar_index.get()))
-        db.set_setting('custom_avatar', self.var_custom_avatar.get())
+        # Save avatar (syncs to network)
+        self.messenger.change_avatar(
+            self.var_avatar_index.get(),
+            self.var_custom_avatar.get())
         self.app._update_avatar()
         self.destroy()
 
@@ -1442,38 +1488,115 @@ class AccountWindow(tk.Toplevel):
 # =============================================================
 #  FILE TRANSFER DIALOG  (estilo LAN Messenger)
 # =============================================================
+def _format_size(bytes_val):
+    if bytes_val < 1024:
+        return f'{bytes_val} B'
+    elif bytes_val < 1024 * 1024:
+        return f'{bytes_val / 1024:.1f} KB'
+    else:
+        return f'{bytes_val / (1024 * 1024):.2f} MB'
+
+
 class FileTransferDialog(tk.Toplevel):
     """Dialogo de progresso de transferencia de arquivo."""
 
     def __init__(self, parent, file_id, filename, peer_name,
-                 direction='send', filesize=0, on_cancel=None):
+                 direction='send', filesize=0, on_cancel=None,
+                 on_accept=None, on_decline=None):
         super().__init__(parent)
         self.file_id = file_id
+        self.filename = filename
+        self.peer_name = peer_name
+        self.direction = direction
         self._on_cancel = on_cancel
+        self._on_accept = on_accept
+        self._on_decline = on_decline
+        self._filesize = filesize
+        self._start_time = time.time()
+        self._last_transferred = 0
+        self._last_speed_time = time.time()
+        self._finished = False
+        self._filepath = ''  # set on complete
 
         self.title('Transferência de Arquivo')
         self.resizable(False, False)
-        _center_window(self, 370, 120)
+        _center_window(self, 420, 180)
+        _apply_rounded_corners(self)
         self.configure(bg='#ffffff')
         self.transient(parent)
 
+        # Status label
         if direction == 'send':
-            txt = f"Enviando '{filename}' para {peer_name}."
+            status = f"Enviando '{filename}' para {peer_name}..."
         else:
-            txt = f"Recebendo '{filename}' de {peer_name}."
+            status = f"{peer_name} envia um arquivo para você:"
+        self._lbl_status = tk.Label(self, text=status,
+                                     font=FONT, bg='#ffffff', fg='#000000',
+                                     wraplength=390, anchor='w', justify='left')
+        self._lbl_status.pack(padx=15, pady=(12, 2), anchor='w')
 
-        tk.Label(self, text=txt, font=FONT, bg='#ffffff', fg='#000000',
-                 wraplength=340, anchor='w', justify='left'
-                 ).pack(padx=15, pady=(15, 8), anchor='w')
+        # File info
+        size_txt = _format_size(filesize)
+        self._lbl_file = tk.Label(self, text=f'{filename} ({size_txt})',
+                                   font=('Segoe UI', 9, 'bold'),
+                                   bg='#ffffff', fg='#1a202c',
+                                   wraplength=390, anchor='w')
+        self._lbl_file.pack(padx=15, anchor='w')
 
-        self.progress = ttk.Progressbar(self, length=335, mode='determinate',
+        # Progress bar (hidden initially for receive)
+        self._progress_frame = tk.Frame(self, bg='#ffffff')
+        self.progress = ttk.Progressbar(self._progress_frame, length=385,
+                                         mode='determinate',
                                          maximum=max(filesize, 1))
-        self.progress.pack(padx=15, pady=(0, 6))
+        self.progress.pack(padx=0, pady=(4, 2))
 
-        cancel_lbl = tk.Label(self, text='Cancelar', font=('Segoe UI', 8, 'underline'),
-                              fg='#0066cc', bg='#ffffff', cursor='hand2')
-        cancel_lbl.pack(anchor='w', padx=15, pady=(0, 10))
-        cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
+        self._lbl_info = tk.Label(self._progress_frame,
+                                  text=f'0 B / {size_txt}',
+                                  font=('Segoe UI', 8), bg='#ffffff',
+                                  fg='#718096', anchor='w')
+        self._lbl_info.pack(anchor='w')
+
+        # Action buttons frame
+        self._btn_frame = tk.Frame(self, bg='#ffffff')
+        self._btn_frame.pack(padx=15, pady=(6, 10), anchor='w')
+
+        if direction == 'send':
+            # Sender: show progress immediately
+            self._progress_frame.pack(padx=15, fill='x')
+            self._lbl_state = tk.Label(self._btn_frame,
+                                        text='Aguardando aceitação...',
+                                        font=('Segoe UI', 8, 'italic'),
+                                        bg='#ffffff', fg='#b07d10')
+            self._lbl_state.pack(side='left')
+            cancel_lbl = tk.Label(self._btn_frame, text='Cancelar',
+                                  font=('Segoe UI', 8, 'underline'),
+                                  fg='#cc0000', bg='#ffffff', cursor='hand2')
+            cancel_lbl.pack(side='left', padx=(12, 0))
+            cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
+            self._cancel_lbl = cancel_lbl
+        else:
+            # Receiver: show accept/decline buttons
+            self._lbl_state = None
+            btn_accept = tk.Button(self._btn_frame, text='  Aceitar  ',
+                                    font=('Segoe UI', 9, 'bold'),
+                                    bg='#2b8a3e', fg='#ffffff',
+                                    relief='flat', bd=0, cursor='hand2',
+                                    padx=10, pady=3,
+                                    activebackground='#237032',
+                                    command=self._accept)
+            btn_accept.pack(side='left')
+            _add_hover(btn_accept, '#2b8a3e', '#237032')
+
+            btn_decline = tk.Button(self._btn_frame, text='  Declinar  ',
+                                     font=('Segoe UI', 9),
+                                     bg='#e2e8f0', fg='#4a5568',
+                                     relief='flat', bd=0, cursor='hand2',
+                                     padx=10, pady=3,
+                                     activebackground='#cbd5e0',
+                                     command=self._decline)
+            btn_decline.pack(side='left', padx=(8, 0))
+            _add_hover(btn_decline, '#e2e8f0', '#cbd5e0')
+            self._cancel_lbl = None
 
         self.protocol('WM_DELETE_WINDOW', self._cancel)
 
@@ -1484,14 +1607,123 @@ class FileTransferDialog(tk.Toplevel):
             except Exception:
                 pass
 
-    def update_progress(self, transferred, total):
+    def _accept(self):
+        """Receiver aceita o arquivo."""
+        if self._on_accept:
+            self._on_accept(self.file_id)
+        # Rebuild UI for receiving
+        for w in self._btn_frame.winfo_children():
+            w.destroy()
+        self._progress_frame.pack(padx=15, fill='x',
+                                  before=self._btn_frame)
+        self._lbl_status.config(
+            text=f"Recebendo '{self.filename}' de {self.peer_name}...")
+        self._lbl_state = tk.Label(self._btn_frame, text='Transferindo...',
+                                    font=('Segoe UI', 8, 'italic'),
+                                    bg='#ffffff', fg='#2b8a3e')
+        self._lbl_state.pack(side='left')
+        cancel_lbl = tk.Label(self._btn_frame, text='Cancelar',
+                              font=('Segoe UI', 8, 'underline'),
+                              fg='#cc0000', bg='#ffffff', cursor='hand2')
+        cancel_lbl.pack(side='left', padx=(12, 0))
+        cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
+        self._cancel_lbl = cancel_lbl
+
+    def _decline(self):
+        """Receiver declina o arquivo."""
+        if self._on_decline:
+            self._on_decline(self.file_id)
+        self._finished = True
+        self._safe_destroy()
+
+    def set_accepted(self):
+        """Chamado no sender quando receiver aceita."""
         try:
-            self.progress['maximum'] = max(total, 1)
-            self.progress['value'] = transferred
+            if self._lbl_state:
+                self._lbl_state.config(text='Aceito! Transferindo...',
+                                        fg='#2b8a3e')
         except tk.TclError:
             pass
 
-    def finish(self):
+    def update_progress(self, transferred, total):
+        if self._finished:
+            return
+        try:
+            self.progress['maximum'] = max(total, 1)
+            self.progress['value'] = transferred
+
+            now = time.time()
+            elapsed = now - self._last_speed_time
+            if elapsed > 0.5:
+                speed = (transferred - self._last_transferred) / elapsed
+                self._last_transferred = transferred
+                self._last_speed_time = now
+                speed_txt = f'{_format_size(int(speed))}/s'
+            else:
+                speed_txt = ''
+
+            info = f'{_format_size(transferred)} / {_format_size(total)}'
+            if speed_txt:
+                info += f'  —  {speed_txt}'
+            self._lbl_info.config(text=info)
+
+            # Mark accepted on sender when first progress arrives
+            if self.direction == 'send' and transferred > 0:
+                self.set_accepted()
+        except tk.TclError:
+            pass
+
+    def finish(self, success=True, filepath=''):
+        if self._finished:
+            return
+        self._finished = True
+        self._filepath = filepath
+        try:
+            for w in self._btn_frame.winfo_children():
+                w.destroy()
+            if success:
+                self._lbl_status.config(fg='#2b8a3e')
+                if self.direction == 'send':
+                    self._lbl_status.config(text=f"'{self.filename}' enviado para {self.peer_name} — Completo!")
+                else:
+                    self._lbl_status.config(text=f"'{self.filename}' recebido de {self.peer_name} — Completo!")
+                self.progress['value'] = self.progress['maximum']
+                self.update_idletasks()
+                self._lbl_info.config(text=_format_size(self._filesize))
+                # "Abrir Pasta" só para receiver
+                if self.direction == 'receive' and filepath:
+                    btn_folder = tk.Label(self._btn_frame,
+                                          text='Abrir Pasta',
+                                          font=('Segoe UI', 9, 'underline'),
+                                          fg='#0066cc', bg='#ffffff',
+                                          cursor='hand2')
+                    btn_folder.pack(side='left')
+                    btn_folder.bind('<Button-1>',
+                                    lambda e: self._open_folder(filepath))
+                close_lbl = tk.Label(self._btn_frame, text='Fechar',
+                                     font=('Segoe UI', 8, 'underline'),
+                                     fg='#718096', bg='#ffffff',
+                                     cursor='hand2')
+                close_lbl.pack(side='left', padx=(12, 0))
+                close_lbl.bind('<Button-1>', lambda e: self._safe_destroy())
+            else:
+                self._safe_destroy()
+        except tk.TclError:
+            pass
+
+    def _open_folder(self, filepath):
+        """Abre o explorador na pasta do arquivo."""
+        try:
+            folder = os.path.dirname(filepath)
+            if os.name == 'nt':
+                os.startfile(folder)
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', folder])
+        except Exception:
+            pass
+
+    def _safe_destroy(self):
         try:
             self.destroy()
         except tk.TclError:
@@ -1500,7 +1732,266 @@ class FileTransferDialog(tk.Toplevel):
     def _cancel(self):
         if self._on_cancel:
             self._on_cancel(self.file_id)
-        self.finish()
+        if self._on_decline and self.direction == 'receive':
+            self._on_decline(self.file_id)
+        self._finished = True
+        self._safe_destroy()
+
+
+# =============================================================
+#  FILE TRANSFERS WINDOW  (lista de todas as transferencias)
+# =============================================================
+class FileTransfersWindow(tk.Toplevel):
+    """Janela com lista de todas as transferencias de arquivos."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self._rows = {}  # file_id -> frame widget
+
+        self.title('Transferências de Arquivos')
+        self.minsize(400, 300)
+        _center_window(self, 460, 420)
+        _apply_rounded_corners(self)
+        self.configure(bg='#f5f7fa')
+        self.protocol('WM_DELETE_WINDOW', self._on_close)
+        self.bind('<Escape>', lambda e: self._on_close())
+
+        ico = _get_icon_path()
+        if ico:
+            try:
+                self.iconbitmap(ico)
+            except Exception:
+                pass
+
+        NAVY = '#0f2a5c'
+        # Toolbar
+        toolbar = tk.Frame(self, bg='#e8ecf1', bd=0)
+        toolbar.pack(fill='x')
+        tb_inner = tk.Frame(toolbar, bg='#e8ecf1')
+        tb_inner.pack(fill='x', padx=6, pady=4)
+
+        btn_cancel = tk.Button(tb_inner, text='\u2716 Cancelar',
+                               font=('Segoe UI', 8), bg='#e8ecf1',
+                               fg='#4a5568', relief='flat', bd=0,
+                               cursor='hand2', padx=6,
+                               command=self._cancel_selected)
+        btn_cancel.pack(side='left', padx=(0, 4))
+
+        btn_folder = tk.Button(tb_inner, text='\U0001f4c2 Mostrar a Pasta',
+                               font=('Segoe UI', 8), bg='#e8ecf1',
+                               fg='#4a5568', relief='flat', bd=0,
+                               cursor='hand2', padx=6,
+                               command=self._open_folder_selected)
+        btn_folder.pack(side='left', padx=(0, 4))
+
+        btn_remove = tk.Button(tb_inner, text='\u2716 Remover da Lista',
+                               font=('Segoe UI', 8), bg='#e8ecf1',
+                               fg='#cc0000', relief='flat', bd=0,
+                               cursor='hand2', padx=6,
+                               command=self._remove_selected)
+        btn_remove.pack(side='left')
+
+        # Scrollable list
+        list_frame = tk.Frame(self, bg='#ffffff')
+        list_frame.pack(fill='both', expand=True, padx=0, pady=0)
+
+        self._canvas = tk.Canvas(list_frame, bg='#ffffff',
+                                  highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical',
+                                   command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+        self._canvas.pack(fill='both', expand=True)
+
+        self._inner = tk.Frame(self._canvas, bg='#ffffff')
+        self._win_id = self._canvas.create_window((0, 0), window=self._inner,
+                                                    anchor='nw')
+        self._canvas.bind('<Configure>',
+                          lambda e: self._canvas.itemconfig(self._win_id,
+                                                             width=e.width))
+        self._inner.bind('<Configure>',
+                         lambda e: self._canvas.configure(
+                             scrollregion=self._canvas.bbox('all')))
+        self._canvas.bind('<MouseWheel>',
+                          lambda e: self._canvas.yview_scroll(
+                              -1 * (e.delta // 120), 'units'))
+
+        # Bottom bar
+        bottom = tk.Frame(self, bg='#f5f7fa')
+        bottom.pack(fill='x', padx=8, pady=6)
+        btn_clear = tk.Button(bottom, text='Apagar Lista',
+                              font=('Segoe UI', 8), bg='#f5f7fa',
+                              fg='#cc0000', relief='flat', bd=0,
+                              cursor='hand2', command=self._clear_all)
+        btn_clear.pack(side='left')
+        btn_close = tk.Button(bottom, text='  Fechar  ',
+                              font=('Segoe UI', 9),
+                              bg='#e2e8f0', fg='#4a5568', relief='flat',
+                              bd=0, padx=12, pady=3, cursor='hand2',
+                              command=self._on_close)
+        btn_close.pack(side='right')
+
+        # Load existing entries
+        self._load_entries()
+
+    def _load_entries(self):
+        """Carrega transferencias da lista do app."""
+        for entry in self.app._transfer_history:
+            self._add_entry_widget(entry)
+
+    def _add_entry_widget(self, entry):
+        fid = entry['file_id']
+        if fid in self._rows:
+            return
+
+        row = tk.Frame(self._inner, bg='#ffffff', cursor='hand2')
+        row.pack(fill='x', padx=0, pady=0)
+        row._entry = entry
+        row._selected = False
+        self._rows[fid] = row
+
+        # Separator
+        tk.Frame(row, bg='#e8ecf1', height=1).pack(fill='x')
+
+        content = tk.Frame(row, bg='#ffffff')
+        content.pack(fill='x', padx=10, pady=8)
+
+        # Direction + peer
+        direction = entry.get('direction', 'send')
+        peer = entry.get('peer_name', '?')
+        if direction == 'send':
+            header = f'Para:{peer}'
+        else:
+            header = f'De:{peer}'
+        tk.Label(content, text=header, font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#1a202c', anchor='w').pack(anchor='w')
+
+        # Filename + size
+        fname = entry.get('filename', '?')
+        fsize = _format_size(entry.get('filesize', 0))
+        tk.Label(content, text=f'{fname} ({fsize})',
+                 font=('Segoe UI', 8), bg='#ffffff',
+                 fg='#4a5568', anchor='w').pack(anchor='w')
+
+        # Status
+        status = entry.get('status', 'pending')
+        status_text = {'pending': 'Pendente', 'transferring': 'Transferindo...',
+                       'completed': 'Completo', 'error': 'Erro',
+                       'declined': 'Recusado', 'cancelled': 'Cancelado'
+                       }.get(status, status)
+        color = '#2b8a3e' if status == 'completed' else '#b07d10' if status == 'transferring' else '#cc0000' if status in ('error', 'cancelled') else '#718096'
+        lbl_status = tk.Label(content, text=status_text,
+                              font=('Segoe UI', 8, 'italic'),
+                              bg='#ffffff', fg=color, anchor='w')
+        lbl_status.pack(anchor='w')
+        row._lbl_status = lbl_status
+
+        # Click to select
+        for w in [row, content] + list(content.winfo_children()):
+            w.bind('<Button-1>', lambda e, r=row: self._select_row(r))
+
+    def _select_row(self, row):
+        # Deselect all
+        for r in self._rows.values():
+            r.configure(bg='#ffffff')
+            r._selected = False
+            for w in r.winfo_children():
+                if hasattr(w, 'configure'):
+                    try:
+                        w.configure(bg='#ffffff')
+                        for c in w.winfo_children():
+                            try:
+                                c.configure(bg='#ffffff')
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+        # Select this
+        row._selected = True
+        row.configure(bg='#cce0ff')
+        for w in row.winfo_children():
+            if hasattr(w, 'configure'):
+                try:
+                    w.configure(bg='#cce0ff')
+                    for c in w.winfo_children():
+                        try:
+                            c.configure(bg='#cce0ff')
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+    def _get_selected(self):
+        for fid, row in self._rows.items():
+            if row._selected:
+                return fid, row
+        return None, None
+
+    def _cancel_selected(self):
+        fid, row = self._get_selected()
+        if fid and row._entry.get('status') in ('pending', 'transferring'):
+            self.app.messenger.cancel_file(fid)
+
+    def _open_folder_selected(self):
+        fid, row = self._get_selected()
+        if fid:
+            fp = row._entry.get('filepath', '')
+            if fp and os.path.exists(fp):
+                folder = os.path.dirname(fp)
+                try:
+                    if os.name == 'nt':
+                        os.startfile(folder)
+                except Exception:
+                    pass
+
+    def _remove_selected(self):
+        fid, row = self._get_selected()
+        if fid:
+            row.destroy()
+            del self._rows[fid]
+            self.app._transfer_history = [
+                e for e in self.app._transfer_history
+                if e['file_id'] != fid]
+
+    def _clear_all(self):
+        for row in self._rows.values():
+            row.destroy()
+        self._rows.clear()
+        self.app._transfer_history.clear()
+
+    def add_or_update(self, entry):
+        """Adiciona ou atualiza uma entrada."""
+        fid = entry['file_id']
+        # Update in history
+        found = False
+        for i, e in enumerate(self.app._transfer_history):
+            if e['file_id'] == fid:
+                self.app._transfer_history[i] = entry
+                found = True
+                break
+        if not found:
+            self.app._transfer_history.append(entry)
+
+        if fid in self._rows:
+            # Update status label
+            row = self._rows[fid]
+            row._entry = entry
+            status = entry.get('status', 'pending')
+            status_text = {'pending': 'Pendente', 'transferring': 'Transferindo...',
+                           'completed': 'Completo', 'error': 'Erro',
+                           'declined': 'Recusado', 'cancelled': 'Cancelado'
+                           }.get(status, status)
+            color = '#2b8a3e' if status == 'completed' else '#b07d10' if status == 'transferring' else '#cc0000' if status in ('error', 'cancelled') else '#718096'
+            try:
+                row._lbl_status.config(text=status_text, fg=color)
+            except tk.TclError:
+                pass
+        else:
+            self._add_entry_widget(entry)
+
+    def _on_close(self):
+        self.withdraw()
 
 
 # =============================================================
@@ -1525,6 +2016,7 @@ class ChatWindow(tk.Toplevel):
         self.title(f'{peer_name} - {APP_NAME}')
         self.minsize(350, 350)
         _center_window(self, 420, 480)
+        _apply_rounded_corners(self)
         self.configure(bg=t.get('bg_window', '#f5f7fa'))
         ico = _get_icon_path()
         if ico:
@@ -1772,14 +2264,50 @@ class ChatWindow(tk.Toplevel):
     def _draw_peer_avatar(self):
         contact = self.messenger.db.get_contact(self.peer_id)
         idx = contact.get('avatar_index', 0) if contact else 0
+        avatar_data_b64 = contact.get('avatar_data', '') if contact else ''
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
         initial = self.peer_name[0].upper() if self.peer_name else 'U'
         self._chat_avatar_canvas.delete('all')
-        self._chat_avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
-                                              outline='white', width=2)
-        self._chat_avatar_canvas.create_text(20, 20, text=initial,
-                                              fill='white',
-                                              font=('Segoe UI', 14, 'bold'))
+
+        if HAS_PIL and avatar_data_b64:
+            try:
+                import base64
+                from io import BytesIO
+                raw = base64.b64decode(avatar_data_b64)
+                pil_img = Image.open(BytesIO(raw))
+                img = _make_circular_avatar(pil_img, 36)
+                self._peer_avatar_img = ImageTk.PhotoImage(img)
+                self._chat_avatar_canvas.create_image(
+                    20, 20, image=self._peer_avatar_img)
+                return
+            except Exception:
+                pass
+
+        if HAS_PIL:
+            from PIL import ImageDraw, ImageFont
+            big = 72
+            img_big = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+            draw_big = ImageDraw.Draw(img_big)
+            draw_big.ellipse([0, 0, big - 1, big - 1], fill=color)
+            try:
+                font = ImageFont.truetype('segoeui.ttf', 28)
+            except Exception:
+                font = ImageFont.load_default()
+            bbox = draw_big.textbbox((0, 0), initial, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw_big.text(((big - tw) / 2 - bbox[0],
+                           (big - th) / 2 - bbox[1]),
+                          initial, fill='white', font=font)
+            img = img_big.resize((36, 36), Image.LANCZOS)
+            self._peer_avatar_img = ImageTk.PhotoImage(img)
+            self._chat_avatar_canvas.create_image(
+                20, 20, image=self._peer_avatar_img)
+        else:
+            self._chat_avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
+                                                  outline='', width=0)
+            self._chat_avatar_canvas.create_text(20, 20, text=initial,
+                                                  fill='white',
+                                                  font=('Segoe UI', 14, 'bold'))
 
     def _on_chat_scroll(self, first, last):
         self._chat_scrollbar.set(first, last)
@@ -2654,11 +3182,12 @@ class ChatWindow(tk.Toplevel):
 class GroupChatWindow(tk.Toplevel):
     """Janela de Bate Papo em grupo (multi-participantes) - estilo LAN Messenger."""
 
-    def __init__(self, app, group_id, group_name):
+    def __init__(self, app, group_id, group_name, group_type='temp'):
         super().__init__(app.root)
         self.app = app
         self.group_id = group_id
         self.group_name = group_name
+        self.group_type = group_type
         self._members = {}  # uid -> {display_name, ip, status, note}
         self._panel_visible = True
         self._chat_emoji_cache = {}
@@ -2667,9 +3196,11 @@ class GroupChatWindow(tk.Toplevel):
         self._participant_widgets = {}  # uid -> {frame, name_lbl, note_lbl, avatar_lbl}
         self._participant_avatars = {}  # cache de imagens
 
-        self.title(f'{group_name} - Bate Papo')
+        tipo_label = 'Fixo' if group_type == 'fixed' else 'Temporário'
+        self.title(f'{group_name} ({tipo_label})')
         self.minsize(480, 380)
         _center_window(self, 620, 480)
+        _apply_rounded_corners(self)
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
 
@@ -2715,6 +3246,19 @@ class GroupChatWindow(tk.Toplevel):
                                      command=self._toggle_panel)
         self._btn_toggle.pack(side='right')
         _add_hover(self._btn_toggle, '#1a3f7a', '#2451a0')
+
+        # Botao "Sair do Grupo" (visivel apenas para grupo fixo)
+        if self.group_type == 'fixed':
+            btn_leave = tk.Button(hinner, text='Sair do Grupo',
+                                  font=('Segoe UI', 7),
+                                  bg='#1a3f7a', fg='#8aa0cc',
+                                  relief='flat', bd=0,
+                                  cursor='hand2', padx=6, pady=1,
+                                  activebackground='#2451a0',
+                                  activeforeground='#ffffff',
+                                  command=self._confirm_leave)
+            btn_leave.pack(side='right', padx=(0, 6))
+            _add_hover(btn_leave, '#1a3f7a', '#2451a0')
 
         # ===== Barra de ações (bottom - pack antes do input) =====
         win_bg = t.get('bg_window', '#f5f7fa')
@@ -2889,6 +3433,18 @@ class GroupChatWindow(tk.Toplevel):
         self._lbl_count.config(text=f'{len(self._members)} participante(s)')
         self._add_participant_widget(uid)
 
+    def remove_member(self, uid):
+        """Remove membro do grupo e do painel de participantes."""
+        if uid in self._members:
+            del self._members[uid]
+        if uid in self._participant_widgets:
+            try:
+                self._participant_widgets[uid]['frame'].destroy()
+            except Exception:
+                pass
+            del self._participant_widgets[uid]
+        self._lbl_count.config(text=f'{len(self._members)} participante(s)')
+
     def update_member_info(self, uid, info):
         """Atualiza info de um membro (nota, status, etc)."""
         if uid not in self._members:
@@ -3001,6 +3557,7 @@ class GroupChatWindow(tk.Toplevel):
         win.grab_set()
         win.configure(bg='#f5f7fa')
         _center_window(win, 300, 380)
+        _apply_rounded_corners(win)
         win.resizable(False, False)
         win.bind('<Escape>', lambda e: win.destroy())
 
@@ -3041,23 +3598,25 @@ class GroupChatWindow(tk.Toplevel):
             if not new_ids:
                 win.destroy()
                 return
+            group = self.app.messenger._groups.get(self.group_id)
             # Adicionar novos membros
             for uid in new_ids:
                 info = self.app.peer_info.get(uid, {})
                 name = info.get('display_name', uid)
                 self.add_member(uid, name, info)
-                self.system_message(f'{name} foi adicionado ao grupo')
-            # Atualizar grupo no messenger e enviar convites
-            group = self.app.messenger._groups.get(self.group_id)
-            if group:
-                for uid in new_ids:
-                    info = self.app.peer_info.get(uid, {})
+                self.system_message(f'{name} entrou no grupo.')
+                # Atualizar lista no messenger
+                if group:
                     group['members'].append({
                         'uid': uid,
-                        'display_name': info.get('display_name', uid),
+                        'display_name': name,
                         'ip': info.get('ip', '')
                     })
-                # Enviar convite para novos membros com lista completa
+                # Notificar membros existentes sobre novo membro
+                self.app.messenger.notify_group_join(
+                    self.group_id, uid, name)
+            # Enviar convite para novos membros com lista completa
+            if group:
                 for uid in new_ids:
                     info = self.app.peer_info.get(uid, {})
                     ip = info.get('ip', '')
@@ -3069,6 +3628,7 @@ class GroupChatWindow(tk.Toplevel):
                             'display_name': self.app.messenger.display_name,
                             'group_id': self.group_id,
                             'group_name': self.group_name,
+                            'group_type': self.group_type,
                             'members': group['members'],
                         })
             win.destroy()
@@ -3319,9 +3879,41 @@ class GroupChatWindow(tk.Toplevel):
                          args=(self.group_id, content),
                          daemon=True).start()
 
+    def _confirm_leave(self):
+        """Confirmação para sair de grupo fixo."""
+        if messagebox.askyesno('Sair do Grupo',
+                                'Deseja sair do grupo permanentemente?',
+                                parent=self):
+            self._leave_group()
+
     def _on_close(self):
+        if self.group_type == 'fixed':
+            # Grupo fixo: esconder janela, permanece no grupo
+            self.withdraw()
+        else:
+            # Grupo temporário: perguntar se quer sair
+            resp = messagebox.askyesno('Sair do Grupo',
+                                       'Deseja sair do grupo?',
+                                       parent=self)
+            if resp:
+                # Sim: sai do grupo (notifica todos)
+                self._leave_group()
+            else:
+                # Não: fecha janela mas permanece no grupo
+                self.withdraw()
+
+    def _leave_group(self):
+        """Sai do grupo e destrói a janela."""
+        self.app.messenger.leave_group(self.group_id)
         if self.group_id in self.app.group_windows:
             del self.app.group_windows[self.group_id]
+        # Remover do treeview se existir
+        if self.group_id in self.app._group_tree_items:
+            try:
+                self.app.tree.delete(self.app._group_tree_items[self.group_id])
+            except Exception:
+                pass
+            del self.app._group_tree_items[self.group_id]
         self.destroy()
 
 
@@ -3335,6 +3927,8 @@ class LanMessengerApp:
         self.root.minsize(260, 450)
         self.root.geometry('280x520')
         self.root.configure(bg=BG_WINDOW)
+        self.root.update_idletasks()
+        _apply_rounded_corners(self.root)
 
         # Captura exceções não tratadas do tkinter
         def _tk_exception(exc_type, exc_value, exc_tb):
@@ -3362,6 +3956,8 @@ class LanMessengerApp:
         self.peer_items = {}
         self.peer_info = {}
         self._file_dialogs = {}  # file_id -> FileTransferDialog
+        self._transfer_history = []  # list of transfer entry dicts
+        self._transfers_window = None
         self._tray_icon = None
         self._last_notif_peer = None
 
@@ -3398,6 +3994,9 @@ class LanMessengerApp:
         # Carrega contatos offline salvos no DB
         self._load_saved_contacts()
 
+        # Carrega grupos fixos salvos no DB
+        self._load_saved_groups()
+
         # Inicia tray icon para notificacoes
         if HAS_TRAY and HAS_PIL:
             self.root.after(50, self._start_tray)
@@ -3425,6 +4024,8 @@ class LanMessengerApp:
             on_file_error=self._safe(self._on_file_error),
             on_group_invite=self._safe(self._on_group_invite),
             on_group_message=self._safe(self._on_group_message),
+            on_group_leave=self._safe(self._on_group_leave),
+            on_group_join=self._safe(self._on_group_join),
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
@@ -3509,7 +4110,7 @@ class LanMessengerApp:
                         rowheight=44)
         style.configure('Contacts.Treeview.Heading',
                         background=t['bg_group'],
-                        foreground=t['fg_white'])
+                        foreground=t.get('fg_group', '#4a5568'))
         style.map('Contacts.Treeview',
                   background=[('selected', t['bg_select'])],
                   foreground=[('selected', t['fg_black'])])
@@ -3521,8 +4122,8 @@ class LanMessengerApp:
 
         # Tags do treeview
         if hasattr(self, 'tree'):
-            self.tree.tag_configure('group', background='#cc2222',
-                                    foreground='#ffffff',
+            self.tree.tag_configure('group', background=t['bg_group'],
+                                    foreground=t.get('fg_group', '#4a5568'),
                                     font=('Segoe UI', 8, 'bold'))
             self.tree.tag_configure('online', foreground=t['fg_black'])
             self.tree.tag_configure('away', foreground=t['fg_orange'])
@@ -3724,7 +4325,7 @@ class LanMessengerApp:
                               command=self._show_broadcast)
         btn_bcast.pack(side='left', padx=(0, 6))
 
-        btn_grp = tk.Button(action_row, text='\U0001f4ac  Bate Papo',
+        btn_grp = tk.Button(action_row, text='\U0001f4ac  Criar Grupo',
                             font=('Segoe UI', 8, 'bold'), bg='#1a3f7a',
                             fg='#ffffff', relief='flat', bd=0,
                             cursor='hand2', padx=10, pady=3,
@@ -3797,8 +4398,8 @@ class LanMessengerApp:
         style.configure('Contacts.Treeview', background='#ffffff',
                          foreground='#1a202c', fieldbackground='#ffffff',
                          font=('Segoe UI', 10), rowheight=44, borderwidth=0)
-        style.configure('Contacts.Treeview.Heading', background='#cc2222',
-                         foreground='#ffffff', font=FONT_BOLD)
+        style.configure('Contacts.Treeview.Heading', background='#e2e2e2',
+                         foreground='#4a5568', font=FONT_BOLD)
         style.map('Contacts.Treeview',
                    background=[('selected', '#e8f0fe')],
                    foreground=[('selected', '#1a202c')])
@@ -3902,9 +4503,16 @@ class LanMessengerApp:
 
         self.group_general = self.tree.insert('', 'end', text=_t('group_general'),
                                               open=True, tags=('group',))
-        self.tree.tag_configure('group', background='#cc2222',
-                                foreground='#ffffff',
+        self.group_groups = self.tree.insert('', 'end', text='Grupos',
+                                             open=True, tags=('group',))
+        self.group_offline = self.tree.insert('', 'end', text='Offline (0)',
+                                              open=False, tags=('group',))
+        self._group_tree_items = {}  # group_id -> tree item id
+        self.tree.tag_configure('group', background='#e2e2e2',
+                                foreground='#4a5568',
                                 font=('Segoe UI', 8, 'bold'))
+        self.tree.tag_configure('group_item', foreground='#1a202c',
+                                font=('Segoe UI', 9))
         self.tree.tag_configure('online', foreground=FG_BLACK)
         self.tree.tag_configure('away', foreground=FG_ORANGE)
         self.tree.tag_configure('busy', foreground=FG_RED)
@@ -3952,31 +4560,47 @@ class LanMessengerApp:
             'online': '#48bb78', 'away': '#ecc94b',
             'busy': '#f56565', 'offline': '#a0aec0',
         }
-        # Get avatar color
         contact = self.messenger.db.get_contact(uid)
         idx = contact.get('avatar_index', 0) if contact else 0
+        avatar_data_b64 = contact.get('avatar_data', '') if contact else ''
         av_color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
 
         if HAS_PIL:
-            from PIL import ImageDraw
-            img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(img)
-            # Avatar circle com borda
-            draw.ellipse([1, 1, size - 2, size - 2], fill=av_color,
-                         outline='#0f2a5c', width=2)
-            # Initial letter
-            initial = name[0].upper() if name else 'U'
-            try:
-                from PIL import ImageFont
-                font = ImageFont.truetype('segoeui.ttf', 15)
-            except Exception:
-                font = ImageFont.load_default()
-            bbox = draw.textbbox((0, 0), initial, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text(((size - tw) / 2 - bbox[0],
-                       (size - th) / 2 - bbox[1]),
-                      initial, fill='white', font=font)
+            from PIL import ImageDraw, ImageFont
+            has_custom = False
+
+            # Tentar usar foto do peer (avatar_data via rede)
+            if avatar_data_b64:
+                try:
+                    import base64
+                    from io import BytesIO
+                    raw = base64.b64decode(avatar_data_b64)
+                    pil_img = Image.open(BytesIO(raw))
+                    img = _make_circular_avatar(pil_img, size)
+                    has_custom = True
+                except Exception:
+                    pass
+
+            if not has_custom:
+                # Avatar padrão com antialias 2x (sem borda)
+                big = size * 2
+                img_big = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+                draw_big = ImageDraw.Draw(img_big)
+                draw_big.ellipse([0, 0, big - 1, big - 1], fill=av_color)
+                initial = name[0].upper() if name else 'U'
+                try:
+                    font = ImageFont.truetype('segoeui.ttf', 30)
+                except Exception:
+                    font = ImageFont.load_default()
+                bbox = draw_big.textbbox((0, 0), initial, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                draw_big.text(((big - tw) / 2 - bbox[0],
+                               (big - th) / 2 - bbox[1]),
+                              initial, fill='white', font=font)
+                img = img_big.resize((size, size), Image.LANCZOS)
+
             # Status dot (bottom-right) com borda branca
+            draw = ImageDraw.Draw(img)
             dot_color = dot_colors.get(status, '#a0aec0')
             dx, dy = size - dot_size - 1, size - dot_size - 1
             draw.ellipse([dx - 1, dy - 1, dx + dot_size + 1, dy + dot_size + 1],
@@ -4016,10 +4640,10 @@ class LanMessengerApp:
             status = c.get('status', 'offline')
             tag = status if status in ('online', 'away', 'busy') else 'offline'
             name = c.get('display_name', 'Unknown')
-            suffix = ' (offline)' if tag == 'offline' else ''
-            display = f'  {name}{suffix}'
+            display = f'  {name}'
             avatar = self._create_contact_avatar(uid, name, tag)
-            iid = self.tree.insert(self.group_general, 'end',
+            parent = self.group_general if tag != 'offline' else self.group_offline
+            iid = self.tree.insert(parent, 'end',
                                    text=display, tags=(tag,),
                                    image=avatar)
             self.peer_items[uid] = iid
@@ -4029,13 +4653,14 @@ class LanMessengerApp:
                 'hostname': c.get('hostname', ''),
                 'status': status,
             }
+        self._update_offline_count()
 
     # --- Avatar ---
     def _draw_default_avatar(self, idx):
         self.avatar_canvas.delete('all')
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
         self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
-                                       outline='#ffffff', width=2)
+                                       outline='', width=0)
         self.avatar_canvas.create_text(20, 20, text='U', fill='white',
                                        font=('Segoe UI', 14, 'bold'))
 
@@ -4048,8 +4673,7 @@ class LanMessengerApp:
         if custom and os.path.exists(custom):
             try:
                 if HAS_PIL:
-                    img = Image.open(custom)
-                    img = img.resize((36, 36), Image.LANCZOS)
+                    img = _make_circular_avatar(custom, 36)
                     self._avatar_img = ImageTk.PhotoImage(img)
                 else:
                     self._avatar_img = tk.PhotoImage(file=custom)
@@ -4064,13 +4688,33 @@ class LanMessengerApp:
             except Exception:
                 pass
 
-        # Default colored avatar (circular)
+        # Default colored avatar (circular, sem borda)
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]
         initial = self.messenger.display_name[0].upper() if self.messenger.display_name else 'U'
-        self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
-                                       outline='#0f2a5c', width=2)
-        self.avatar_canvas.create_text(20, 20, text=initial, fill='white',
-                                       font=('Segoe UI', 14, 'bold'))
+        if HAS_PIL:
+            from PIL import ImageDraw, ImageFont
+            big = 72
+            img_big = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+            draw_big = ImageDraw.Draw(img_big)
+            draw_big.ellipse([0, 0, big - 1, big - 1], fill=color)
+            try:
+                font = ImageFont.truetype('segoeui.ttf', 28)
+            except Exception:
+                font = ImageFont.load_default()
+            bbox = draw_big.textbbox((0, 0), initial, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw_big.text(((big - tw) / 2 - bbox[0],
+                           (big - th) / 2 - bbox[1]),
+                          initial, fill='white', font=font)
+            img = img_big.resize((36, 36), Image.LANCZOS)
+            self._avatar_img = ImageTk.PhotoImage(img)
+            self.avatar_canvas.create_image(20, 20,
+                                            image=self._avatar_img)
+        else:
+            self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
+                                           outline='', width=0)
+            self.avatar_canvas.create_text(20, 20, text=initial, fill='white',
+                                           font=('Segoe UI', 14, 'bold'))
 
     # --- Search bar ---
     def _search_focus_in(self, e):
@@ -4086,14 +4730,18 @@ class LanMessengerApp:
     def _filter_contacts(self, *args):
         query = self._search_var.get().strip().lower()
         if query == 'buscar contatos...' or not query:
-            # Mostrar todos
+            # Restaurar todos nos grupos corretos
             for uid, iid in self.peer_items.items():
-                self.tree.reattach(iid, self.group_general, 'end')
+                tags = self.tree.item(iid, 'tags')
+                parent = self.group_offline if 'offline' in tags else self.group_general
+                self.tree.reattach(iid, parent, 'end')
             return
         for uid, iid in self.peer_items.items():
             name = self.peer_info.get(uid, {}).get('display_name', '').lower()
             if query in name:
-                self.tree.reattach(iid, self.group_general, 'end')
+                tags = self.tree.item(iid, 'tags')
+                parent = self.group_offline if 'offline' in tags else self.group_general
+                self.tree.reattach(iid, parent, 'end')
             else:
                 self.tree.detach(iid)
 
@@ -4137,15 +4785,23 @@ class LanMessengerApp:
         self.messenger.change_status(m.get(self.status_var.get(), 'online'))
 
     # --- Tree ---
-    def _get_selected_peer(self):
+    def _get_selected_peer(self, allow_offline=False):
         sel = self.tree.selection()
         if not sel:
             return None
         item = sel[0]
-        if item == self.group_general:
+        if item in (self.group_general, self.group_offline, self.group_groups):
+            return None
+        # Check if it's a group tree item
+        if item in self._group_tree_items.values():
             return None
         for uid, iid in self.peer_items.items():
             if iid == item:
+                if not allow_offline:
+                    # Block interaction with offline contacts
+                    tags = self.tree.item(item, 'tags')
+                    if 'offline' in tags:
+                        return None
                 return uid
         return None
 
@@ -4154,34 +4810,93 @@ class LanMessengerApp:
         tag = status if status in ('online', 'away', 'busy') else 'offline'
         name = info.get('display_name', 'Unknown')
         note = info.get('note', '')
-        suffix = ' (offline)' if tag == 'offline' else ''
-        display = f'  {name}{suffix}'
+        display = f'  {name}'
         if note:
             display += f'  -  {note}'
         avatar = self._create_contact_avatar(uid, name, tag)
+        parent = self.group_general if tag != 'offline' else self.group_offline
         if uid in self.peer_items:
             self.tree.item(self.peer_items[uid], text=display,
                            tags=(tag,), image=avatar)
+            # Mover para grupo correto se status mudou
+            self.tree.move(self.peer_items[uid], parent, 'end')
         else:
-            iid = self.tree.insert(self.group_general, 'end',
+            iid = self.tree.insert(parent, 'end',
                                    text=display, tags=(tag,),
                                    image=avatar)
             self.peer_items[uid] = iid
         self.peer_info[uid] = info
+        self._update_offline_count()
         # Atualizar nota nos grupos abertos
         for gw in self.group_windows.values():
             if uid in gw._members:
                 gw.update_member_info(uid, info)
 
     def _remove_contact(self, uid):
-        """Marca peer como offline no treeview (nao remove)."""
+        """Marca peer como offline e move para seção Offline."""
         if uid in self.peer_items:
             name = self.peer_info.get(uid, {}).get('display_name', 'Unknown')
             avatar = self._create_contact_avatar(uid, name, 'offline')
             self.tree.item(self.peer_items[uid],
-                           text=f'  {name} (offline)',
+                           text=f'  {name}',
                            tags=('offline',),
                            image=avatar)
+            self.tree.move(self.peer_items[uid], self.group_offline, 'end')
+            self._update_offline_count()
+
+    def _update_offline_count(self):
+        """Atualiza texto do grupo Offline com contagem."""
+        children = self.tree.get_children(self.group_offline)
+        self.tree.item(self.group_offline, text=f'Offline ({len(children)})')
+
+    def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
+        """Adiciona grupo à seção Grupos do TreeView."""
+        if group_id in self._group_tree_items:
+            return
+        suffix = '(Fixo)' if group_type == 'fixed' else '(Temporário)'
+        iid = self.tree.insert(self.group_groups, 'end',
+                               text=f'  \U0001f4ac {group_name} {suffix}',
+                               tags=('group_item',))
+        self._group_tree_items[group_id] = iid
+
+    def _remove_group_from_tree(self, group_id):
+        """Remove grupo do TreeView."""
+        if group_id in self._group_tree_items:
+            try:
+                self.tree.delete(self._group_tree_items[group_id])
+            except Exception:
+                pass
+            del self._group_tree_items[group_id]
+
+    def _load_saved_groups(self):
+        """Carrega grupos fixos do DB e exibe no TreeView."""
+        groups = self.messenger.load_saved_groups()
+        for g in groups:
+            self._add_group_to_tree(g['group_id'], g['name'], 'fixed')
+
+    def _on_tree_dbl_group(self, item):
+        """Abre/reexibe janela de grupo ao duplo-clicar no TreeView."""
+        for gid, iid in self._group_tree_items.items():
+            if iid == item:
+                if gid in self.group_windows:
+                    gw = self.group_windows[gid]
+                    gw.deiconify()
+                    gw.lift()
+                else:
+                    # Recriar janela do grupo
+                    group_data = self.messenger._groups.get(gid)
+                    if group_data:
+                        g_type = group_data.get('group_type', 'temp')
+                        gw = GroupChatWindow(self, gid, group_data['name'],
+                                             group_type=g_type)
+                        self.group_windows[gid] = gw
+                        for m in group_data.get('members', []):
+                            m_info = self.peer_info.get(m['uid'],
+                                        {'ip': m.get('ip', ''),
+                                         'status': 'online', 'note': ''})
+                            gw.add_member(m['uid'], m['display_name'], m_info)
+                return True
+        return False
 
     def _mark_unread(self, uid):
         if uid in self.peer_items:
@@ -4210,13 +4925,22 @@ class LanMessengerApp:
                            image=avatar)
 
     def _on_tree_dbl(self, e):
+        sel = self.tree.selection()
+        if sel and sel[0] in self._group_tree_items.values():
+            self._on_tree_dbl_group(sel[0])
+            return
         uid = self._get_selected_peer()
         if uid:
             self._open_chat(uid)
 
     def _on_tree_right(self, e):
         item = self.tree.identify_row(e.y)
-        if item and item != self.group_general:
+        if item and item not in (self.group_general, self.group_offline,
+                                  self.group_groups):
+            # Block right-click on offline contacts
+            tags = self.tree.item(item, 'tags')
+            if 'offline' in tags:
+                return
             self.tree.selection_set(item)
             self.ctx_menu.tk_popup(e.x_root, e.y_root)
 
@@ -4466,15 +5190,7 @@ class LanMessengerApp:
             show_messages()
 
     def _show_transfers(self):
-        download_dir = self.messenger.db.get_setting(
-            'download_dir',
-            os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
-        os.makedirs(download_dir, exist_ok=True)
-        if os.name == 'nt':
-            os.startfile(download_dir)
-        else:
-            import subprocess
-            subprocess.Popen(['xdg-open', download_dir])
+        self._show_transfers_window()
 
     def _send_broadcast(self):
         self._show_broadcast()
@@ -4845,14 +5561,15 @@ class LanMessengerApp:
         txt.focus_set()
 
     def _show_group_chat_dialog(self):
-        """Dialog moderno para criar um Bate Papo em grupo."""
+        """Dialog moderno para criar grupo."""
         NAVY = '#0f2a5c'
         win = tk.Toplevel(self.root)
-        win.title('Bate Papo - Selecionar Contatos')
+        win.title('Criar Grupo - Selecionar Contatos')
         win.transient(self.root)
         win.grab_set()
         win.configure(bg='#f5f7fa')
-        _center_window(win, 340, 460)
+        _center_window(win, 340, 520)
+        _apply_rounded_corners(win)
         win.resizable(False, False)
         win.bind('<Escape>', lambda e: win.destroy())
 
@@ -4865,127 +5582,57 @@ class LanMessengerApp:
 
         # Header navy
         header = tk.Frame(win, bg=NAVY, bd=0)
-        header.pack(fill='x')
+        header.pack(fill='x', side='top')
         header_inner = tk.Frame(header, bg=NAVY)
         header_inner.pack(fill='x', padx=14, pady=10)
-        tk.Label(header_inner, text='Selecionar Contatos',
+        tk.Label(header_inner, text='Criar Grupo',
                  font=('Segoe UI', 12, 'bold'),
                  bg=NAVY, fg='#ffffff').pack(anchor='w')
-        tk.Label(header_inner, text='Escolha quem participará do grupo',
+        tk.Label(header_inner, text='Escolha o tipo e os participantes',
                  font=('Segoe UI', 8), bg=NAVY,
                  fg='#8aa0cc').pack(anchor='w')
 
-        content = tk.Frame(win, bg='#f5f7fa')
-        content.pack(fill='both', expand=True, padx=12, pady=(10, 0))
-
-        # "Bate papo público" option
-        pub_var = tk.BooleanVar(value=False)
-        peer_vars = {}
-
-        pub_row = tk.Frame(content, bg='#e8f0fe', bd=0)
-        pub_row.pack(fill='x', pady=(0, 6))
-        pub_inner = tk.Frame(pub_row, bg='#e8f0fe')
-        pub_inner.pack(fill='x', padx=8, pady=6)
-
-        def toggle_pub():
-            for v in peer_vars.values():
-                v.set(pub_var.get())
-
-        cb_pub = tk.Checkbutton(pub_inner,
-                                text='\U0001f310  Bate Papo Público (todos)',
-                                variable=pub_var, font=('Segoe UI', 9, 'bold'),
-                                bg='#e8f0fe', fg='#1a202c',
-                                activebackground='#e8f0fe', anchor='w',
-                                selectcolor='#e8f0fe', command=toggle_pub)
-        cb_pub.pack(fill='x')
-
-        # Lista de contatos com canvas scrollável
-        list_border = tk.Frame(content, bg='#e2e8f0', bd=0)
-        list_border.pack(fill='both', expand=True)
-        list_inner = tk.Frame(list_border, bg='#ffffff', bd=0)
-        list_inner.pack(fill='both', expand=True, padx=1, pady=1)
-
-        canvas_g = tk.Canvas(list_inner, bg='#ffffff', highlightthickness=0)
-        canvas_g.pack(fill='both', expand=True)
-
-        inner_g = tk.Frame(canvas_g, bg='#ffffff')
-        win_id = canvas_g.create_window((0, 0), window=inner_g, anchor='nw')
-
-        # Fix: inner_g preenche largura total e scrollregion correto
-        def _on_canvas_cfg(e):
-            canvas_g.itemconfig(win_id, width=e.width)
-        canvas_g.bind('<Configure>', _on_canvas_cfg)
-        inner_g.bind('<Configure>',
-                     lambda e: canvas_g.configure(
-                         scrollregion=(0, 0, e.width, e.height)))
-
-        for uid, info in self.peer_info.items():
-            var = tk.BooleanVar(value=False)
-            peer_vars[uid] = var
-            name = info.get('display_name', uid)
-            status = info.get('status', 'offline')
-
-            p_row = tk.Frame(inner_g, bg='#ffffff', cursor='hand2')
-            p_row.pack(fill='x')
-
-            # Separador sutil entre itens
-            tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
-
-            p_content = tk.Frame(p_row, bg='#ffffff')
-            p_content.pack(fill='x', padx=6, pady=5)
-
-            cb = tk.Checkbutton(p_content, text=f'  {name}', variable=var,
-                                font=('Segoe UI', 9), anchor='w',
-                                bg='#ffffff', fg='#1a202c',
-                                activebackground='#f0f5ff',
-                                selectcolor='#ffffff')
-            cb.pack(side='left', fill='x', expand=True)
-
-            try:
-                av = self._create_contact_avatar(uid, name, status)
-                lbl_av = tk.Label(p_content, image=av, bg='#ffffff')
-                lbl_av.image = av
-                lbl_av.pack(side='right', padx=2)
-            except Exception:
-                pass
-
-        canvas_g.bind('<MouseWheel>',
-                      lambda e: canvas_g.yview_scroll(
-                          -1 * (e.delta // 120), 'units'))
+        # Bottom: nome + botões (pack ANTES do content para ficar fixo embaixo)
+        bottom = tk.Frame(win, bg='#f5f7fa')
+        bottom.pack(fill='x', side='bottom', padx=12, pady=(0, 10))
 
         # Nome do grupo
-        name_frame = tk.Frame(content, bg='#f5f7fa')
-        name_frame.pack(fill='x', pady=(8, 0))
+        name_frame = tk.Frame(bottom, bg='#f5f7fa')
+        name_frame.pack(fill='x', pady=(6, 6))
         tk.Label(name_frame, text='Nome do grupo:', font=('Segoe UI', 9),
                  bg='#f5f7fa', fg='#4a5568').pack(side='left')
 
         name_border = tk.Frame(name_frame, bg='#d0d5dd', bd=0)
         name_border.pack(side='left', fill='x', expand=True, padx=(8, 0))
-        name_inner = tk.Frame(name_border, bg='#ffffff', bd=0)
-        name_inner.pack(fill='x', padx=1, pady=1)
+        name_inner_nm = tk.Frame(name_border, bg='#ffffff', bd=0)
+        name_inner_nm.pack(fill='x', padx=1, pady=1)
 
         name_var = tk.StringVar(value='Grupo')
-        name_entry = tk.Entry(name_inner, textvariable=name_var,
+        name_entry = tk.Entry(name_inner_nm, textvariable=name_var,
                               font=('Segoe UI', 9), bg='#ffffff',
                               fg='#1a202c', relief='flat', bd=0,
                               insertbackground='#1a202c')
         name_entry.pack(fill='x', ipady=3, padx=4)
 
-        # Botões modernos
-        btn_frame = tk.Frame(win, bg='#f5f7fa')
-        btn_frame.pack(fill='x', padx=12, pady=(8, 12))
+        # Botões
+        btn_frame = tk.Frame(bottom, bg='#f5f7fa')
+        btn_frame.pack(fill='x', pady=(2, 0))
+
+        peer_vars = {}
 
         def criar_grupo():
             selected = [uid for uid, v in peer_vars.items() if v.get()]
             if not selected:
-                messagebox.showwarning('Bate Papo',
+                messagebox.showwarning('Criar Grupo',
                                        'Selecione pelo menos um contato.',
                                        parent=win)
                 return
             group_id = str(uuid.uuid4()).replace('-', '')[:12]
             group_name = name_var.get().strip() or 'Grupo'
+            group_type = type_var.get()
             win.destroy()
-            self._create_group_window(group_id, group_name, selected)
+            self._create_group_window(group_id, group_name, selected,
+                                      group_type)
 
         btn_criar = tk.Button(btn_frame, text='  Criar  ',
                               font=('Segoe UI', 9, 'bold'),
@@ -5006,15 +5653,129 @@ class LanMessengerApp:
         btn_cancel.pack(side='left', padx=(8, 0))
         _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
 
-    def _create_group_window(self, group_id, group_name, member_ids):
+        # Separador acima do bottom
+        tk.Frame(win, bg='#e2e8f0', height=1).pack(fill='x', side='bottom')
+
+        # Content area (entre header e bottom)
+        content = tk.Frame(win, bg='#f5f7fa')
+        content.pack(fill='both', expand=True, padx=12, pady=(10, 0))
+
+        # Tipo de grupo
+        type_frame = tk.Frame(content, bg='#e8f0fe', bd=0)
+        type_frame.pack(fill='x', pady=(0, 6))
+        type_inner = tk.Frame(type_frame, bg='#e8f0fe')
+        type_inner.pack(fill='x', padx=8, pady=6)
+        tk.Label(type_inner, text='Tipo:', font=('Segoe UI', 9, 'bold'),
+                 bg='#e8f0fe', fg='#1a202c').pack(anchor='w')
+
+        type_var = tk.StringVar(value='temp')
+        tk.Radiobutton(type_inner, text='Grupo Temporário',
+                        variable=type_var, value='temp',
+                        font=('Segoe UI', 9), bg='#e8f0fe',
+                        fg='#1a202c', activebackground='#e8f0fe',
+                        selectcolor='#e8f0fe').pack(anchor='w')
+        tk.Radiobutton(type_inner, text='Grupo Fixo',
+                        variable=type_var, value='fixed',
+                        font=('Segoe UI', 9), bg='#e8f0fe',
+                        fg='#1a202c', activebackground='#e8f0fe',
+                        selectcolor='#e8f0fe').pack(anchor='w')
+
+        # "Selecionar todos" option
+        pub_var = tk.BooleanVar(value=False)
+
+        pub_row = tk.Frame(content, bg='#f0f5ff', bd=0)
+        pub_row.pack(fill='x', pady=(0, 6))
+        pub_inner = tk.Frame(pub_row, bg='#f0f5ff')
+        pub_inner.pack(fill='x', padx=8, pady=4)
+
+        def toggle_pub():
+            for v in peer_vars.values():
+                v.set(pub_var.get())
+
+        cb_pub = tk.Checkbutton(pub_inner,
+                                text='\U0001f310  Selecionar todos',
+                                variable=pub_var, font=('Segoe UI', 9, 'bold'),
+                                bg='#f0f5ff', fg='#1a202c',
+                                activebackground='#f0f5ff', anchor='w',
+                                selectcolor='#f0f5ff', command=toggle_pub)
+        cb_pub.pack(fill='x')
+
+        # Lista de contatos ONLINE com scroll
+        list_border = tk.Frame(content, bg='#e2e8f0', bd=0)
+        list_border.pack(fill='both', expand=True, pady=(0, 4))
+        list_inner = tk.Frame(list_border, bg='#ffffff', bd=0)
+        list_inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        canvas_g = tk.Canvas(list_inner, bg='#ffffff', highlightthickness=0)
+        scrollbar_g = ttk.Scrollbar(list_inner, orient='vertical',
+                                     command=canvas_g.yview)
+        canvas_g.configure(yscrollcommand=scrollbar_g.set)
+        canvas_g.pack(side='left', fill='both', expand=True)
+
+        inner_g = tk.Frame(canvas_g, bg='#ffffff')
+        win_id = canvas_g.create_window((0, 0), window=inner_g, anchor='nw')
+
+        def _on_canvas_cfg(e):
+            canvas_g.itemconfig(win_id, width=e.width)
+        canvas_g.bind('<Configure>', _on_canvas_cfg)
+
+        def _on_inner_cfg(e):
+            canvas_g.configure(scrollregion=(0, 0, e.width, e.height))
+            # Mostrar scrollbar só se conteúdo excede canvas
+            if e.height > canvas_g.winfo_height():
+                scrollbar_g.pack(side='right', fill='y')
+            else:
+                scrollbar_g.pack_forget()
+        inner_g.bind('<Configure>', _on_inner_cfg)
+
+        for uid, info in self.peer_info.items():
+            status = info.get('status', 'offline')
+            if status == 'offline':
+                continue  # Não mostrar offline
+            var = tk.BooleanVar(value=False)
+            peer_vars[uid] = var
+            name = info.get('display_name', uid)
+
+            p_row = tk.Frame(inner_g, bg='#ffffff', cursor='hand2')
+            p_row.pack(fill='x')
+
+            tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
+
+            p_content = tk.Frame(p_row, bg='#ffffff')
+            p_content.pack(fill='x', padx=6, pady=5)
+
+            cb = tk.Checkbutton(p_content, text=f'  {name}', variable=var,
+                                font=('Segoe UI', 9), anchor='w',
+                                bg='#ffffff', fg='#1a202c',
+                                activebackground='#f0f5ff',
+                                selectcolor='#ffffff')
+            cb.pack(side='left', fill='x', expand=True)
+
+            try:
+                av = self._create_contact_avatar(uid, name, status)
+                lbl_av = tk.Label(p_content, image=av, bg='#ffffff')
+                lbl_av.image = av
+                lbl_av.pack(side='right', padx=2)
+            except Exception:
+                pass
+
+        def _on_mousewheel(e):
+            canvas_g.yview_scroll(-1 * (e.delta // 120), 'units')
+        canvas_g.bind('<MouseWheel>', _on_mousewheel)
+        inner_g.bind('<MouseWheel>', _on_mousewheel)
+
+    def _create_group_window(self, group_id, group_name, member_ids,
+                              group_type='temp'):
         """Cria GroupChatWindow e envia convites."""
         if group_id in self.group_windows:
-            self.group_windows[group_id].lift()
+            gw = self.group_windows[group_id]
+            gw.deiconify()
+            gw.lift()
             return
-        gw = GroupChatWindow(self, group_id, group_name)
+        gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)
         self.group_windows[group_id] = gw
         threading.Thread(target=self.messenger.send_group_invite,
-                         args=(group_id, group_name, member_ids),
+                         args=(group_id, group_name, member_ids, group_type),
                          daemon=True).start()
         # Adicionar proprio usuario a lista de membros exibida
         my_info = {'ip': '', 'status': 'online', 'note': self.messenger.note}
@@ -5022,12 +5783,18 @@ class LanMessengerApp:
         for uid in member_ids:
             info = self.peer_info.get(uid, {})
             gw.add_member(uid, info.get('display_name', uid), info)
+        # Adicionar grupo ao treeview (temp e fixo)
+        self._add_group_to_tree(group_id, group_name, group_type)
 
-    def _on_group_invite(self, group_id, group_name, from_uid, members):
+    def _on_group_invite(self, group_id, group_name, from_uid, members,
+                          group_type='temp'):
         """Recebe convite de grupo — abre GroupChatWindow."""
         if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            gw.deiconify()
+            gw.lift()
             return
-        gw = GroupChatWindow(self, group_id, group_name)
+        gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)
         self.group_windows[group_id] = gw
         for m in members:
             m_info = self.peer_info.get(m['uid'], {'ip': m.get('ip', ''),
@@ -5037,17 +5804,42 @@ class LanMessengerApp:
                                                           from_uid)
         gw.system_message(f'{from_name} criou este grupo.')
         self._flash_window(gw)
+        self._add_group_to_tree(group_id, group_name, group_type)
 
     def _on_group_message(self, group_id, from_uid, display_name,
                            content, timestamp):
         """Roteia mensagem de grupo para a janela correspondente."""
         if group_id not in self.group_windows:
-            # Janela fechada — reabrir silenciosamente
-            gw = GroupChatWindow(self, group_id, 'Grupo')
+            # Verificar se é grupo fixo salvo
+            group_data = self.messenger._groups.get(group_id)
+            g_type = group_data.get('group_type', 'temp') if group_data else 'temp'
+            g_name = group_data.get('name', 'Grupo') if group_data else 'Grupo'
+            gw = GroupChatWindow(self, group_id, g_name, group_type=g_type)
             self.group_windows[group_id] = gw
         gw = self.group_windows[group_id]
+        # Reexibir se grupo fixo estava escondido
+        try:
+            gw.deiconify()
+        except Exception:
+            pass
         gw.receive_message(display_name, content, timestamp)
         self._flash_window(gw)
+
+    def _on_group_leave(self, group_id, uid, display_name):
+        """Membro saiu do grupo — notificar na janela e remover do painel."""
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            gw.system_message(f'{display_name} saiu do grupo.')
+            gw.remove_member(uid)
+
+    def _on_group_join(self, group_id, uid, display_name):
+        """Novo membro entrou no grupo — notificar e adicionar ao painel."""
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            m_info = self.peer_info.get(uid, {'ip': '', 'status': 'online',
+                                               'note': ''})
+            gw.add_member(uid, display_name, m_info)
+            gw.system_message(f'{display_name} entrou no grupo.')
 
     def _send_file_toolbar(self):
         uid = self._get_selected_peer()
@@ -5063,12 +5855,16 @@ class LanMessengerApp:
         fid = self.messenger.send_file(peer_id, filepath)
         if fid:
             name = self.peer_info.get(peer_id, {}).get('display_name', 'Unknown')
+            fname = os.path.basename(filepath)
+            fsize = os.path.getsize(filepath)
             dlg = FileTransferDialog(
-                self.root, fid, os.path.basename(filepath), name,
-                direction='send', filesize=os.path.getsize(filepath),
+                self.root, fid, fname, name,
+                direction='send', filesize=fsize,
                 on_cancel=self.messenger.cancel_file
             )
             self._file_dialogs[fid] = dlg
+            self._add_transfer_entry(fid, fname, name, 'send', fsize,
+                                      'pending')
 
     def _refresh_peers(self):
         self.messenger.discovery._send_announce()
@@ -5123,31 +5919,73 @@ class LanMessengerApp:
 
     def _on_file_incoming(self, file_id, from_user, display_name,
                           filename, filesize):
-        # Auto-aceitar (como LAN Messenger)
-        self.messenger.accept_file(file_id)
         dlg = FileTransferDialog(
             self.root, file_id, filename, display_name,
             direction='receive', filesize=filesize,
-            on_cancel=lambda fid: self.messenger.decline_file(fid)
+            on_cancel=lambda fid: self.messenger.decline_file(fid),
+            on_accept=lambda fid: self.messenger.accept_file(fid),
+            on_decline=lambda fid: self.messenger.decline_file(fid)
         )
         self._file_dialogs[file_id] = dlg
+        self._add_transfer_entry(file_id, filename, display_name,
+                                  'receive', filesize, 'pending')
+        self._flash_window()
+        SoundPlayer.play_notification()
 
     def _on_file_progress(self, file_id, transferred, total):
         if file_id in self._file_dialogs:
             self._file_dialogs[file_id].update_progress(transferred, total)
+        self._update_transfer_entry(file_id, 'transferring')
 
     def _on_file_complete(self, file_id, filepath):
         if file_id in self._file_dialogs:
-            self._file_dialogs[file_id].finish()
-            del self._file_dialogs[file_id]
-        if filepath:
-            messagebox.showinfo('OK', f'{_t("file_complete")}\n{filepath}')
+            self._file_dialogs[file_id].finish(success=True, filepath=filepath)
+        self._update_transfer_entry(file_id, 'completed', filepath=filepath)
 
     def _on_file_error(self, file_id, error):
         if file_id in self._file_dialogs:
-            self._file_dialogs[file_id].finish()
+            self._file_dialogs[file_id].finish(success=False)
             del self._file_dialogs[file_id]
-        messagebox.showerror(_t('file_error'), error)
+        self._update_transfer_entry(file_id, 'error')
+
+    def _add_transfer_entry(self, file_id, filename, peer_name,
+                             direction, filesize, status):
+        entry = {'file_id': file_id, 'filename': filename,
+                 'peer_name': peer_name, 'direction': direction,
+                 'filesize': filesize, 'status': status, 'filepath': ''}
+        self._transfer_history.append(entry)
+        if self._transfers_window:
+            try:
+                self._transfers_window.add_or_update(entry)
+            except tk.TclError:
+                self._transfers_window = None
+
+    def _update_transfer_entry(self, file_id, status, filepath=''):
+        for e in self._transfer_history:
+            if e['file_id'] == file_id:
+                e['status'] = status
+                if filepath:
+                    e['filepath'] = filepath
+                break
+        if self._transfers_window:
+            try:
+                for e in self._transfer_history:
+                    if e['file_id'] == file_id:
+                        self._transfers_window.add_or_update(e)
+                        break
+            except tk.TclError:
+                self._transfers_window = None
+
+    def _show_transfers_window(self):
+        """Abre/mostra janela de Transferencias de Arquivos."""
+        if self._transfers_window:
+            try:
+                self._transfers_window.deiconify()
+                self._transfers_window.lift()
+                return
+            except tk.TclError:
+                self._transfers_window = None
+        self._transfers_window = FileTransfersWindow(self)
 
     def _flash_window(self, widget=None):
         """Pisca o ícone na barra de tarefas (Windows FlashWindowEx)."""

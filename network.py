@@ -55,7 +55,7 @@ threading.Thread(target=_add_firewall_rule, daemon=True).start()
 MULTICAST_GROUP = '239.255.100.200'
 BROADCAST_ADDR = '255.255.255.255'
 BUFFER_SIZE = 65536
-FILE_CHUNK = 65536
+FILE_CHUNK = 262144  # 256KB - melhor throughput para arquivos grandes
 DISCOVERY_INTERVAL = 5  # seconds
 PING_INTERVAL = 10
 PING_TIMEOUT = 30
@@ -75,6 +75,8 @@ MT_TYPING = 'typing'
 MT_ACK = 'ack'
 MT_GROUP_INV = 'group_invite'
 MT_GROUP_MSG = 'group_message'
+MT_GROUP_LEAVE = 'group_leave'
+MT_GROUP_JOIN = 'group_join'
 
 
 def get_local_ip():
@@ -113,6 +115,8 @@ class UDPDiscovery:
         self.display_name = display_name
         self.status = status
         self.note = ''
+        self.avatar_index = 0
+        self.avatar_data = ''
         self.on_peer_found = on_peer_found
         self.on_peer_lost = on_peer_lost
         self.peers = {}  # user_id -> {info + last_seen}
@@ -212,6 +216,11 @@ class UDPDiscovery:
         self.note = note
         self._send_announce()
 
+    def update_avatar(self, index, data_b64=''):
+        self.avatar_index = index
+        self.avatar_data = data_b64
+        self._send_announce()
+
     def _make_packet(self, msg_type, extra=None):
         data = {
             'app': 'mbchat',
@@ -220,6 +229,8 @@ class UDPDiscovery:
             'display_name': self.display_name,
             'status': self.status,
             'note': self.note,
+            'avatar_index': self.avatar_index,
+            'avatar_data': self.avatar_data,
             'ip': get_local_ip(),
             'hostname': socket.gethostname(),
             'os': f"{platform.system()} {platform.release()}",
@@ -294,6 +305,8 @@ class UDPDiscovery:
                 'os': pkt.get('os', ''),
                 'status': pkt.get('status', 'online'),
                 'note': pkt.get('note', ''),
+                'avatar_index': pkt.get('avatar_index', 0),
+                'avatar_data': pkt.get('avatar_data', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
                 'last_seen': time.time()
             }
@@ -517,6 +530,11 @@ class FileSender:
 
             # Wait for accept
             resp = sock.recv(4)
+            if not resp:
+                if self.on_error:
+                    self.on_error(self.file_id, 'Conexão perdida')
+                sock.close()
+                return
             if resp != b'OKAY':
                 if self.on_error:
                     self.on_error(self.file_id, 'Recusado')
@@ -605,6 +623,9 @@ class FileReceiver:
                     time.sleep(0.5)
 
     def _handle_file(self, client, addr):
+        file_id = None
+        tmp_path = None
+        save_path = None
         try:
             client.settimeout(120.0)
 
@@ -654,6 +675,8 @@ class FileReceiver:
             # Receive file
             safe_name = "".join(c for c in filename
                                 if c.isalnum() or c in '.-_ ')
+            if not safe_name:
+                safe_name = f'file_{file_id[:8]}'
             save_path = os.path.join(self.save_dir, safe_name)
 
             # Handle duplicates
@@ -663,8 +686,10 @@ class FileReceiver:
                 save_path = f"{base}_{counter}{ext}"
                 counter += 1
 
+            # Write to temp file first, rename on completion
+            tmp_path = save_path + '.tmp'
             received = 0
-            with open(save_path, 'wb') as f:
+            with open(tmp_path, 'wb') as f:
                 while received < filesize:
                     chunk = client.recv(min(FILE_CHUNK, filesize - received))
                     if not chunk:
@@ -676,14 +701,25 @@ class FileReceiver:
 
             client.close()
 
-            if received >= filesize and self.on_complete:
-                self.on_complete(file_id, save_path)
-            elif self.on_error:
-                self.on_error(file_id, 'Transferência incompleta')
+            if received >= filesize:
+                os.rename(tmp_path, save_path)
+                tmp_path = None
+                if self.on_complete:
+                    self.on_complete(file_id, save_path)
+            else:
+                if self.on_error:
+                    self.on_error(file_id, 'Transferência incompleta')
         except Exception as e:
-            if self.on_error:
+            if file_id and self.on_error:
                 self.on_error(file_id, str(e))
             try:
                 client.close()
             except Exception:
                 pass
+        finally:
+            # Clean up incomplete temp file
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass

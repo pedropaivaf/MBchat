@@ -11,7 +11,7 @@ from network import (
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
-    MT_GROUP_INV, MT_GROUP_MSG, TCP_PORT
+    MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, TCP_PORT
 )
 from database import Database
 
@@ -24,7 +24,8 @@ class Messenger:
                  on_typing=None, on_file_incoming=None,
                  on_file_progress=None, on_file_complete=None,
                  on_file_error=None, on_group_invite=None,
-                 on_group_message=None):
+                 on_group_message=None, on_group_leave=None,
+                 on_group_join=None):
         self.db = Database()
         self._msg_counter = 0
         self._lock = threading.Lock()
@@ -43,6 +44,8 @@ class Messenger:
         self.on_file_error = on_file_error
         self.on_group_invite = on_group_invite
         self.on_group_message = on_group_message
+        self.on_group_leave = on_group_leave
+        self.on_group_join = on_group_join
         self._groups = {}  # group_id -> {name, members: [{uid, display_name, ip}]}
 
         # Setup user
@@ -57,6 +60,8 @@ class Messenger:
 
         self.status = 'online'
         self.note = self.db.get_local_note()
+        self.avatar_index = int(self.db.get_setting('avatar_index', '0'))
+        self.avatar_data = self._generate_avatar_thumbnail()
         self.db.set_local_user(self.user_id, self.display_name, self.status)
 
         # Mark all contacts offline on start
@@ -69,6 +74,8 @@ class Messenger:
             on_peer_lost=self._on_peer_lost
         )
         self.discovery.note = self.note
+        self.discovery.avatar_index = self.avatar_index
+        self.discovery.avatar_data = self.avatar_data
         self.tcp_server = TCPServer(
             on_message=self._on_tcp_message,
             on_file_request=self._on_file_request
@@ -111,7 +118,9 @@ class Messenger:
             hostname=info.get('hostname', ''),
             os_info=info.get('os', ''),
             status=info.get('status', 'online'),
-            note=info.get('note', '')
+            note=info.get('note', ''),
+            avatar_index=info.get('avatar_index', 0),
+            avatar_data=info.get('avatar_data', '')
         )
         if self.on_user_found:
             self.on_user_found(uid, info)
@@ -165,10 +174,19 @@ class Messenger:
         elif msg_type == MT_GROUP_INV:
             group_id = msg.get('group_id')
             group_name = msg.get('group_name', 'Grupo')
+            group_type = msg.get('group_type', 'temp')
             members = msg.get('members', [])
-            self._groups[group_id] = {'name': group_name, 'members': members}
+            self._groups[group_id] = {'name': group_name, 'members': members,
+                                       'group_type': group_type}
+            if group_type == 'fixed':
+                self.db.save_group(group_id, group_name, 'fixed')
+                for m in members:
+                    self.db.save_group_member(group_id, m['uid'],
+                                              m['display_name'],
+                                              m.get('ip', ''))
             if self.on_group_invite:
-                self.on_group_invite(group_id, group_name, from_user, members)
+                self.on_group_invite(group_id, group_name, from_user,
+                                     members, group_type)
 
         elif msg_type == MT_GROUP_MSG:
             group_id = msg.get('group_id')
@@ -178,6 +196,39 @@ class Messenger:
             if self.on_group_message:
                 self.on_group_message(group_id, from_user, display_name,
                                       content, timestamp)
+
+        elif msg_type == MT_GROUP_LEAVE:
+            group_id = msg.get('group_id')
+            display_name = msg.get('display_name', from_user)
+            # Remover membro da lista local
+            group = self._groups.get(group_id)
+            if group:
+                group['members'] = [m for m in group['members']
+                                    if m['uid'] != from_user]
+                # Atualizar DB se fixo
+                if group.get('group_type') == 'fixed':
+                    self.db.delete_group_member(group_id, from_user)
+            if self.on_group_leave:
+                self.on_group_leave(group_id, from_user, display_name)
+
+        elif msg_type == MT_GROUP_JOIN:
+            group_id = msg.get('group_id')
+            display_name = msg.get('display_name', from_user)
+            new_ip = msg.get('ip', '')
+            group = self._groups.get(group_id)
+            if group:
+                # Evitar duplicata
+                if not any(m['uid'] == from_user for m in group['members']):
+                    group['members'].append({
+                        'uid': from_user,
+                        'display_name': display_name,
+                        'ip': new_ip
+                    })
+                if group.get('group_type') == 'fixed':
+                    self.db.save_group_member(group_id, from_user,
+                                              display_name, new_ip)
+            if self.on_group_join:
+                self.on_group_join(group_id, from_user, display_name)
 
     # --- Send actions ---
     def send_message(self, to_user_id, content):
@@ -226,6 +277,30 @@ class Messenger:
         self.note = note
         self.db.update_local_note(note)
         self.discovery.update_note(note)
+
+    def change_avatar(self, index, custom_path=''):
+        self.avatar_index = index
+        self.db.set_setting('avatar_index', str(index))
+        self.db.set_setting('custom_avatar', custom_path)
+        self.avatar_data = self._generate_avatar_thumbnail()
+        self.discovery.update_avatar(index, self.avatar_data)
+
+    def _generate_avatar_thumbnail(self):
+        """Gera thumbnail base64 JPEG do avatar custom para envio via rede."""
+        custom = self.db.get_setting('custom_avatar', '')
+        if not custom or not os.path.exists(custom):
+            return ''
+        try:
+            import base64
+            from PIL import Image
+            from io import BytesIO
+            img = Image.open(custom)
+            img.thumbnail((48, 48), Image.LANCZOS)
+            buf = BytesIO()
+            img.convert('RGB').save(buf, format='JPEG', quality=70)
+            return base64.b64encode(buf.getvalue()).decode('ascii')
+        except Exception:
+            return ''
 
     # --- File transfer ---
     def send_file(self, to_user_id, filepath):
@@ -301,7 +376,8 @@ class Messenger:
             self.on_file_error(file_id, error)
 
     # --- Group chat ---
-    def send_group_invite(self, group_id, group_name, member_ids):
+    def send_group_invite(self, group_id, group_name, member_ids,
+                          group_type='temp'):
         """Cria grupo e convida membros."""
         members_info = [{'uid': self.user_id, 'display_name': self.display_name,
                          'ip': get_local_ip()}]
@@ -311,7 +387,13 @@ class Messenger:
                 members_info.append({'uid': uid,
                                      'display_name': contact['display_name'],
                                      'ip': contact['ip_address']})
-        self._groups[group_id] = {'name': group_name, 'members': members_info}
+        self._groups[group_id] = {'name': group_name, 'members': members_info,
+                                   'group_type': group_type}
+        if group_type == 'fixed':
+            self.db.save_group(group_id, group_name, 'fixed')
+            for m in members_info:
+                self.db.save_group_member(group_id, m['uid'],
+                                          m['display_name'], m.get('ip', ''))
         for uid in member_ids:
             contact = self.db.get_contact(uid)
             if contact:
@@ -321,8 +403,25 @@ class Messenger:
                     'display_name': self.display_name,
                     'group_id': group_id,
                     'group_name': group_name,
+                    'group_type': group_type,
                     'members': members_info,
                 })
+
+    def notify_group_join(self, group_id, new_uid, new_display_name):
+        """Notifica membros existentes que alguém entrou no grupo."""
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        for member in group['members']:
+            if member['uid'] == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_GROUP_JOIN,
+                'from_user': new_uid,
+                'display_name': new_display_name,
+                'group_id': group_id,
+                'ip': get_local_ip() if new_uid == self.user_id else '',
+            })
 
     def send_file_to_group(self, group_id, filepath):
         """Envia arquivo para todos os membros do grupo (individualmente)."""
@@ -359,6 +458,37 @@ class Messenger:
                 'content': content,
                 'timestamp': timestamp,
             })
+
+    def load_saved_groups(self):
+        """Carrega grupos fixos salvos no DB para memória."""
+        groups = self.db.get_groups('fixed')
+        for g in groups:
+            gid = g['group_id']
+            members = self.db.get_group_members(gid)
+            self._groups[gid] = {
+                'name': g['name'],
+                'group_type': 'fixed',
+                'members': [{'uid': m['uid'], 'display_name': m['display_name'],
+                             'ip': m['ip']} for m in members]
+            }
+        return groups
+
+    def leave_group(self, group_id):
+        """Sai de um grupo, notifica membros e remove do DB."""
+        group = self._groups.get(group_id)
+        if group:
+            # Notificar todos os membros antes de sair
+            for member in group['members']:
+                if member['uid'] == self.user_id:
+                    continue
+                TCPClient.send_message(member['ip'], TCP_PORT, {
+                    'type': MT_GROUP_LEAVE,
+                    'from_user': self.user_id,
+                    'display_name': self.display_name,
+                    'group_id': group_id,
+                })
+            del self._groups[group_id]
+        self.db.delete_group(group_id)
 
     # --- History ---
     def get_chat_history(self, peer_id, limit=None):
