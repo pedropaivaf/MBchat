@@ -1,89 +1,57 @@
-"""
-MB Chat - Banco de dados local SQLite
-Histórico de mensagens, usuários, configurações
+# MB Chat - Banco de dados local SQLite
+# Histórico de mensagens, usuários, configurações
+#
+# Gerencia toda a persistência local do app:
+# - Dados do usuário local (nome, status, nota pessoal)
+# - Contatos descobertos na rede (online/offline, avatar, nota)
+# - Mensagens enviadas e recebidas (histórico completo)
+# - Transferências de arquivos (status, progresso)
+# - Grupos de chat (fixos persistem, temporários só em memória)
+# - Configurações gerais (tema, idioma, diretório de downloads)
+#
+# Usa WAL mode para melhor desempenho com múltiplas threads
+# e threading.local() para conexão segura por thread.
 
-Este módulo gerencia toda a persistência local do app:
-- Dados do usuário local (nome, status, nota pessoal)
-- Contatos descobertos na rede (online/offline, avatar, nota)
-- Mensagens enviadas e recebidas (histórico completo)
-- Transferências de arquivos (status, progresso)
-- Grupos de chat (fixos persistem, temporários só em memória)
-- Configurações gerais (tema, idioma, diretório de downloads)
-
-Usa WAL mode para melhor desempenho com múltiplas threads
-e threading.local() para conexão segura por thread.
-"""
-import sqlite3  # Banco de dados embutido no Python
-import os       # Manipulação de caminhos e diretórios
-import time     # Timestamps para registros
+import sqlite3    # Banco de dados embutido no Python
+import os         # Manipulação de caminhos e diretórios
+import time       # Timestamps para registros
 import threading  # threading.local() para conexão por thread
 from pathlib import Path  # Manipulação moderna de caminhos
 
 
+# Retorna caminho do banco: Windows=%APPDATA%/.mbchat/mbchat.db, Linux/Mac=~/.mbchat/mbchat.db
 def get_db_path():
-    """Retorna o caminho do arquivo do banco de dados.
-
-    No Windows: %APPDATA%/.mbchat/mbchat.db
-    No Linux/Mac: ~/.mbchat/mbchat.db
-    Cria o diretório se não existir.
-    """
     if os.name == 'nt':  # Windows
-        # Usa APPDATA (ex: C:/Users/pedro/AppData/Roaming)
-        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))  # ex: C:/Users/pedro/AppData/Roaming
     else:
-        # Linux/Mac: pasta home do usuário
-        base = os.path.expanduser('~')
+        base = os.path.expanduser('~')  # Linux/Mac: pasta home
     db_dir = os.path.join(base, '.mbchat')  # Subpasta oculta .mbchat
     os.makedirs(db_dir, exist_ok=True)  # Cria se não existir
-    return os.path.join(db_dir, 'mbchat.db')  # Arquivo do banco
+    return os.path.join(db_dir, 'mbchat.db')
 
 
+# Gerenciador do banco SQLite local
+# Cada thread recebe sua própria conexão (threading.local) para evitar conflitos
+# WAL mode permite leituras simultâneas com escritas
 class Database:
-    """Gerenciador do banco de dados SQLite local.
-
-    Cada thread recebe sua própria conexão (threading.local)
-    para evitar conflitos de acesso concorrente.
-    WAL mode permite leituras simultâneas com escritas.
-    """
 
     def __init__(self, db_path=None):
-        """Inicializa o banco de dados.
-
-        Args:
-            db_path: Caminho customizado para o DB (opcional, usa padrão se None)
-        """
         self.db_path = db_path or get_db_path()  # Usa caminho padrão se não especificado
         self._local = threading.local()  # Storage thread-local para conexões
         self._init_db()  # Cria tabelas se não existirem
 
     @property
     def conn(self):
-        """Retorna a conexão SQLite da thread atual.
-
-        Cria uma nova conexão se a thread ainda não tem uma.
-        Configura row_factory para retornar dicts ao invés de tuples.
-        Habilita WAL mode e foreign keys.
-        """
-        # Verifica se esta thread já tem uma conexão ativa
+        # Retorna conexão da thread atual, cria nova se não existe
         if not hasattr(self._local, 'conn') or self._local.conn is None:
-            self._local.conn = sqlite3.connect(self.db_path)  # Nova conexão
+            self._local.conn = sqlite3.connect(self.db_path)
             self._local.conn.row_factory = sqlite3.Row  # Acesso por nome de coluna
             self._local.conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
             self._local.conn.execute("PRAGMA foreign_keys=ON")  # Ativa chaves estrangeiras
         return self._local.conn
 
     def _init_db(self):
-        """Cria todas as tabelas necessárias se não existirem.
-
-        Tabelas:
-        - local_user: dados do usuário local (apenas 1 registro, id=1)
-        - contacts: peers descobertos na rede
-        - messages: todas as mensagens enviadas/recebidas
-        - file_transfers: registro de transferências de arquivos
-        - settings: configurações chave-valor
-        - groups: grupos de chat (fixos persistidos)
-        - group_members: membros de cada grupo
-        """
+        # Cria todas as tabelas necessárias se não existirem
         c = self.conn
         c.executescript("""
             -- Tabela do usuário local (singleton: sempre id=1)
@@ -128,9 +96,9 @@ class Database:
 
             -- Índices para busca rápida de mensagens
             CREATE INDEX IF NOT EXISTS idx_messages_users
-                ON messages(from_user, to_user);  -- Busca por par de usuários
+                ON messages(from_user, to_user);
             CREATE INDEX IF NOT EXISTS idx_messages_time
-                ON messages(timestamp);           -- Busca por data
+                ON messages(timestamp);
 
             -- Tabela de transferências de arquivos
             CREATE TABLE IF NOT EXISTS file_transfers (
@@ -148,55 +116,50 @@ class Database:
 
             -- Tabela de configurações (chave-valor genérica)
             CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,    -- Nome da configuração
-                value TEXT NOT NULL      -- Valor (sempre string, converter ao ler)
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
 
             -- Tabela de grupos de chat
             CREATE TABLE IF NOT EXISTS groups (
-                group_id TEXT PRIMARY KEY,              -- ID único do grupo
-                name TEXT NOT NULL,                     -- Nome do grupo
-                group_type TEXT NOT NULL DEFAULT 'temp', -- temp ou fixed
-                created_at REAL NOT NULL                -- Quando foi criado
+                group_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                group_type TEXT NOT NULL DEFAULT 'temp',  -- temp ou fixed
+                created_at REAL NOT NULL
             );
 
             -- Tabela de membros dos grupos
             CREATE TABLE IF NOT EXISTS group_members (
-                group_id TEXT NOT NULL,      -- FK para groups
-                uid TEXT NOT NULL,           -- user_id do membro
-                display_name TEXT NOT NULL,  -- Nome de exibição
-                ip TEXT DEFAULT '',          -- IP do membro
-                PRIMARY KEY (group_id, uid), -- Chave composta
+                group_id TEXT NOT NULL,
+                uid TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                ip TEXT DEFAULT '',
+                PRIMARY KEY (group_id, uid),  -- Chave composta
                 FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
             );
         """)
-        c.commit()  # Salva as criações de tabela
+        c.commit()
 
         # Migration: adiciona coluna avatar_data se não existir
-        # avatar_data armazena thumbnail base64 JPEG do avatar custom
-        # Usa try/except pois ALTER TABLE falha se coluna já existe
+        # Armazena thumbnail base64 JPEG do avatar custom do peer
         try:
             c.execute("ALTER TABLE contacts ADD COLUMN avatar_data TEXT DEFAULT ''")
             c.commit()
         except Exception:
-            pass  # Coluna já existe, ignora o erro
+            pass  # Coluna já existe, ignora
 
     # ========================================
     # LOCAL USER — Dados do usuário local
     # ========================================
 
+    # Retorna dados do usuário local ou None se não configurado
     def get_local_user(self):
-        """Retorna dados do usuário local ou None se não configurado."""
         row = self.conn.execute("SELECT * FROM local_user WHERE id=1").fetchone()
-        return dict(row) if row else None  # Converte sqlite3.Row para dict
+        return dict(row) if row else None
 
+    # Cria ou atualiza registro do usuário local (UPSERT: INSERT ON CONFLICT UPDATE)
     def set_local_user(self, user_id, display_name, status='online'):
-        """Cria ou atualiza o registro do usuário local.
-
-        Usa UPSERT (INSERT ON CONFLICT UPDATE) para criar na primeira vez
-        e atualizar nas seguintes, pois id=1 é fixo.
-        """
-        now = time.time()  # Timestamp atual
+        now = time.time()
         self.conn.execute("""
             INSERT INTO local_user (id, user_id, display_name, status, created_at, updated_at)
             VALUES (1, ?, ?, ?, ?, ?)
@@ -208,22 +171,22 @@ class Database:
         """, (user_id, display_name, status, now, now, now))
         self.conn.commit()
 
+    # Atualiza status do usuário local (online/away/busy/offline)
     def update_local_status(self, status):
-        """Atualiza o status do usuário local (online/away/busy/offline)."""
         self.conn.execute(
             "UPDATE local_user SET status=?, updated_at=? WHERE id=1",
             (status, time.time()))
         self.conn.commit()
 
+    # Atualiza nota pessoal do usuário local
     def update_local_note(self, note):
-        """Atualiza a nota pessoal do usuário local."""
         self.conn.execute(
             "UPDATE local_user SET note=?, updated_at=? WHERE id=1",
             (note, time.time()))
         self.conn.commit()
 
+    # Retorna nota pessoal do usuário local (string vazia se não tem)
     def get_local_note(self):
-        """Retorna a nota pessoal do usuário local (string vazia se não tem)."""
         row = self.conn.execute(
             "SELECT note FROM local_user WHERE id=1").fetchone()
         return row['note'] if row and row['note'] else ''
@@ -232,26 +195,11 @@ class Database:
     # CONTACTS — Peers descobertos na rede
     # ========================================
 
+    # Insere ou atualiza contato (chamado pelo discovery quando peer é encontrado)
+    # UPSERT: cria novos e atualiza existentes. Não atualiza first_seen em updates
     def upsert_contact(self, user_id, display_name, ip_address,
                        hostname='', os_info='', status='online', note='',
                        avatar_index=0, avatar_data=''):
-        """Insere ou atualiza um contato.
-
-        Chamado pelo discovery quando um peer é encontrado/atualizado.
-        Usa UPSERT para criar novos e atualizar existentes.
-        Não atualiza first_seen em updates (mantém data original).
-
-        Args:
-            user_id: ID único do peer (MAC_hostname)
-            display_name: Nome de exibição
-            ip_address: IP atual na rede
-            hostname: Nome da máquina
-            os_info: Sistema operacional
-            status: online/away/busy/offline
-            note: Nota pessoal do peer
-            avatar_index: Índice do avatar padrão
-            avatar_data: Thumbnail base64 JPEG do avatar custom
-        """
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
@@ -272,52 +220,41 @@ class Database:
               note, avatar_index, avatar_data, now, now))
         self.conn.commit()
 
+    # Retorna nota pessoal de um contato específico
     def get_contact_note(self, user_id):
-        """Retorna a nota pessoal de um contato específico."""
         row = self.conn.execute(
             "SELECT note FROM contacts WHERE user_id=?", (user_id,)).fetchone()
         return row['note'] if row and row['note'] else ''
 
+    # Marca contato como offline (peer perdido/desconectou)
     def set_contact_offline(self, user_id):
-        """Marca um contato como offline (peer perdido)."""
         self.conn.execute(
             "UPDATE contacts SET status='offline', last_seen=? WHERE user_id=?",
             (time.time(), user_id))
         self.conn.commit()
 
+    # Marca TODOS os contatos como offline (chamado no startup e ao encerrar)
     def set_all_contacts_offline(self):
-        """Marca todos os contatos como offline.
-
-        Chamado na inicialização e ao encerrar o app,
-        pois não sabemos o estado real dos peers nesse momento.
-        """
         self.conn.execute(
             "UPDATE contacts SET status='offline', last_seen=?",
             (time.time(),))
         self.conn.commit()
 
+    # Retorna lista de contatos (online_only=True filtra apenas não-offline)
     def get_contacts(self, online_only=False):
-        """Retorna lista de contatos.
-
-        Args:
-            online_only: Se True, retorna apenas contatos não-offline
-
-        Returns:
-            Lista de dicts com dados de cada contato
-        """
         if online_only:
             rows = self.conn.execute(
                 "SELECT * FROM contacts WHERE status != 'offline' ORDER BY display_name"
             ).fetchall()
         else:
-            # Ordena por status (online primeiro) e depois por nome
+            # Ordena: online primeiro, depois por nome
             rows = self.conn.execute(
                 "SELECT * FROM contacts ORDER BY status DESC, display_name"
             ).fetchall()
-        return [dict(r) for r in rows]  # Converte cada Row para dict
+        return [dict(r) for r in rows]
 
+    # Retorna dados de um contato específico ou None
     def get_contact(self, user_id):
-        """Retorna dados de um contato específico ou None."""
         row = self.conn.execute(
             "SELECT * FROM contacts WHERE user_id=?", (user_id,)).fetchone()
         return dict(row) if row else None
@@ -326,19 +263,9 @@ class Database:
     # MESSAGES — Histórico de mensagens
     # ========================================
 
+    # Salva mensagem no histórico (is_sent=True se enviada por nós)
     def save_message(self, msg_id, from_user, to_user, content,
                      msg_type='text', is_sent=False, timestamp=None):
-        """Salva uma mensagem no histórico.
-
-        Args:
-            msg_id: ID único da mensagem
-            from_user: user_id do remetente
-            to_user: user_id do destinatário
-            content: Conteúdo textual da mensagem
-            msg_type: Tipo (text, file, system)
-            is_sent: True se enviada por nós (False se recebida)
-            timestamp: Timestamp customizado (usa time.time() se None)
-        """
         ts = timestamp or time.time()
         self.conn.execute("""
             INSERT INTO messages (msg_id, from_user, to_user, content,
@@ -347,20 +274,10 @@ class Database:
         """, (msg_id, from_user, to_user, content, msg_type, ts, int(is_sent)))
         self.conn.commit()
 
+    # Retorna histórico entre dois usuários (limit=None = todas, com limit inverte DESC→ASC)
     def get_chat_history(self, user_a, user_b, limit=None, offset=0):
-        """Retorna histórico de conversa entre dois usuários.
-
-        Args:
-            user_a: Primeiro usuário (geralmente o local)
-            user_b: Segundo usuário (peer)
-            limit: Máximo de mensagens (None = todas)
-            offset: Pular N mensagens mais recentes (paginação)
-
-        Returns:
-            Lista de mensagens ordenadas cronologicamente (ASC)
-        """
         if limit is not None:
-            # Com limit: busca as N mais recentes (DESC), depois inverte
+            # Com limit: busca as N mais recentes (DESC), depois inverte para ASC
             rows = self.conn.execute("""
                 SELECT * FROM messages
                 WHERE (from_user=? AND to_user=?) OR (from_user=? AND to_user=?)
@@ -368,17 +285,16 @@ class Database:
                 LIMIT ? OFFSET ?
             """, (user_a, user_b, user_b, user_a, limit, offset)).fetchall()
         else:
-            # Sem limit: todas as mensagens em ordem cronológica
             rows = self.conn.execute("""
                 SELECT * FROM messages
                 WHERE (from_user=? AND to_user=?) OR (from_user=? AND to_user=?)
                 ORDER BY timestamp ASC
             """, (user_a, user_b, user_b, user_a)).fetchall()
             return [dict(r) for r in rows]
-        return [dict(r) for r in reversed(rows)]  # Inverte DESC para ASC
+        return [dict(r) for r in reversed(rows)]
 
+    # Retorna mensagens não lidas de um peer
     def get_unread_messages(self, local_user_id, from_user_id):
-        """Retorna mensagens não lidas de um peer específico."""
         rows = self.conn.execute("""
             SELECT * FROM messages
             WHERE from_user=? AND to_user=? AND is_read=0
@@ -386,27 +302,24 @@ class Database:
         """, (from_user_id, local_user_id)).fetchall()
         return [dict(r) for r in rows]
 
+    # Retorna contagem de mensagens não lidas de um peer
     def get_unread_count(self, local_user_id, from_user_id):
-        """Retorna contagem de mensagens não lidas de um peer."""
         row = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM messages
             WHERE from_user=? AND to_user=? AND is_read=0
         """, (from_user_id, local_user_id)).fetchone()
         return row['cnt'] if row else 0
 
+    # Marca todas as mensagens de um peer como lidas
     def mark_as_read(self, local_user_id, from_user_id):
-        """Marca todas as mensagens de um peer como lidas."""
         self.conn.execute("""
             UPDATE messages SET is_read=1
             WHERE from_user=? AND to_user=? AND is_read=0
         """, (from_user_id, local_user_id))
         self.conn.commit()
 
+    # Busca mensagens por texto (LIKE %query%), até 500 resultados
     def search_messages(self, query, limit=500):
-        """Busca mensagens por texto (LIKE %query%).
-
-        Retorna até 500 resultados mais recentes.
-        """
         rows = self.conn.execute("""
             SELECT * FROM messages
             WHERE content LIKE ?
@@ -414,11 +327,8 @@ class Database:
         """, (f'%{query}%', limit)).fetchall()
         return [dict(r) for r in rows]
 
+    # Retorna peers com quem houve conversa + data da última mensagem (para tela Histórico)
     def get_history_contacts(self):
-        """Retorna peers com quem houve conversa, com data da última msg.
-
-        Usado na tela de Histórico para listar contatos com conversas.
-        """
         rows = self.conn.execute("""
             SELECT
                 CASE WHEN is_sent=1 THEN to_user ELSE from_user END as peer,
@@ -429,25 +339,16 @@ class Database:
         """).fetchall()
         return [dict(r) for r in rows]
 
+    # Retorna mensagens com um peer, com filtros opcionais de data e texto
     def get_messages_with_peer(self, local_user, peer_id,
                                date_from=None, date_to=None,
                                search_text=None):
-        """Retorna mensagens com um peer, com filtros opcionais.
-
-        Args:
-            local_user: user_id do usuário local
-            peer_id: user_id do peer
-            date_from: Timestamp mínimo (filtro data início)
-            date_to: Timestamp máximo (filtro data fim)
-            search_text: Texto para buscar no conteúdo
-        """
         # Query base: mensagens entre os dois usuários (ambas direções)
         sql = """
             SELECT * FROM messages
             WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))
         """
         params = [local_user, peer_id, peer_id, local_user]
-
         # Filtros opcionais adicionados dinamicamente
         if date_from:
             sql += " AND timestamp >= ?"
@@ -458,8 +359,7 @@ class Database:
         if search_text:
             sql += " AND content LIKE ?"
             params.append(f'%{search_text}%')
-
-        sql += " ORDER BY timestamp ASC"  # Ordem cronológica
+        sql += " ORDER BY timestamp ASC"
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
@@ -467,9 +367,9 @@ class Database:
     # FILE TRANSFERS — Transferências de arquivos
     # ========================================
 
+    # Registra uma transferência de arquivo no banco
     def save_file_transfer(self, file_id, from_user, to_user,
                            filename, filesize, filepath=''):
-        """Registra uma transferência de arquivo no banco."""
         self.conn.execute("""
             INSERT OR REPLACE INTO file_transfers
                 (file_id, from_user, to_user, filename, filepath, filesize, timestamp)
@@ -477,13 +377,10 @@ class Database:
         """, (file_id, from_user, to_user, filename, filepath, filesize, time.time()))
         self.conn.commit()
 
+    # Atualiza campos de uma transferência (kwargs: status='completed', progress=100, etc)
     def update_file_transfer(self, file_id, **kwargs):
-        """Atualiza campos arbitrários de uma transferência.
-
-        Usa **kwargs para flexibilidade (ex: status='completed', progress=100)
-        """
-        sets = ', '.join(f"{k}=?" for k in kwargs)  # Monta SET k1=?, k2=?
-        vals = list(kwargs.values()) + [file_id]  # Valores + WHERE file_id
+        sets = ', '.join(f"{k}=?" for k in kwargs)
+        vals = list(kwargs.values()) + [file_id]
         self.conn.execute(
             f"UPDATE file_transfers SET {sets} WHERE file_id=?", vals)
         self.conn.commit()
@@ -492,20 +389,16 @@ class Database:
     # GROUPS — Grupos de chat
     # ========================================
 
+    # Salva grupo no banco (apenas fixos são persistidos, temporários só em memória)
     def save_group(self, group_id, name, group_type='temp'):
-        """Salva ou atualiza um grupo no banco.
-
-        Apenas grupos fixos são persistidos no DB.
-        Temporários existem somente em memória (messenger._groups).
-        """
         self.conn.execute("""
             INSERT OR REPLACE INTO groups (group_id, name, group_type, created_at)
             VALUES (?, ?, ?, ?)
         """, (group_id, name, group_type, time.time()))
         self.conn.commit()
 
+    # Retorna lista de grupos (filtrados por tipo se especificado)
     def get_groups(self, group_type=None):
-        """Retorna lista de grupos, filtrados por tipo se especificado."""
         if group_type:
             rows = self.conn.execute(
                 "SELECT * FROM groups WHERE group_type=? ORDER BY created_at DESC",
@@ -515,28 +408,28 @@ class Database:
                 "SELECT * FROM groups ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
 
+    # Remove grupo do banco (CASCADE deleta membros também)
     def delete_group(self, group_id):
-        """Remove um grupo do banco (CASCADE deleta membros também)."""
         self.conn.execute("DELETE FROM groups WHERE group_id=?", (group_id,))
         self.conn.commit()
 
+    # Adiciona ou atualiza membro em um grupo
     def save_group_member(self, group_id, uid, display_name, ip=''):
-        """Adiciona ou atualiza um membro em um grupo."""
         self.conn.execute("""
             INSERT OR REPLACE INTO group_members (group_id, uid, display_name, ip)
             VALUES (?, ?, ?, ?)
         """, (group_id, uid, display_name, ip))
         self.conn.commit()
 
+    # Retorna lista de membros de um grupo
     def get_group_members(self, group_id):
-        """Retorna lista de membros de um grupo."""
         rows = self.conn.execute(
             "SELECT * FROM group_members WHERE group_id=?",
             (group_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    # Remove membro de um grupo
     def delete_group_member(self, group_id, uid):
-        """Remove um membro de um grupo."""
         self.conn.execute(
             "DELETE FROM group_members WHERE group_id=? AND uid=?",
             (group_id, uid))
@@ -546,21 +439,21 @@ class Database:
     # SETTINGS — Configurações chave-valor
     # ========================================
 
+    # Lê configuração pelo nome (retorna default se não existe)
     def get_setting(self, key, default=None):
-        """Lê uma configuração pelo nome. Retorna default se não existe."""
         row = self.conn.execute(
             "SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return row['value'] if row else default
 
+    # Salva configuração (cria ou atualiza)
     def set_setting(self, key, value):
-        """Salva uma configuração (cria ou atualiza)."""
         self.conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-            (key, str(value)))  # Sempre converte para string
+            (key, str(value)))
         self.conn.commit()
 
+    # Fecha conexão da thread atual
     def close(self):
-        """Fecha a conexão da thread atual."""
         if hasattr(self._local, 'conn') and self._local.conn:
             self._local.conn.close()
             self._local.conn = None

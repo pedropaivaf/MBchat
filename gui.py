@@ -1,14 +1,12 @@
-"""
-MB Chat - Mensageiro de rede local
-Interface idêntica ao LAN Messenger original
-
-Este módulo é a camada de apresentação (View) do MB Chat.
-Responsável por todas as janelas, widgets, temas visuais, animações
-e interações com o usuário. Nunca acessa o banco de dados ou a rede
-diretamente — sempre passa pelo messenger.py (Controller).
-
-Fluxo: gui.py -> messenger.py -> network.py / database.py
-"""
+# MB Chat - Mensageiro de rede local
+# Interface idêntica ao LAN Messenger original
+#
+# Este módulo é a camada de apresentação (View) do MB Chat.
+# Responsável por todas as janelas, widgets, temas visuais, animações
+# e interações com o usuário. Nunca acessa o banco de dados ou a rede
+# diretamente — sempre passa pelo messenger.py (Controller).
+#
+# Fluxo: gui.py -> messenger.py -> network.py / database.py
 import tkinter as tk                            # Biblioteca principal de GUI do Python
 from tkinter import ttk, messagebox, filedialog, colorchooser  # Widgets avançados e diálogos
 import tkinter.font as tkfont                   # Manipulação de fontes (diálogo de escolha de fonte)
@@ -179,12 +177,10 @@ LANGS = {
     },
 }
 
+# Retorna a string traduzida para o idioma atual.
+# Se a chave não existir no dicionário do idioma atual, retorna a própria chave
+# como fallback (útil durante desenvolvimento para detectar chaves ausentes).
 def _t(key):
-    """Retorna a string traduzida para o idioma atual.
-
-    Se a chave não existir no dicionário do idioma atual, retorna a própria chave
-    como fallback (útil durante desenvolvimento para detectar chaves ausentes).
-    """
     return _CURRENT_LANG.get(key, key)
 
 # Idioma ativo no momento — alterado em PreferencesWindow._save_all()
@@ -336,12 +332,10 @@ FG_GREEN = '#008800'    # Indicador online / confirmação
 FG_RED = '#cc0000'      # Alertas de erro / nome do peer no chat
 FG_ORANGE = '#cc8800'   # Avisos (status "ausente", aguardando, etc.)
 
+# Tooltip minimalista (balão de dica) exibido ao passar o mouse sobre um widget.
+# Cria uma janela Toplevel sem decoração, posicionada acima do widget.
+# Destruída automaticamente quando o mouse sai.
 class _Tooltip:
-    """Tooltip minimalista (balão de dica) exibido ao passar o mouse sobre um widget.
-
-    Cria uma janela Toplevel sem decoração, posicionada acima do widget.
-    Destruída automaticamente quando o mouse sai.
-    """
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
@@ -351,8 +345,8 @@ class _Tooltip:
         widget.bind('<Enter>', self._show, add='+')
         widget.bind('<Leave>', self._hide, add='+')
 
+    # Cria e exibe a janela do tooltip acima do widget.
     def _show(self, event=None):
-        """Cria e exibe a janela do tooltip acima do widget."""
         if self._tip:
             # Evita criar duplicata se já está visível
             return
@@ -367,21 +361,19 @@ class _Tooltip:
         tk.Label(tw, text=self.text, font=('Segoe UI', 8),
                  bg='#1a202c', fg='#ffffff', padx=6, pady=3).pack()
 
+    # Destrói a janela do tooltip ao sair com o mouse.
     def _hide(self, event=None):
-        """Destrói a janela do tooltip ao sair com o mouse."""
         if self._tip:
             self._tip.destroy()
             self._tip = None
 
 
+# Configura o estilo visual das scrollbars ttk para todo o app.
+# Cria dois estilos personalizados ('Clean.Vertical.TScrollbar' e
+# 'Clean.Horizontal.TScrollbar') com aparência minimalista: sem setas,
+# thumb fino de 6px, cores suaves que combinam com todos os temas.
+# Chamado uma única vez na inicialização antes de criar qualquer janela.
 def _setup_scrollbar_style():
-    """Configura o estilo visual das scrollbars ttk para todo o app.
-
-    Cria dois estilos personalizados ('Clean.Vertical.TScrollbar' e
-    'Clean.Horizontal.TScrollbar') com aparência minimalista: sem setas,
-    thumb fino de 6px, cores suaves que combinam com todos os temas.
-    Chamado uma única vez na inicialização antes de criar qualquer janela.
-    """
     style = ttk.Style()
     # --- Scrollbar vertical minimalista (sem setas, thumb de 6px) ---
     style.configure('Clean.Vertical.TScrollbar',
@@ -411,21 +403,17 @@ def _setup_scrollbar_style():
                     'sticky': 'we'})])
 
 
+# Recorta uma imagem para formato circular com anti-aliasing de alta qualidade.
+# Técnica de superamostragem: renderiza em resolução 2x (antialias=2) e depois
+# reduz — produz bordas suaves sem serrilhamento. O resultado é RGBA com fundo
+# transparente; os pixels fora do círculo são completamente transparentes.
+# Args:
+#     img_or_path: Caminho (str) para arquivo de imagem OU objeto PIL.Image já aberto.
+#     size: Tamanho final do avatar em pixels (quadrado NxN).
+#     antialias: Fator de superamostragem (2 = dobro da resolução final).
+# Returns:
+#     PIL.Image RGBA com o avatar circular, ou None se PIL não estiver disponível.
 def _make_circular_avatar(img_or_path, size=36, antialias=2):
-    """Recorta uma imagem para formato circular com anti-aliasing de alta qualidade.
-
-    Técnica de superamostragem: renderiza em resolução 2x (antialias=2) e depois
-    reduz — produz bordas suaves sem serrilhamento. O resultado é RGBA com fundo
-    transparente; os pixels fora do círculo são completamente transparentes.
-
-    Args:
-        img_or_path: Caminho (str) para arquivo de imagem OU objeto PIL.Image já aberto.
-        size: Tamanho final do avatar em pixels (quadrado NxN).
-        antialias: Fator de superamostragem (2 = dobro da resolução final).
-
-    Returns:
-        PIL.Image RGBA com o avatar circular, ou None se PIL não estiver disponível.
-    """
     if not HAS_PIL:
         return None
     from PIL import ImageDraw
@@ -453,24 +441,19 @@ def _make_circular_avatar(img_or_path, size=36, antialias=2):
     return img
 
 
+# Cria um ícone da fonte Segoe MDL2 Assets como PhotoImage tkinter.
+# Versão module-level (sem self) usada fora de classes, por exemplo na janela
+# principal. Para uso dentro de classes, use o método _create_mdl2_icon() da classe.
+# A fonte segmdl2.ttf contém ícones vetoriais nativos do Windows (codepoints Unicode
+# especiais). O ícone é renderizado em 4x a resolução final e depois reduzido com
+# LANCZOS para garantir nitidez em qualquer DPI.
+# Args:
+#     char: Caractere Unicode do ícone (ex: '\uE81C' = Histórico, '\uE723' = Clipe).
+#     size: Tamanho final em pixels (quadrado NxN).
+#     color: Cor do ícone em formato hex '#rrggbb'.
+# Returns:
+#     ImageTk.PhotoImage pronto para uso em Button/Label, ou None em caso de erro.
 def _create_mdl2_icon_static(char, size=18, color='#718096'):
-    """Cria um ícone da fonte Segoe MDL2 Assets como PhotoImage tkinter.
-
-    Versão module-level (sem self) usada fora de classes, por exemplo na janela
-    principal. Para uso dentro de classes, use o método _create_mdl2_icon() da classe.
-
-    A fonte segmdl2.ttf contém ícones vetoriais nativos do Windows (codepoints Unicode
-    especiais). O ícone é renderizado em 4x a resolução final e depois reduzido com
-    LANCZOS para garantir nitidez em qualquer DPI.
-
-    Args:
-        char: Caractere Unicode do ícone (ex: '\uE81C' = Histórico, '\uE723' = Clipe).
-        size: Tamanho final em pixels (quadrado NxN).
-        color: Cor do ícone em formato hex '#rrggbb'.
-
-    Returns:
-        ImageTk.PhotoImage pronto para uso em Button/Label, ou None em caso de erro.
-    """
     try:
         from PIL import ImageDraw, ImageFont
         # Tenta a fonte MDL2 padrão; fallback para SegoeIcons se não encontrar
@@ -510,13 +493,11 @@ AVATAR_COLORS = [
 ]
 
 
+# Retorna o caminho absoluto do arquivo mbchat.ico, compatível com PyInstaller.
+# Quando o app é empacotado como .exe pelo PyInstaller, os assets ficam em
+# sys._MEIPASS (pasta temporária). Em desenvolvimento, ficam em assets/ ao
+# lado do script. Tenta ambos os caminhos para garantir compatibilidade.
 def _get_icon_path():
-    """Retorna o caminho absoluto do arquivo mbchat.ico, compatível com PyInstaller.
-
-    Quando o app é empacotado como .exe pelo PyInstaller, os assets ficam em
-    sys._MEIPASS (pasta temporária). Em desenvolvimento, ficam em assets/ ao
-    lado do script. Tenta ambos os caminhos para garantir compatibilidade.
-    """
     if getattr(sys, 'frozen', False):
         # Rodando como executável PyInstaller — assets em pasta temporária
         base = sys._MEIPASS
@@ -532,19 +513,16 @@ def _get_icon_path():
     return None
 
 
+# Adiciona efeito hover (mudança de cor ao passar o mouse) a qualquer widget.
+# Os botões tk.Button não têm hover nativo como os ttk.Button. Esta função
+# simula o efeito vinculando os eventos <Enter> e <Leave> para trocar as cores.
+# Args:
+#     widget: Qualquer widget tkinter (Button, Label, Frame, etc.).
+#     normal_bg: Cor de fundo quando o mouse está fora.
+#     hover_bg: Cor de fundo quando o mouse está sobre o widget.
+#     normal_fg: Cor do texto normal (None = não altera texto).
+#     hover_fg: Cor do texto no hover (None = não altera texto).
 def _add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
-    """Adiciona efeito hover (mudança de cor ao passar o mouse) a qualquer widget.
-
-    Os botões tk.Button não têm hover nativo como os ttk.Button. Esta função
-    simula o efeito vinculando os eventos <Enter> e <Leave> para trocar as cores.
-
-    Args:
-        widget: Qualquer widget tkinter (Button, Label, Frame, etc.).
-        normal_bg: Cor de fundo quando o mouse está fora.
-        hover_bg: Cor de fundo quando o mouse está sobre o widget.
-        normal_fg: Cor do texto normal (None = não altera texto).
-        hover_fg: Cor do texto no hover (None = não altera texto).
-    """
     def on_enter(e):
         widget.config(bg=hover_bg)
         if hover_fg:
@@ -559,22 +537,17 @@ def _add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
     widget.bind('<Leave>', on_leave)
 
 
+# Renderiza um emoji Unicode como imagem colorida via PIL (versão module-level).
+# Usa a fonte seguiemj.ttf (Segoe UI Emoji) do Windows com suporte a cores COLR/CPAL.
+# O parâmetro embedded_color=True instrui o PIL a usar as camadas de cor do glifo.
+# Versão de módulo para uso fora de classes. Dentro de ChatWindow/GroupChatWindow,
+# use _render_emoji_image() (método de instância com cache automático por janela).
+# Args:
+#     emoji_char: Caractere emoji Unicode (ex: '😀', '❤️').
+#     size: Tamanho da imagem em pixels.
+# Returns:
+#     ImageTk.PhotoImage pronto para uso em tkinter, ou None se não disponível.
 def _render_color_emoji(emoji_char, size=28):
-    """Renderiza um emoji Unicode como imagem colorida via PIL (versão module-level).
-
-    Usa a fonte seguiemj.ttf (Segoe UI Emoji) do Windows com suporte a cores COLR/CPAL.
-    O parâmetro embedded_color=True instrui o PIL a usar as camadas de cor do glifo.
-
-    Versão de módulo para uso fora de classes. Dentro de ChatWindow/GroupChatWindow,
-    use _render_emoji_image() (método de instância com cache automático por janela).
-
-    Args:
-        emoji_char: Caractere emoji Unicode (ex: '😀', '❤️').
-        size: Tamanho da imagem em pixels.
-
-    Returns:
-        ImageTk.PhotoImage pronto para uso em tkinter, ou None se não disponível.
-    """
     if not HAS_PIL:
         return None
     try:
@@ -600,8 +573,8 @@ def _render_color_emoji(emoji_char, size=28):
         return None
 
 
+# Centraliza uma janela na tela.
 def _center_window(win, w, h):
-    """Centraliza uma janela na tela."""
     win.update_idletasks()
     sx = win.winfo_screenwidth()
     sy = win.winfo_screenheight()
@@ -610,13 +583,11 @@ def _center_window(win, w, h):
     win.geometry(f'{w}x{h}+{x}+{y}')
 
 
+# Aplica bordas levemente arredondadas em uma janela via API DWM do Windows 11+.
+# Usa ctypes para chamar DwmSetWindowAttribute() com DWMWA_WINDOW_CORNER_PREFERENCE=2
+# (DWMWCP_ROUND). No Windows 10 ou anterior, a API não existe e a exceção é silenciada.
+# Deve ser chamado após _center_window() em toda janela Toplevel criada no app.
 def _apply_rounded_corners(win):
-    """Aplica bordas levemente arredondadas em uma janela via API DWM do Windows 11+.
-
-    Usa ctypes para chamar DwmSetWindowAttribute() com DWMWA_WINDOW_CORNER_PREFERENCE=2
-    (DWMWCP_ROUND). No Windows 10 ou anterior, a API não existe e a exceção é silenciada.
-    Deve ser chamado após _center_window() em toda janela Toplevel criada no app.
-    """
     try:
         import ctypes
         DWMWA_WINDOW_CORNER_PREFERENCE = 33
@@ -629,13 +600,11 @@ def _apply_rounded_corners(win):
         pass  # Windows 10 ou anterior — API não disponível, ignorar silenciosamente
 
 
+# Formata automaticamente um campo de entrada como dd/mm/aaaa durante a digitação.
+# Intercepta cada tecla liberada, extrai apenas os dígitos e reinsere o texto
+# formatado com as barras nos lugares corretos. Teclas de navegação são ignoradas
+# para não interferir com BackSpace, setas, etc.
 def _bind_date_mask(entry, var):
-    """Formata automaticamente um campo de entrada como dd/mm/aaaa durante a digitação.
-
-    Intercepta cada tecla liberada, extrai apenas os dígitos e reinsere o texto
-    formatado com as barras nos lugares corretos. Teclas de navegação são ignoradas
-    para não interferir com BackSpace, setas, etc.
-    """
     def on_key(event):
         if event.keysym in ('BackSpace', 'Delete', 'Left', 'Right',
                             'Home', 'End', 'Tab'):
@@ -656,13 +625,12 @@ def _bind_date_mask(entry, var):
     entry.bind('<KeyRelease>', on_key)
 
 
+# Exibe um mini-calendário popup para seleção de data.
+#
+# Posicionado abaixo do campo de data (entry_widget). Permite navegar entre
+# meses com botões < > e clicar em um dia para preencher date_var com dd/mm/aaaa.
+# Fecha ao clicar em Escape ou ao perder o foco.
 def _show_calendar(parent, date_var, entry_widget):
-    """Exibe um mini-calendário popup para seleção de data.
-
-    Posicionado abaixo do campo de data (entry_widget). Permite navegar entre
-    meses com botões < > e clicar em um dia para preencher date_var com dd/mm/aaaa.
-    Fecha ao clicar em Escape ou ao perder o foco.
-    """
     popup = tk.Toplevel(parent)
     popup.overrideredirect(True)
     popup.configure(bg='#333333', bd=1, relief='solid')
@@ -733,8 +701,8 @@ def _show_calendar(parent, date_var, entry_widget):
                     btn.bind('<Leave>',
                              lambda e, b=btn, bg_=bg: b.configure(bg=bg_))
 
+    # Avança ou recua um mês no calendário e redesenha o grid.
     def nav(delta):
-        """Avança ou recua um mês no calendário e redesenha o grid."""
         state['month'] += delta
         if state['month'] > 12:
             state['month'] = 1
@@ -744,8 +712,8 @@ def _show_calendar(parent, date_var, entry_widget):
             state['year'] -= 1
         draw_calendar()
 
+    # Preenche o campo de data com o dia selecionado e fecha o popup.
     def select(day):
-        """Preenche o campo de data com o dia selecionado e fecha o popup."""
         date_var.set(f'{day:02d}/{state["month"]:02d}/{state["year"]}')
         popup.destroy()
 
@@ -762,12 +730,10 @@ def _show_calendar(parent, date_var, entry_widget):
             popup.winfo_children()) else None)))
 
 
+# Retorna o diretório de dados do app, criando-o se necessário.
+# Windows: %APPDATA%\.mbchat
+# Outros:  ~/.mbchat
 def _get_data_dir():
-    """Retorna o diretório de dados do app, criando-o se necessário.
-
-    Windows: %APPDATA%\\.mbchat
-    Outros:  ~/\\.mbchat
-    """
     if os.name == 'nt':
         base = os.environ.get('APPDATA', os.path.expanduser('~'))
     else:
@@ -777,23 +743,21 @@ def _get_data_dir():
     return d
 
 
+# Retorna o diretório de avatares personalizados, dentro do diretório de dados.
 def _get_avatars_dir():
-    """Retorna o diretório de avatares personalizados, dentro do diretório de dados."""
     d = os.path.join(_get_data_dir(), 'avatars')
     os.makedirs(d, exist_ok=True)
     return d
 
 
+# Reproduz sons de notificação usando a API nativa de cada sistema operacional.
+# Usa winsound no Windows (sons do sistema), afplay no macOS e paplay no Linux.
+# Todos os métodos são estáticos — não precisam de instância.
 class SoundPlayer:
-    """Reproduz sons de notificação usando a API nativa de cada sistema operacional.
-
-    Usa winsound no Windows (sons do sistema), afplay no macOS e paplay no Linux.
-    Todos os métodos são estáticos — não precisam de instância.
-    """
 
     @staticmethod
+    # Reproduz o som de notificação de nova mensagem.
     def play_notification():
-        """Reproduz o som de notificação de nova mensagem."""
         try:
             if platform.system() == 'Windows':
                 import winsound
@@ -807,8 +771,8 @@ class SoundPlayer:
             pass
 
     @staticmethod
+    # Reproduz o som de conexão/desconexão de contato (apenas Windows por ora).
     def play_connect():
-        """Reproduz o som de conexão/desconexão de contato (apenas Windows por ora)."""
         try:
             if platform.system() == 'Windows':
                 import winsound
@@ -820,17 +784,14 @@ class SoundPlayer:
 # =============================================================
 #  PREFERENCES WINDOW — Idêntica ao original
 # =============================================================
+# Janela de Preferências completa com navegação lateral por categorias.
+# Layout: sidebar esquerda (lista de categorias) + área direita (conteúdo da
+# categoria selecionada). Cada categoria é construída dinamicamente pelos métodos
+# _build_*() quando o usuário clica nela. As configurações são salvas no banco
+# de dados via messenger.db.set_setting() ao clicar em OK (_save_all).
+# Categorias disponíveis: Geral, Conta, Mensagens, Histórico, Alertas,
+# Rede, Transferência de arq., Aparência, Teclas de atalho.
 class PreferencesWindow(tk.Toplevel):
-    """Janela de Preferências completa com navegação lateral por categorias.
-
-    Layout: sidebar esquerda (lista de categorias) + área direita (conteúdo da
-    categoria selecionada). Cada categoria é construída dinamicamente pelos métodos
-    _build_*() quando o usuário clica nela. As configurações são salvas no banco
-    de dados via messenger.db.set_setting() ao clicar em OK (_save_all).
-
-    Categorias disponíveis: Geral, Conta, Mensagens, Histórico, Alertas,
-    Rede, Transferência de arq., Aparência, Teclas de atalho.
-    """
 
     def __init__(self, app, initial_tab=0):
         super().__init__(app.root)
@@ -924,13 +885,11 @@ class PreferencesWindow(tk.Toplevel):
         # Select initial tab
         self._select_category(initial_tab)
 
+    # Inicializa todas as variáveis tkinter com os valores salvos no banco de dados.
+    # Cada var_* corresponde a uma configuração persistida em database.py via
+    # set_setting()/get_setting(). Os valores padrão são passados como segundo
+    # argumento de get_setting() caso a chave ainda não exista no banco.
     def _init_vars(self):
-        """Inicializa todas as variáveis tkinter com os valores salvos no banco de dados.
-
-        Cada var_* corresponde a uma configuração persistida em database.py via
-        set_setting()/get_setting(). Os valores padrão são passados como segundo
-        argumento de get_setting() caso a chave ainda não exista no banco.
-        """
         db = self.messenger.db
         self.var_autostart = tk.BooleanVar(
             value=db.get_setting('autostart', '0') == '1')
@@ -991,12 +950,10 @@ class PreferencesWindow(tk.Toplevel):
         self.var_display_name = tk.StringVar(
             value=self.messenger.display_name)
 
+    # Seleciona uma categoria da sidebar e reconstrói o painel direito.
+    # Atualiza o destaque visual dos botões da sidebar, destrói o frame anterior
+    # e chama o método _build_*() da categoria selecionada para preencher o painel.
     def _select_category(self, idx):
-        """Seleciona uma categoria da sidebar e reconstrói o painel direito.
-
-        Atualiza o destaque visual dos botões da sidebar, destrói o frame anterior
-        e chama o método _build_*() da categoria selecionada para preencher o painel.
-        """
         # Destaca o botão selecionado em azul e restaura os demais ao padrão
         for i, btn in enumerate(self.cat_buttons):
             if i == idx:
@@ -1069,8 +1026,8 @@ class PreferencesWindow(tk.Toplevel):
                      width=15).pack(side='right')
 
     # ----- CONTA -----
+    # Constrói o painel da aba 'Conta': nome de exibição e foto de perfil.
     def _build_conta(self, parent):
-        """Constrói o painel da aba 'Conta': nome de exibição e foto de perfil."""
         tk.Label(parent, text='Conta', font=FONT_SECTION,
                  bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
 
@@ -1147,8 +1104,8 @@ class PreferencesWindow(tk.Toplevel):
                       fg=FG_RED, command=self._remove_custom_avatar
                       ).pack(anchor='w', pady=2)
 
+    # Show image preview in the custom_preview canvas.
     def _show_preview(self, path):
-        """Show image preview in the custom_preview canvas."""
         self._custom_preview.delete('all')
         if path and os.path.exists(path):
             try:
@@ -1380,19 +1337,17 @@ class PreferencesWindow(tk.Toplevel):
                      fg=FG_BLUE).pack(side='left')
 
     # ----- SAVE ALL -----
+    # Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
+    # Esta função é chamada ao clicar em 'OK'. Ordem de execução:
+    # 1. Persiste todos os valores das variáveis no banco via set_setting()
+    # 2. Atualiza avatar via messenger.change_avatar() (propaga para a rede)
+    # 3. Atualiza nome de exibição se foi alterado (propaga para a rede)
+    # 4. Aplica nova fonte em todas as janelas de chat abertas
+    # 5. Aplica o tema selecionado (recria paleta de cores)
+    # 6. Configura ou remove o auto-start do Windows (registro)
+    # 7. Atualiza o idioma da interface se foi alterado
+    # 8. Fecha a janela de preferências
     def _save_all(self):
-        """Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
-
-        Esta função é chamada ao clicar em 'OK'. Ordem de execução:
-        1. Persiste todos os valores das variáveis no banco via set_setting()
-        2. Atualiza avatar via messenger.change_avatar() (propaga para a rede)
-        3. Atualiza nome de exibição se foi alterado (propaga para a rede)
-        4. Aplica nova fonte em todas as janelas de chat abertas
-        5. Aplica o tema selecionado (recria paleta de cores)
-        6. Configura ou remove o auto-start do Windows (registro)
-        7. Atualiza o idioma da interface se foi alterado
-        8. Fecha a janela de preferências
-        """
         db = self.messenger.db
 
         # Persiste cada configuração individualmente no banco SQLite
@@ -1503,8 +1458,8 @@ class PreferencesWindow(tk.Toplevel):
 # =============================================================
 #  ACCOUNT WINDOW — Janela pequena só com opções de Conta
 # =============================================================
+# Janelinha compacta de perfil (nome + avatar).
 class AccountWindow(tk.Toplevel):
-    """Janelinha compacta de perfil (nome + avatar)."""
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -1684,22 +1639,18 @@ def _format_size(bytes_val):
         return f'{bytes_val / (1024 * 1024):.2f} MB'
 
 
+# Diálogo de progresso de transferência de arquivo ponto-a-ponto.
+# Exibe estado diferente para quem envia vs. quem recebe:
+# - Sender: barra de progresso imediatamente + label 'Aguardando aceitação...'
+# - Receiver: botões 'Aceitar' e 'Declinar'; barra aparece após aceitar
+# Ao concluir com sucesso:
+# - Sender vê: "arquivo enviado — Completo!"
+# - Receiver vê: "arquivo recebido" + botão 'Abrir Pasta' para abrir o Explorer
+# Callbacks injetados pelo app:
+# - on_cancel: chamado quando o usuário cancela
+# - on_accept: chamado quando o receiver aceita (inicia a transferência)
+# - on_decline: chamado quando o receiver recusa
 class FileTransferDialog(tk.Toplevel):
-    """Diálogo de progresso de transferência de arquivo ponto-a-ponto.
-
-    Exibe estado diferente para quem envia vs. quem recebe:
-    - Sender: barra de progresso imediatamente + label 'Aguardando aceitação...'
-    - Receiver: botões 'Aceitar' e 'Declinar'; barra aparece após aceitar
-
-    Ao concluir com sucesso:
-    - Sender vê: "arquivo enviado — Completo!"
-    - Receiver vê: "arquivo recebido" + botão 'Abrir Pasta' para abrir o Explorer
-
-    Callbacks injetados pelo app:
-    - on_cancel: chamado quando o usuário cancela
-    - on_accept: chamado quando o receiver aceita (inicia a transferência)
-    - on_decline: chamado quando o receiver recusa
-    """
 
     def __init__(self, parent, file_id, filename, peer_name,
                  direction='send', filesize=0, on_cancel=None,
@@ -1808,8 +1759,8 @@ class FileTransferDialog(tk.Toplevel):
             except Exception:
                 pass
 
+    # Receiver aceita o arquivo.
     def _accept(self):
-        """Receiver aceita o arquivo."""
         if self._on_accept:
             self._on_accept(self.file_id)
         # Rebuild UI for receiving
@@ -1830,15 +1781,15 @@ class FileTransferDialog(tk.Toplevel):
         cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
         self._cancel_lbl = cancel_lbl
 
+    # Receiver declina o arquivo.
     def _decline(self):
-        """Receiver declina o arquivo."""
         if self._on_decline:
             self._on_decline(self.file_id)
         self._finished = True
         self._safe_destroy()
 
+    # Chamado no sender quando receiver aceita.
     def set_accepted(self):
-        """Chamado no sender quando receiver aceita."""
         try:
             if self._lbl_state:
                 self._lbl_state.config(text='Aceito! Transferindo...',
@@ -1846,14 +1797,13 @@ class FileTransferDialog(tk.Toplevel):
         except tk.TclError:
             pass
 
+    # Atualiza a barra de progresso e o label de velocidade/tamanho.
+    #
+    # Chamado periodicamente pelo app a partir de callbacks de rede.
+    # A velocidade é calculada a cada 0.5s para suavizar variações.
+    # Para o sender, também confirma visualmente que o receiver aceitou
+    # (quando o primeiro byte chega, significa que foi aceito).
     def update_progress(self, transferred, total):
-        """Atualiza a barra de progresso e o label de velocidade/tamanho.
-
-        Chamado periodicamente pelo app a partir de callbacks de rede.
-        A velocidade é calculada a cada 0.5s para suavizar variações.
-        Para o sender, também confirma visualmente que o receiver aceitou
-        (quando o primeiro byte chega, significa que foi aceito).
-        """
         if self._finished:
             return
         try:
@@ -1882,14 +1832,13 @@ class FileTransferDialog(tk.Toplevel):
         except tk.TclError:
             pass
 
+    # Finaliza o diálogo de transferência com resultado de sucesso ou erro.
+    #
+    # Em caso de sucesso:
+    # - Sender: exibe mensagem "enviado — Completo!"
+    # - Receiver: exibe mensagem "recebido — Completo!" + botão 'Abrir Pasta'
+    # Em caso de erro: fecha o diálogo silenciosamente.
     def finish(self, success=True, filepath=''):
-        """Finaliza o diálogo de transferência com resultado de sucesso ou erro.
-
-        Em caso de sucesso:
-        - Sender: exibe mensagem "enviado — Completo!"
-        - Receiver: exibe mensagem "recebido — Completo!" + botão 'Abrir Pasta'
-        Em caso de erro: fecha o diálogo silenciosamente.
-        """
         if self._finished:
             return
         self._finished = True
@@ -1927,8 +1876,8 @@ class FileTransferDialog(tk.Toplevel):
         except tk.TclError:
             pass
 
+    # Abre o explorador na pasta do arquivo.
     def _open_folder(self, filepath):
-        """Abre o explorador na pasta do arquivo."""
         try:
             folder = os.path.dirname(filepath)
             if os.name == 'nt':
@@ -1957,8 +1906,8 @@ class FileTransferDialog(tk.Toplevel):
 # =============================================================
 #  FILE TRANSFERS WINDOW  (lista de todas as transferencias)
 # =============================================================
+# Janela com lista de todas as transferencias de arquivos.
 class FileTransfersWindow(tk.Toplevel):
-    """Janela com lista de todas as transferencias de arquivos."""
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -2051,8 +2000,8 @@ class FileTransfersWindow(tk.Toplevel):
         # Load existing entries
         self._load_entries()
 
+    # Carrega transferencias da lista do app.
     def _load_entries(self):
-        """Carrega transferencias da lista do app."""
         for entry in self.app._transfer_history:
             self._add_entry_widget(entry)
 
@@ -2176,8 +2125,8 @@ class FileTransfersWindow(tk.Toplevel):
         self._rows.clear()
         self.app._transfer_history.clear()
 
+    # Adiciona ou atualiza uma entrada.
     def add_or_update(self, entry):
-        """Adiciona ou atualiza uma entrada."""
         fid = entry['file_id']
         # Update in history
         found = False
@@ -2213,23 +2162,22 @@ class FileTransfersWindow(tk.Toplevel):
 # =============================================================
 #  CHAT WINDOW
 # =============================================================
+# Janela de conversa individual entre dois usuários.
+#
+# Layout (de baixo para cima, usando pack side='bottom' primeiro):
+# 1. btn_frame   — toolbar inferior com botões Fonte, Emoji, Enviar Arquivo + botão Enviar
+# 2. input_outer — campo de texto de entrada (3 linhas, suporta emojis coloridos)
+# 3. chat_frame  — área de exibição de mensagens (tk.Text desabilitado para edição)
+# 4. header      — cabeçalho navy com avatar do peer, nome, label de digitação e botão Histórico
+#
+# Funcionalidades principais:
+# - Emojis coloridos: digitados ou escolhidos no picker são inseridos como imagens PIL
+# - Cache de imagens: _chat_emoji_cache (chat) e _entry_emoji_cache (entrada)
+# - Dois estilos: 'linear' (padrão LAN Messenger) e 'bubble' (estilo WhatsApp)
+# - Indicador de digitação: envia MT_TYPING para o peer ao detectar keystrokes
+# - Histórico: carrega mensagens não lidas ao abrir; botão abre janela de histórico completo
+# - Scrollbar automática: aparece ao passar o mouse, some ao sair
 class ChatWindow(tk.Toplevel):
-    """Janela de conversa individual entre dois usuários.
-
-    Layout (de baixo para cima, usando pack side='bottom' primeiro):
-    1. btn_frame   — toolbar inferior com botões Fonte, Emoji, Enviar Arquivo + botão Enviar
-    2. input_outer — campo de texto de entrada (3 linhas, suporta emojis coloridos)
-    3. chat_frame  — área de exibição de mensagens (tk.Text desabilitado para edição)
-    4. header      — cabeçalho navy com avatar do peer, nome, label de digitação e botão Histórico
-
-    Funcionalidades principais:
-    - Emojis coloridos: digitados ou escolhidos no picker são inseridos como imagens PIL
-    - Cache de imagens: _chat_emoji_cache (chat) e _entry_emoji_cache (entrada)
-    - Dois estilos: 'linear' (padrão LAN Messenger) e 'bubble' (estilo WhatsApp)
-    - Indicador de digitação: envia MT_TYPING para o peer ao detectar keystrokes
-    - Histórico: carrega mensagens não lidas ao abrir; botão abre janela de histórico completo
-    - Scrollbar automática: aparece ao passar o mouse, some ao sair
-    """
 
     def __init__(self, parent_app, peer_id, peer_name, **kw):
         super().__init__(parent_app.root)
@@ -2501,10 +2449,9 @@ class ChatWindow(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self._on_close)  # trata fechamento da janela
         self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))  # para o flash da taskbar ao focar
 
+    # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
+    # Após exibir, marca todas como lidas no banco de dados.
     def _load_history(self):
-        """Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
-        Após exibir, marca todas como lidas no banco de dados.
-        """
         # Busca mensagens não lidas do banco para este contato
         unreads = self.messenger.get_unread_messages(self.peer_id)
         for msg in unreads:
@@ -2517,11 +2464,10 @@ class ChatWindow(tk.Toplevel):
         # Marca todas as mensagens deste contato como lidas no banco
         self.messenger.mark_as_read(self.peer_id)
 
+    # Desenha o avatar do contato no canvas do cabeçalho.
+    # Prioridade: foto personalizada (base64 da rede) > círculo colorido com inicial.
+    # Usa antialias 2x com PIL; fallback para oval tkinter sem PIL.
     def _draw_peer_avatar(self):
-        """Desenha o avatar do contato no canvas do cabeçalho.
-        Prioridade: foto personalizada (base64 da rede) > círculo colorido com inicial.
-        Usa antialias 2x com PIL; fallback para oval tkinter sem PIL.
-        """
         # Busca dados do contato (índice de cor e foto personalizada em base64)
         contact = self.messenger.db.get_contact(self.peer_id)
         idx = contact.get('avatar_index', 0) if contact else 0  # índice da cor do avatar
@@ -2574,10 +2520,9 @@ class ChatWindow(tk.Toplevel):
                                                   fill='white',
                                                   font=('Segoe UI', 14, 'bold'))
 
+    # Callback chamado pelo Text quando o conteúdo rola.
+    # Atualiza a scrollbar e a esconde quando todo o conteúdo está visível.
     def _on_chat_scroll(self, first, last):
-        """Callback chamado pelo Text quando o conteúdo rola.
-        Atualiza a scrollbar e a esconde quando todo o conteúdo está visível.
-        """
         self._chat_scrollbar.set(first, last)  # sincroniza posição da scrollbar
         # Se tudo cabe na tela (first=0, last=1), esconde a scrollbar
         if float(first) <= 0.0 and float(last) >= 1.0:
@@ -2585,8 +2530,8 @@ class ChatWindow(tk.Toplevel):
                 self._chat_scrollbar.pack_forget()  # remove da tela sem destruir
                 self._scroll_visible = False
 
+    # Exibe a scrollbar se o conteúdo ultrapassar a altura visível.
     def _show_scrollbar(self, event=None):
-        """Exibe a scrollbar se o conteúdo ultrapassar a altura visível."""
         first, last = self.chat_text.yview()
         if first > 0.0 or last < 1.0:  # há conteúdo além do visível
             if not self._scroll_visible:
@@ -2594,8 +2539,8 @@ class ChatWindow(tk.Toplevel):
                 self.chat_text.pack_configure(padx=(0, 0))
                 self._scroll_visible = True
 
+    # Esconde a scrollbar se o mouse não estiver sobre a área de chat ou barra.
     def _hide_scrollbar(self, event=None):
-        """Esconde a scrollbar se o mouse não estiver sobre a área de chat ou barra."""
         if self._scroll_visible:
             # Verifica se o ponteiro ainda está sobre o chat ou sobre a barra
             try:
@@ -2609,16 +2554,16 @@ class ChatWindow(tk.Toplevel):
             self._chat_scrollbar.pack_forget()  # esconde a scrollbar
             self._scroll_visible = False
 
+    # Processa o scroll do mouse: rola o chat e agenda esconder a barra.
     def _on_mousewheel(self, event):
-        """Processa o scroll do mouse: rola o chat e agenda esconder a barra."""
         self.chat_text.yview_scroll(-1 * (event.delta // 40), 'units')  # rola proporcionalmente
         self._show_scrollbar()  # exibe scrollbar temporariamente
         # Esconde automaticamente após 1,5 s se o mouse sair
         self.after(1500, self._hide_scrollbar)
         return 'break'  # consome o evento para não propagar
 
+    # Retorna imagem do emoji do cache, ou renderiza e cacheia.
     def _get_chat_emoji(self, emoji_char):
-        """Retorna imagem do emoji do cache, ou renderiza e cacheia."""
         if emoji_char in self._chat_emoji_cache:
             return self._chat_emoji_cache[emoji_char]
         img = self._render_emoji_image(emoji_char, size=20)
@@ -2626,8 +2571,8 @@ class ChatWindow(tk.Toplevel):
             self._chat_emoji_cache[emoji_char] = img
         return img
 
+    # Retorna imagem do emoji para o input (tamanho 18px), cacheada.
     def _get_entry_emoji(self, emoji_char):
-        """Retorna imagem do emoji para o input (tamanho 18px), cacheada."""
         if emoji_char in self._entry_emoji_cache:
             return self._entry_emoji_cache[emoji_char]
         img = self._render_emoji_image(emoji_char, size=18)
@@ -2635,11 +2580,10 @@ class ChatWindow(tk.Toplevel):
             self._entry_emoji_cache[emoji_char] = img
         return img
 
+    # Insere emoji como imagem PIL colorida no campo de entrada de texto.
+    # Cria nome único, registra no mapa interno para reconstrução do texto ao enviar.
+    # Fallback: insere caractere unicode puro se PIL não disponível.
     def _entry_insert_emoji(self, emoji_char, pos='insert'):
-        """Insere emoji como imagem PIL colorida no campo de entrada de texto.
-        Cria nome único, registra no mapa interno para reconstrução do texto ao enviar.
-        Fallback: insere caractere unicode puro se PIL não disponível.
-        """
         img = self._get_entry_emoji(emoji_char)  # obtém/gera imagem 18px do emoji
         if img:
             img_name = f'entry_emoji_{len(self._entry_img_map)}'  # nome único para a imagem
@@ -2648,12 +2592,11 @@ class ChatWindow(tk.Toplevel):
         else:
             self.entry.insert(pos, emoji_char)  # fallback: texto unicode puro
 
+    # Lê o conteúdo do campo de entrada reconstruindo emojis a partir das imagens.
+    # Percorre todos os tokens do widget Text (texto puro e imagens embutidas).
+    # Imagens são convertidas de volta ao caractere emoji via o mapa interno.
+    # Retorna a string completa pronta para envio, sem espaços nas extremidades.
     def _get_entry_content(self):
-        """Lê o conteúdo do campo de entrada reconstruindo emojis a partir das imagens.
-        Percorre todos os tokens do widget Text (texto puro e imagens embutidas).
-        Imagens são convertidas de volta ao caractere emoji via o mapa interno.
-        Retorna a string completa pronta para envio, sem espaços nas extremidades.
-        """
         result = []
         # Itera sobre todos os elementos: textos e imagens embutidas no widget
         for key, value, index in self.entry.dump('1.0', 'end', image=True, text=True):
@@ -2664,11 +2607,10 @@ class ChatWindow(tk.Toplevel):
                 result.append(emoji)
         return ''.join(result).strip()  # string completa sem espaços extras
 
+    # Insere texto no chat substituindo emojis Unicode por imagens PIL coloridas.
+    # Divide o texto com regex: partes textuais recebem 'tag'; emojis viram imagens inline.
+    # Fallback para texto simples se PIL não disponível ou emoji não renderizável.
     def _insert_text_with_emojis(self, text, tag):
-        """Insere texto no chat substituindo emojis Unicode por imagens PIL coloridas.
-        Divide o texto com regex: partes textuais recebem 'tag'; emojis viram imagens inline.
-        Fallback para texto simples se PIL não disponível ou emoji não renderizável.
-        """
         parts = _EMOJI_RE.split(text)    # fragmentos de texto entre os emojis
         emojis = _EMOJI_RE.findall(text)  # lista dos emojis encontrados
         for i, part in enumerate(parts):
@@ -2681,16 +2623,15 @@ class ChatWindow(tk.Toplevel):
                 else:
                     self.chat_text.insert('end', emojis[i], tag)  # fallback texto
 
+    # Adiciona uma mensagem à área de chat com formatação e suporte a emojis.
+    #
+    # O estilo visual é determinado pela preferência 'msg_style' salva no banco:
+    # - 'bubble': WhatsApp-style com bolhas coloridas (meu=direita, peer=esquerda)
+    # - 'linear': LAN Messenger clássico (nome + hora acima do texto da mensagem)
+    #
+    # O widget fica em state='disabled' para bloquear edição pelo usuário. É
+    # temporariamente habilitado para inserir a mensagem e depois desabilitado novamente.
     def _append_message(self, sender, text, is_mine, timestamp=None):
-        """Adiciona uma mensagem à área de chat com formatação e suporte a emojis.
-
-        O estilo visual é determinado pela preferência 'msg_style' salva no banco:
-        - 'bubble': WhatsApp-style com bolhas coloridas (meu=direita, peer=esquerda)
-        - 'linear': LAN Messenger clássico (nome + hora acima do texto da mensagem)
-
-        O widget fica em state='disabled' para bloquear edição pelo usuário. É
-        temporariamente habilitado para inserir a mensagem e depois desabilitado novamente.
-        """
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')  # habilita temporariamente para inserção
 
@@ -2725,8 +2666,8 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
 
+    # Copia texto da mensagem clicada.
     def _on_copy_click(self, event):
-        """Copia texto da mensagem clicada."""
         try:
             idx = self.chat_text.index(f'@{event.x},{event.y}')
             # Pega a linha atual e copia
@@ -2739,38 +2680,35 @@ class ChatWindow(tk.Toplevel):
         except Exception:
             log.exception('Erro ao copiar mensagem')
 
+    # Chamado pelo app quando uma nova mensagem é recebida do contato.
+    #
+    # Exibe a mensagem no chat, marca como lida no banco e toca o bipe do sistema
+    # se a janela não estiver em foco (útil para notificar o usuário em background).
+    # Este método é sempre chamado na main thread via app._safe().
     def receive_message(self, content, timestamp=None):
-        """Chamado pelo app quando uma nova mensagem é recebida do contato.
-
-        Exibe a mensagem no chat, marca como lida no banco e toca o bipe do sistema
-        se a janela não estiver em foco (útil para notificar o usuário em background).
-        Este método é sempre chamado na main thread via app._safe().
-        """
         self._append_message(self.peer_name, content, False, timestamp=timestamp)
         self.messenger.mark_as_read(self.peer_id)
         if self.focus_get() is None:
             self.bell()   # bipe do sistema quando a janela está sem foco
 
+    # Atualiza o label de 'está digitando...' no cabeçalho da janela.
+    #
+    # Chamado via callbacks de rede quando recebe MT_TYPING do contato.
+    # Exibe o nome do peer + ' está digitando...' ou limpa o label.
     def set_typing(self, is_typing):
-        """Atualiza o label de 'está digitando...' no cabeçalho da janela.
-
-        Chamado via callbacks de rede quando recebe MT_TYPING do contato.
-        Exibe o nome do peer + ' está digitando...' ou limpa o label.
-        """
         self.lbl_typing.config(
             text=f'{self.peer_name} {_t("typing")}' if is_typing else '')
 
+    # Envia a mensagem ao pressionar Enter (sem Shift). Shift+Enter = nova linha.
     def _on_enter(self, event):
-        """Envia a mensagem ao pressionar Enter (sem Shift). Shift+Enter = nova linha."""
         if not (event.state & 0x1):  # 0x1 = bit do Shift — se não pressionado, envia
             self._send_message()
             return 'break'  # consome evento para não inserir nova linha
 
+    # Callback de teclado: detecta emojis digitados e gerencia indicador de digitação.
+    # Se o último caractere digitado for um emoji, substitui por imagem colorida.
+    # Envia notificação 'digitando' para o contato e agenda cancelamento após 2s de inatividade.
     def _on_key(self, event):
-        """Callback de teclado: detecta emojis digitados e gerencia indicador de digitação.
-        Se o último caractere digitado for um emoji, substitui por imagem colorida.
-        Envia notificação 'digitando' para o contato e agenda cancelamento após 2s de inatividade.
-        """
         try:
             # Detectar emoji digitado via teclado e substituir por imagem colorida
             idx = self.entry.index('insert')  # posição atual do cursor
@@ -2797,18 +2735,17 @@ class ChatWindow(tk.Toplevel):
         except Exception:
             log.exception('Erro em _on_key')
 
+    # Para o indicador de digitação e notifica o contato.
     def _stop_typing(self):
-        """Para o indicador de digitação e notifica o contato."""
         self._was_typing = False  # redefine flag
         # Notifica o contato que paramos de digitar (em thread separada)
         threading.Thread(target=self.messenger.send_typing,
                          args=(self.peer_id, False),
                          daemon=True).start()
 
+    # Envia o conteúdo do campo de entrada para o contato.
+    # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
     def _send_message(self):
-        """Envia o conteúdo do campo de entrada para o contato.
-        Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
-        """
         content = self._get_entry_content()  # reconstrói texto + emojis do campo
         if not content:
             return  # não envia mensagens vazias
@@ -2819,18 +2756,17 @@ class ChatWindow(tk.Toplevel):
         threading.Thread(target=self.messenger.send_message,
                          args=(self.peer_id, content), daemon=True).start()
 
+    # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
     def _send_file(self):
-        """Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato."""
         filepath = filedialog.askopenfilename(parent=self, title='Enviar arquivo')
         if filepath:
             self.app._start_file_send(self.peer_id, filepath)  # inicia transferência
 
+    # Abre janela de histórico completo com as últimas 500 mensagens.
+    #
+    # Exibe em formato texto puro: [YYYY-MM-DD HH:MM:SS] Nome: mensagem.
+    # Somente leitura (state='disabled'). Fecha com Escape.
     def _show_history(self):
-        """Abre janela de histórico completo com as últimas 500 mensagens.
-
-        Exibe em formato texto puro: [YYYY-MM-DD HH:MM:SS] Nome: mensagem.
-        Somente leitura (state='disabled'). Fecha com Escape.
-        """
         history = self.messenger.get_chat_history(self.peer_id, limit=500)
         win = tk.Toplevel(self)
         win.title(f'Histórico - {self.peer_name}')
@@ -2847,20 +2783,19 @@ class ChatWindow(tk.Toplevel):
             txt.insert('end', f'[{ts}] {who}: {m["content"]}\n')
         txt.configure(state='disabled')
 
+    # Abre o diálogo de configuração de fonte, capturando quaisquer exceções.
     def _change_font(self):
-        """Abre o diálogo de configuração de fonte, capturando quaisquer exceções."""
         try:
             self._change_font_impl()
         except Exception:
             log.exception('Erro ao abrir dialogo de fonte')
 
+    # Implementação do diálogo de fonte.
+    #
+    # Permite escolher família (Listbox com todas as fontes do sistema),
+    # tamanho (radiobuttons) e cor (colorchooser). Preview em tempo real.
+    # Aplica ao tag 'msg' do chat e ao campo de entrada desta janela.
     def _change_font_impl(self):
-        """Implementação do diálogo de fonte.
-
-        Permite escolher família (Listbox com todas as fontes do sistema),
-        tamanho (radiobuttons) e cor (colorchooser). Preview em tempo real.
-        Aplica ao tag 'msg' do chat e ao campo de entrada desta janela.
-        """
         win = tk.Toplevel(self)
         win.title(_t('font_btn'))
         win.resizable(False, False)
@@ -2982,15 +2917,15 @@ class ChatWindow(tk.Toplevel):
         tk.Button(btn_frame, text='Cancelar', font=FONT, width=8,
                   command=win.destroy).pack(side='right')
 
+    # Abre o seletor de emojis, com captura de exceções.
     def _show_emoji_picker(self):
-        """Abre o seletor de emojis, com captura de exceções."""
         try:
             self._show_emoji_picker_impl()
         except Exception:
             log.exception('Erro ao abrir emoji picker')
 
+    # Cria ícone usando Segoe MDL2 Assets (fonte de ícones nativa do Windows).
     def _create_mdl2_icon(self, char, size=18, color='#718096'):
-        """Cria ícone usando Segoe MDL2 Assets (fonte de ícones nativa do Windows)."""
         try:
             from PIL import ImageDraw, ImageFont
             font_path = 'C:/Windows/Fonts/segmdl2.ttf'
@@ -3014,8 +2949,8 @@ class ChatWindow(tk.Toplevel):
             log.exception('Erro ao criar ícone MDL2')
             return None
 
+    # Desenha ícone de clipe/anexo profissional com PIL.
     def _create_clip_icon(self, size, color, bg_color):
-        """Desenha ícone de clipe/anexo profissional com PIL."""
         try:
             from PIL import ImageDraw
             s = size * 8  # super-sample para anti-alias
@@ -3054,13 +2989,12 @@ class ChatWindow(tk.Toplevel):
             log.exception('Erro ao criar ícone de clipe')
             return None
 
+    # Renderiza um emoji Unicode como PhotoImage colorida via PIL (método de instância).
+    #
+    # Versão de instância usada por _get_chat_emoji() e _get_entry_emoji() com
+    # cache por janela. Usa seguiemj.ttf com embedded_color=True para renderizar
+    # os emojis com suas cores reais (tecnologia COLR/CPAL da fonte Segoe UI Emoji).
     def _render_emoji_image(self, emoji_char, size=28):
-        """Renderiza um emoji Unicode como PhotoImage colorida via PIL (método de instância).
-
-        Versão de instância usada por _get_chat_emoji() e _get_entry_emoji() com
-        cache por janela. Usa seguiemj.ttf com embedded_color=True para renderizar
-        os emojis com suas cores reais (tecnologia COLR/CPAL da fonte Segoe UI Emoji).
-        """
         if not HAS_PIL:
             return None
         try:
@@ -3085,13 +3019,12 @@ class ChatWindow(tk.Toplevel):
             log.exception('Erro ao renderizar emoji')
             return None
 
+    # Cria o popup do seletor de emojis com grade clicável e campo de busca.
+    #
+    # Posicionado próximo ao botão de emoji. Cada emoji é exibido como imagem PIL
+    # colorida (ou texto Unicode como fallback). Clicar num emoji insere-o no campo
+    # de entrada via _entry_insert_emoji(). Fecha ao clicar fora (FocusOut).
     def _show_emoji_picker_impl(self):
-        """Cria o popup do seletor de emojis com grade clicável e campo de busca.
-
-        Posicionado próximo ao botão de emoji. Cada emoji é exibido como imagem PIL
-        colorida (ou texto Unicode como fallback). Clicar num emoji insere-o no campo
-        de entrada via _entry_insert_emoji(). Fecha ao clicar fora (FocusOut).
-        """
         popup = tk.Toplevel(self)
         popup.title('Emoticons')
         popup.resizable(False, False)
@@ -3521,8 +3454,8 @@ class ChatWindow(tk.Toplevel):
 # =============================================================
 #  GROUP CHAT WINDOW
 # =============================================================
+# Janela de Bate Papo em grupo (multi-participantes) - estilo LAN Messenger.
 class GroupChatWindow(tk.Toplevel):
-    """Janela de Bate Papo em grupo (multi-participantes) - estilo LAN Messenger."""
 
     def __init__(self, app, group_id, group_name, group_type='temp'):
         super().__init__(app.root)
@@ -3717,6 +3650,47 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.tag_configure('msg', font=('Segoe UI', 10),
                                      foreground=t.get('fg_msg', '#1a202c'))
 
+        # Tags para modo bolha (WhatsApp style) — mesmas do ChatWindow
+        msg_my_bg = t.get('msg_my_bg', '#e8f0fe')
+        msg_peer_bg = t.get('msg_peer_bg', '#f0f0f0')
+        fg_time = '#718096'
+        self.chat_text.tag_configure('my_bubble',
+                                     background=msg_my_bg,
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80,
+                                     spacing1=6, spacing3=2)
+        self.chat_text.tag_configure('my_bubble_name',
+                                     background=msg_my_bg,
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80,
+                                     spacing1=6)
+        self.chat_text.tag_configure('my_bubble_time',
+                                     background=msg_my_bg,
+                                     foreground=fg_time,
+                                     font=('Segoe UI', 7),
+                                     justify='right', rmargin=8,
+                                     lmargin1=80, lmargin2=80)
+        self.chat_text.tag_configure('peer_bubble',
+                                     background=msg_peer_bg,
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80,
+                                     spacing1=6, spacing3=2)
+        self.chat_text.tag_configure('peer_bubble_name',
+                                     background=msg_peer_bg,
+                                     foreground='#cc2222',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80,
+                                     spacing1=6)
+        self.chat_text.tag_configure('peer_bubble_time',
+                                     background=msg_peer_bg,
+                                     foreground=fg_time,
+                                     font=('Segoe UI', 7),
+                                     justify='left', lmargin1=8,
+                                     lmargin2=8, rmargin=80)
+
         # ===== Participants panel (right) =====
         self._panel = tk.Frame(self._paned, bg='#f8fafc', width=250)
         self._panel.pack_propagate(False)
@@ -3775,8 +3749,8 @@ class GroupChatWindow(tk.Toplevel):
         self._lbl_count.config(text=f'{len(self._members)} participante(s)')
         self._add_participant_widget(uid)
 
+    # Remove membro do grupo e do painel de participantes.
     def remove_member(self, uid):
-        """Remove membro do grupo e do painel de participantes."""
         if uid in self._members:
             del self._members[uid]
         if uid in self._participant_widgets:
@@ -3787,8 +3761,8 @@ class GroupChatWindow(tk.Toplevel):
             del self._participant_widgets[uid]
         self._lbl_count.config(text=f'{len(self._members)} participante(s)')
 
+    # Atualiza info de um membro (nota, status, etc).
     def update_member_info(self, uid, info):
-        """Atualiza info de um membro (nota, status, etc)."""
         if uid not in self._members:
             return
         self._members[uid]['display_name'] = info.get('display_name',
@@ -3797,8 +3771,8 @@ class GroupChatWindow(tk.Toplevel):
         self._members[uid]['note'] = info.get('note', '')
         self._refresh_participant_widget(uid)
 
+    # Cria widget de participante no painel.
     def _add_participant_widget(self, uid):
-        """Cria widget de participante no painel."""
         member = self._members[uid]
         name = member['display_name']
         note = member.get('note', '')
@@ -3831,8 +3805,8 @@ class GroupChatWindow(tk.Toplevel):
             'note_lbl': note_lbl, 'avatar_lbl': av_lbl
         }
 
+    # Atualiza widget de participante existente.
     def _refresh_participant_widget(self, uid):
-        """Atualiza widget de participante existente."""
         if uid not in self._participant_widgets:
             return
         member = self._members[uid]
@@ -3849,8 +3823,8 @@ class GroupChatWindow(tk.Toplevel):
                                              member.get('status', 'online'))
         w['avatar_lbl'].config(image=avatar)
 
+    # Cria avatar 30x30 para painel de participantes.
     def _create_member_avatar(self, uid, name, status='online'):
-        """Cria avatar 30x30 para painel de participantes."""
         size = 30
         dot_size = 8
         dot_colors = {
@@ -3993,10 +3967,9 @@ class GroupChatWindow(tk.Toplevel):
         _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
 
     # ===== Emoji — renderização e cache de emojis coloridos =====
+    # Renderiza um emoji Unicode como imagem colorida (PIL + seguiemj.ttf).
+    # Igual à versão module-level _render_color_emoji(), mas como método de instância.
     def _render_emoji_image(self, emoji_char, size=28):
-        """Renderiza um emoji Unicode como imagem colorida (PIL + seguiemj.ttf).
-        Igual à versão module-level _render_color_emoji(), mas como método de instância.
-        """
         if not HAS_PIL:
             return None
         try:
@@ -4021,8 +3994,8 @@ class GroupChatWindow(tk.Toplevel):
         except Exception:
             return None
 
+    # Retorna emoji renderizado para a área de chat (20px), com cache.
     def _get_chat_emoji(self, emoji_char):
-        """Retorna emoji renderizado para a área de chat (20px), com cache."""
         if emoji_char in self._chat_emoji_cache:
             return self._chat_emoji_cache[emoji_char]  # Já renderizado antes
         img = self._render_emoji_image(emoji_char, size=20)
@@ -4030,8 +4003,8 @@ class GroupChatWindow(tk.Toplevel):
             self._chat_emoji_cache[emoji_char] = img  # Salva no cache
         return img
 
+    # Retorna emoji renderizado para o campo de entrada (18px), com cache.
     def _get_entry_emoji(self, emoji_char):
-        """Retorna emoji renderizado para o campo de entrada (18px), com cache."""
         if emoji_char in self._entry_emoji_cache:
             return self._entry_emoji_cache[emoji_char]
         img = self._render_emoji_image(emoji_char, size=18)
@@ -4039,10 +4012,9 @@ class GroupChatWindow(tk.Toplevel):
             self._entry_emoji_cache[emoji_char] = img
         return img
 
+    # Insere um emoji como imagem no campo de entrada.
+    # Se PIL não está disponível, insere como texto Unicode puro.
     def _entry_insert_emoji(self, emoji_char, pos='insert'):
-        """Insere um emoji como imagem no campo de entrada.
-        Se PIL não está disponível, insere como texto Unicode puro.
-        """
         img = self._get_entry_emoji(emoji_char)
         if img:
             # Cria nome único para a imagem e mapeia de volta para o caractere emoji
@@ -4052,10 +4024,9 @@ class GroupChatWindow(tk.Toplevel):
         else:
             self.entry.insert(pos, emoji_char)  # Fallback: texto puro
 
+    # Extrai o conteúdo do campo de entrada, convertendo imagens de volta para texto.
+    # Percorre o dump do widget Text e reconstrói a string com emojis Unicode.
     def _get_entry_content(self):
-        """Extrai o conteúdo do campo de entrada, convertendo imagens de volta para texto.
-        Percorre o dump do widget Text e reconstrói a string com emojis Unicode.
-        """
         result = []
         for key, value, index in self.entry.dump('1.0', 'end', image=True, text=True):
             if key == 'text':
@@ -4065,10 +4036,9 @@ class GroupChatWindow(tk.Toplevel):
                 result.append(emoji)
         return ''.join(result).strip()
 
+    # Insere texto na área de chat, substituindo emojis Unicode por imagens coloridas.
+    # Usa _EMOJI_RE para separar texto e emojis, inserindo cada um com a tag correta.
     def _insert_text_with_emojis(self, text, tag):
-        """Insere texto na área de chat, substituindo emojis Unicode por imagens coloridas.
-        Usa _EMOJI_RE para separar texto e emojis, inserindo cada um com a tag correta.
-        """
         parts = _EMOJI_RE.split(text)    # Partes de texto entre emojis
         emojis = _EMOJI_RE.findall(text)  # Lista de emojis encontrados
         for i, part in enumerate(parts):
@@ -4081,8 +4051,8 @@ class GroupChatWindow(tk.Toplevel):
                 else:
                     self.chat_text.insert('end', emojis[i], tag)  # Fallback: emoji como texto
 
+    # Abre emoji picker (reutiliza logica do ChatWindow).
     def _show_emoji_picker(self):
-        """Abre emoji picker (reutiliza logica do ChatWindow)."""
         popup = tk.Toplevel(self)
         popup.title('Emoticons')
         popup.resizable(False, False)
@@ -4203,37 +4173,59 @@ class GroupChatWindow(tk.Toplevel):
         self.system_message(f'Enviando "{filename}" para o grupo...')
 
     # ===== Messages — envio e exibição de mensagens no grupo =====
+    # Exibe mensagem de sistema no chat (ex: 'X entrou/saiu do grupo').
     def system_message(self, text):
-        """Exibe mensagem de sistema no chat (ex: 'X entrou/saiu do grupo')."""
         self.chat_text.configure(state='normal')   # Desbloqueia para inserir
         self.chat_text.insert('end', f'\u2014 {text} \u2014\n\n', 'sys_msg')  # Traços em volta
         self.chat_text.configure(state='disabled')  # Bloqueia edição novamente
         self.chat_text.see('end')  # Rola para a última mensagem
 
+    # Adiciona uma mensagem na area de chat com nome, horario e emojis coloridos.
+    # Suporta modo linear (padrao) e modo bolha (WhatsApp style) conforme preferencia.
     def _append_message(self, sender, text, is_mine, timestamp=None):
-        """Adiciona uma mensagem na área de chat com nome, horário e emojis coloridos."""
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
-        name_tag = 'my_name' if is_mine else 'peer_name'  # Azul para mim, vermelho para peer
-        self.chat_text.insert('end', sender, name_tag)     # Nome do remetente
-        self.chat_text.insert('end', f'  {ts}\n', 'time')  # Horário ao lado do nome
-        self._insert_text_with_emojis(text, 'msg')          # Conteúdo com emojis coloridos
-        self.chat_text.insert('end', '\n\n')                 # Espaçamento entre mensagens
+
+        style = self.app.messenger.db.get_setting('msg_style', 'linear')
+
+        if style == 'bubble':
+            # --- Modo bolha (WhatsApp-style) ---
+            if is_mine:
+                name_tag = 'my_bubble_name'
+                time_tag = 'my_bubble_time'
+                msg_tag = 'my_bubble'
+            else:
+                name_tag = 'peer_bubble_name'
+                time_tag = 'peer_bubble_time'
+                msg_tag = 'peer_bubble'
+            self.chat_text.insert('end', f'{sender}', name_tag)
+            self.chat_text.insert('end', f'  {ts}\n', time_tag)
+            self._insert_text_with_emojis(text, msg_tag)
+            self.chat_text.insert('end', '\n', msg_tag)
+        else:
+            # --- Modo linear (padrao LAN Messenger) ---
+            name_tag = 'my_name' if is_mine else 'peer_name'
+            self.chat_text.insert('end', sender, name_tag)
+            self.chat_text.insert('end', f'  {ts}\n', 'time')
+            self._insert_text_with_emojis(text, 'msg')
+            self.chat_text.insert('end', '\n')
+
+        self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
+    # Callback chamado ao receber mensagem de outro membro do grupo.
     def receive_message(self, display_name, content, timestamp=None):
-        """Callback chamado ao receber mensagem de outro membro do grupo."""
         self._append_message(display_name, content, False, timestamp)
 
+    # Enter envia mensagem; Shift+Enter insere nova linha.
     def _on_enter(self, event):
-        """Enter envia mensagem; Shift+Enter insere nova linha."""
         if not (event.state & 1):  # state & 1 = Shift pressionado
             self._send_message()
             return 'break'  # Impede inserção de nova linha
 
+    # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
-        """Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto)."""
         content = self._get_entry_content()  # Extrai texto + emojis do campo
         if not content:
             return
@@ -4245,8 +4237,8 @@ class GroupChatWindow(tk.Toplevel):
                          args=(self.group_id, content),
                          daemon=True).start()
 
+    # Confirmação para sair de grupo fixo.
     def _confirm_leave(self):
-        """Confirmação para sair de grupo fixo."""
         if messagebox.askyesno('Sair do Grupo',
                                 'Deseja sair do grupo permanentemente?',
                                 parent=self):
@@ -4268,8 +4260,8 @@ class GroupChatWindow(tk.Toplevel):
                 # Não: fecha janela mas permanece no grupo
                 self.withdraw()
 
+    # Sai do grupo e destrói a janela.
     def _leave_group(self):
-        """Sai do grupo e destrói a janela."""
         self.app.messenger.leave_group(self.group_id)
         if self.group_id in self.app.group_windows:
             del self.app.group_windows[self.group_id]
@@ -4286,12 +4278,11 @@ class GroupChatWindow(tk.Toplevel):
 # =============================================================
 #  MAIN WINDOW
 # =============================================================
+# Janela principal do MB Chat.
+#
+# Contém o TreeView de contatos, barra de status, nota pessoal,
+# menus e gerencia todas as janelas filhas (chat, grupo, preferências).
 class LanMessengerApp:
-    """Janela principal do MB Chat.
-
-    Contém o TreeView de contatos, barra de status, nota pessoal,
-    menus e gerencia todas as janelas filhas (chat, grupo, preferências).
-    """
     def __init__(self):
         self.root = tk.Tk()                  # Janela principal tkinter
         self.root.title(APP_NAME)            # "MB Chat" na barra de título
@@ -4341,8 +4332,8 @@ class LanMessengerApp:
         # Init pesado deferido: janela aparece rapido, depois carrega rede/DB/tray
         self.root.after_idle(self._deferred_init)
 
+    # Inicializacao deferida - roda apos a janela aparecer.
     def _deferred_init(self):
-        """Inicializacao deferida - roda apos a janela aparecer."""
         self._init_messenger()
 
         # Carregar nota salva do banco
@@ -4374,8 +4365,8 @@ class LanMessengerApp:
         if HAS_TRAY and HAS_PIL:
             self.root.after(50, self._start_tray)
 
+    # Posiciona a janela no canto direito da tela, centralizada na vertical.
     def _position_right(self):
-        """Posiciona a janela no canto direito da tela, centralizada na vertical."""
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
@@ -4410,8 +4401,8 @@ class LanMessengerApp:
             self.root.after(0, func, *args, **kwargs)
         return wrapper
 
+    # Atualiza textos da UI apos mudanca de idioma.
     def _rebuild_ui_language(self):
-        """Atualiza textos da UI apos mudanca de idioma."""
         # Rebuild menu bar
         menubar = tk.Menu(self.root, font=FONT)
 
@@ -4462,8 +4453,8 @@ class LanMessengerApp:
         self.ctx_menu.entryconfigure(1, label=_t('ctx_send_file'))
         self.ctx_menu.entryconfigure(3, label=_t('ctx_info'))
 
+    # Aplica um tema em toda a interface.
     def apply_theme(self, theme_name):
-        """Aplica um tema em toda a interface."""
         t = THEMES.get(theme_name, THEMES['MB Contabilidade'])
         self._theme = t
         self._current_theme = theme_name
@@ -4542,9 +4533,12 @@ class LanMessengerApp:
         # --- Chat windows abertas ---
         for cw in self.chat_windows.values():
             self._apply_theme_to_chat(cw, t)
+        # --- Group windows abertas ---
+        for gw in self.group_windows.values():
+            self._apply_theme_to_group_chat(gw, t)
 
+    # Aplica cores basicas em frames e labels recursivamente.
     def _apply_theme_recursive(self, widget, t):
-        """Aplica cores basicas em frames e labels recursivamente."""
         # Skip navy user panel and its children
         if getattr(widget, '_navy_panel', False):
             return
@@ -4572,8 +4566,8 @@ class LanMessengerApp:
         for child in widget.winfo_children():
             self._apply_theme_recursive(child, t)
 
+    # Aplica tema em uma ChatWindow.
     def _apply_theme_to_chat(self, cw, t):
-        """Aplica tema em uma ChatWindow."""
         try:
             cw.configure(bg=t['bg_window'])
             chat_bg = t.get('bg_chat', t['bg_white'])
@@ -4605,6 +4599,28 @@ class LanMessengerApp:
             cw.lbl_typing.configure(bg=header_bg, fg=header_sub)
         except Exception:
             log.exception('Erro ao aplicar tema no chat')
+
+    # Aplica tema em uma GroupChatWindow (bolhas + cores)
+    def _apply_theme_to_group_chat(self, gw, t):
+        try:
+            chat_bg = t.get('bg_chat', t['bg_white'])
+            gw.chat_text.configure(bg=chat_bg, fg=t['fg_msg'])
+            gw.chat_text.tag_configure('time', foreground=t['fg_time'])
+            gw.chat_text.tag_configure('my_name', foreground=t['fg_my_name'])
+            gw.chat_text.tag_configure('peer_name', foreground=t['fg_peer_name'])
+            gw.chat_text.tag_configure('msg', foreground=t['fg_msg'])
+            msg_my_bg = t.get('msg_my_bg', '#e8f0fe')
+            msg_peer_bg = t.get('msg_peer_bg', '#f0f0f0')
+            for tag_suffix in ('', '_name', '_time'):
+                gw.chat_text.tag_configure(f'my_bubble{tag_suffix}',
+                                           background=msg_my_bg)
+                gw.chat_text.tag_configure(f'peer_bubble{tag_suffix}',
+                                           background=msg_peer_bg)
+            input_bg = t.get('bg_input', t['bg_white'])
+            gw.entry.configure(bg=input_bg, fg=t['fg_black'],
+                               insertbackground=t['fg_black'])
+        except Exception:
+            pass
 
     def _build_ui(self):
         # Menu Bar
@@ -4914,13 +4930,12 @@ class LanMessengerApp:
         self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)  # Info do usuário
 
 
+    # Cria imagens de bolinha colorida (10x10px) para cada status possível.
+    #
+    # Utiliza equação de círculo (dx²+dy² <= r²) pixel a pixel para
+    # desenhar bolinhas suaves sem precisar do PIL.
+    # As imagens ficam salvas em self._status_dots[status].
     def _create_status_dots(self):
-        """Cria imagens de bolinha colorida (10x10px) para cada status possível.
-
-        Utiliza equação de círculo (dx²+dy² <= r²) pixel a pixel para
-        desenhar bolinhas suaves sem precisar do PIL.
-        As imagens ficam salvas em self._status_dots[status].
-        """
         # Mapa de status -> cor hexadecimal da bolinha
         dot_colors = {
             'online': '#48bb78',   # verde
@@ -4941,8 +4956,8 @@ class LanMessengerApp:
         # Cache de imagens de avatar por contato (uid_status -> PhotoImage)
         self._contact_avatars = {}
 
+    # Cria imagem de avatar circular com status dot para o treeview.
     def _create_contact_avatar(self, uid, name, status='online'):
-        """Cria imagem de avatar circular com status dot para o treeview."""
         size = 36
         dot_size = 10
         dot_colors = {
@@ -5017,13 +5032,12 @@ class LanMessengerApp:
         self._contact_avatars[f'{uid}_{status}'] = photo
         return photo
 
+    # Carrega todos os contatos do banco (inclusive offline) no TreeView ao iniciar.
+    #
+    # Chamado uma vez na inicializacao para popular a lista lateral com
+    # contatos previamente vistos. Online -> secao Geral. Offline -> secao Offline.
+    # Tambem inicializa peer_info com dados do banco.
     def _load_saved_contacts(self):
-        """Carrega todos os contatos do banco (inclusive offline) no TreeView ao iniciar.
-
-        Chamado uma vez na inicializacao para popular a lista lateral com
-        contatos previamente vistos. Online -> secao Geral. Offline -> secao Offline.
-        Tambem inicializa peer_info com dados do banco.
-        """
         contacts = self.messenger.db.get_contacts(online_only=False)  # busca todos do banco
         for c in contacts:
             uid = c['user_id']
@@ -5051,8 +5065,8 @@ class LanMessengerApp:
         self._update_offline_count()  # recalcula e exibe 'Offline (N)'
 
     # --- Avatar ---
+    # Desenha avatar padrao (circulo colorido com letra U) no canvas do header.
     def _draw_default_avatar(self, idx):
-        """Desenha avatar padrao (circulo colorido com letra U) no canvas do header."""
         self.avatar_canvas.delete('all')   # limpa canvas antes de redesenhar
         color, _ = AVATAR_COLORS[idx % len(AVATAR_COLORS)]  # cor baseada no indice
         self.avatar_canvas.create_oval(2, 2, 38, 38, fill=color,
@@ -5060,13 +5074,12 @@ class LanMessengerApp:
         self.avatar_canvas.create_text(20, 20, text='U', fill='white',
                                        font=('Segoe UI', 14, 'bold'))  # letra U centralizada
 
+    # Atualiza o canvas de avatar do header com foto ou circulo colorido do usuario.
+    #
+    # Tenta carregar foto personalizada do banco (custom_avatar = caminho do arquivo).
+    # Se nao houver ou falhar, desenha circulo colorido com a inicial do nome.
+    # Suporta PIL (recorte circular antialias) e fallback sem PIL (oval nativa).
     def _update_avatar(self):
-        """Atualiza o canvas de avatar do header com foto ou circulo colorido do usuario.
-
-        Tenta carregar foto personalizada do banco (custom_avatar = caminho do arquivo).
-        Se nao houver ou falhar, desenha circulo colorido com a inicial do nome.
-        Suporta PIL (recorte circular antialias) e fallback sem PIL (oval nativa).
-        """
         db = self.messenger.db                              # atalho para o banco local
         idx = int(db.get_setting('avatar_index', '0'))    # indice de cor padrao do usuario
         custom = db.get_setting('custom_avatar', '')      # caminho do arquivo de foto (ou vazio)
@@ -5119,24 +5132,23 @@ class LanMessengerApp:
                                            font=('Segoe UI', 14, 'bold'))
 
     # --- Search bar ---
+    # Remove o placeholder quando o campo de busca de contatos recebe foco.
     def _search_focus_in(self, e):
-        """Remove o placeholder quando o campo de busca de contatos recebe foco."""
         if self._search_entry.get() == 'Buscar contatos...':  # so limpa se for o placeholder
             self._search_entry.delete(0, 'end')               # apaga o texto placeholder
             self._search_entry.config(fg='#1a202c')           # cor de texto normal
 
+    # Reinsere o placeholder quando a busca perde foco e esta vazia.
     def _search_focus_out(self, e):
-        """Reinsere o placeholder quando a busca perde foco e esta vazia."""
         if not self._search_entry.get().strip():               # campo vazio?
             self._search_entry.insert(0, 'Buscar contatos...')  # placeholder de volta
             self._search_entry.config(fg='#a0aec0')             # cor cinza do placeholder
 
+    # Filtra contatos visiveis no TreeView conforme texto da barra de busca.
+    #
+    # Busca vazia ou placeholder: restaura todos os contatos no grupo correto.
+    # Texto digitado: oculta (detach) contatos cujo nome nao contem o texto.
     def _filter_contacts(self, *args):
-        """Filtra contatos visiveis no TreeView conforme texto da barra de busca.
-
-        Busca vazia ou placeholder: restaura todos os contatos no grupo correto.
-        Texto digitado: oculta (detach) contatos cujo nome nao contem o texto.
-        """
         query = self._search_var.get().strip().lower()  # texto de busca em minusculas
         if query == 'buscar contatos...' or not query:  # busca vazia ou placeholder
             # Restaurar todos os contatos nos grupos corretos (online->Geral, offline->Offline)
@@ -5155,19 +5167,18 @@ class LanMessengerApp:
                 self.tree.detach(iid)  # oculta temporariamente do TreeView
 
     # --- Note ---
+    # Remove o placeholder da nota pessoal quando o campo recebe foco.
     def _note_focus_in(self, e):
-        """Remove o placeholder da nota pessoal quando o campo recebe foco."""
         if self.note_entry.get() in ('Digite uma nota', 'Type a note',
                                         _t('note_placeholder')):  # e um placeholder?
             self.note_entry.delete(0, 'end')      # limpa o placeholder
             self.note_entry.config(fg='#ffffff')  # cor de texto real (branco)
 
+    # Salva ou limpa nota pessoal quando o campo perde foco.
+    #
+    # Campo vazio: restaura placeholder e envia nota vazia via rede.
+    # Texto mudou: persiste no banco local e propaga via UDP announce.
     def _note_focus_out(self, e):
-        """Salva ou limpa nota pessoal quando o campo perde foco.
-
-        Campo vazio: restaura placeholder e envia nota vazia via rede.
-        Texto mudou: persiste no banco local e propaga via UDP announce.
-        """
         text = self.note_entry.get().strip()  # texto atual sem espacos nas bordas
         if not text:
             self.note_entry.insert(0, _t('note_placeholder'))
@@ -5182,12 +5193,11 @@ class LanMessengerApp:
                 self._last_saved_note = text            # atualiza cache local
                 self.messenger.change_note(text)        # persiste no banco e propaga via UDP
 
+    # Salva nota pessoal ao pressionar Enter; salva no banco e propaga via UDP.
+    #
+    # Ignora placeholders. Salva apenas se o texto mudou desde o ultimo save.
+    # Remove foco do campo apos salvar.
     def _note_save(self, e=None):
-        """Salva nota pessoal ao pressionar Enter; salva no banco e propaga via UDP.
-
-        Ignora placeholders. Salva apenas se o texto mudou desde o ultimo save.
-        Remove foco do campo apos salvar.
-        """
         text = self.note_entry.get().strip()  # texto atual sem espacos
         placeholders = ('Digite uma nota', 'Type a note', _t('note_placeholder'))
         note = '' if text in placeholders else text
@@ -5197,12 +5207,11 @@ class LanMessengerApp:
         # Tirar foco do entry
         self.root.focus_set()
 
+    # Callback do combobox de status: traduz label para codigo e propaga via UDP.
+    #
+    # Converte o texto exibido ('Disponivel') para o codigo interno ('online')
+    # e chama messenger.change_status() que atualiza o proximo UDP announce.
     def _on_status_change(self, e=None):
-        """Callback do combobox de status: traduz label para codigo e propaga via UDP.
-
-        Converte o texto exibido ('Disponivel') para o codigo interno ('online')
-        e chama messenger.change_status() que atualiza o proximo UDP announce.
-        """
         m = {_t('status_available'): 'online',  # 'Disponivel' -> 'online'
              _t('status_away'): 'away',
              _t('status_busy'): 'busy',
@@ -5210,12 +5219,11 @@ class LanMessengerApp:
         self.messenger.change_status(m.get(self.status_var.get(), 'online'))  # envia via UDP
 
     # --- Tree ---
+    # Retorna uid do contato selecionado no TreeView, ou None se invalido.
+    #
+    # Retorna None para: sem selecao, headers de secao, grupos, ou contatos
+    # offline (a menos que allow_offline=True seja passado explicitamente).
     def _get_selected_peer(self, allow_offline=False):
-        """Retorna uid do contato selecionado no TreeView, ou None se invalido.
-
-        Retorna None para: sem selecao, headers de secao, grupos, ou contatos
-        offline (a menos que allow_offline=True seja passado explicitamente).
-        """
         sel = self.tree.selection()  # lista de items atualmente selecionados
         if not sel:
             return None
@@ -5235,13 +5243,12 @@ class LanMessengerApp:
                 return uid  # retorna o uid do contato selecionado
         return None  # item nao encontrado em peer_items
 
+    # Adiciona ou atualiza contato no TreeView e em peer_info.
+    #
+    # Existente: atualiza texto/tag/avatar e move para grupo correto (Geral/Offline).
+    # Novo: insere como item no TreeView no grupo correspondente ao status.
+    # Tambem propaga atualizacao de nota para janelas de grupo abertas.
     def _add_contact(self, uid, info):
-        """Adiciona ou atualiza contato no TreeView e em peer_info.
-
-        Existente: atualiza texto/tag/avatar e move para grupo correto (Geral/Offline).
-        Novo: insere como item no TreeView no grupo correspondente ao status.
-        Tambem propaga atualizacao de nota para janelas de grupo abertas.
-        """
         status = info.get('status', 'online')  # status atual do contato recebido
         tag = status if status in ('online', 'away', 'busy') else 'offline'
         name = info.get('display_name', 'Unknown')
@@ -5268,8 +5275,8 @@ class LanMessengerApp:
             if uid in gw._members:               # este contato esta no grupo?
                 gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
+    # Marca peer como offline e move para seção Offline.
     def _remove_contact(self, uid):
-        """Marca peer como offline e move para seção Offline."""
         if uid in self.peer_items:
             name = self.peer_info.get(uid, {}).get('display_name', 'Unknown')
             avatar = self._create_contact_avatar(uid, name, 'offline')
@@ -5280,13 +5287,13 @@ class LanMessengerApp:
             self.tree.move(self.peer_items[uid], self.group_offline, 'end')
             self._update_offline_count()
 
+    # Atualiza texto do grupo Offline com contagem.
     def _update_offline_count(self):
-        """Atualiza texto do grupo Offline com contagem."""
         children = self.tree.get_children(self.group_offline)
         self.tree.item(self.group_offline, text=f'Offline ({len(children)})')
 
+    # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
-        """Adiciona grupo à seção Grupos do TreeView."""
         if group_id in self._group_tree_items:
             return
         suffix = '(Fixo)' if group_type == 'fixed' else '(Temporário)'
@@ -5295,8 +5302,8 @@ class LanMessengerApp:
                                tags=('group_item',))
         self._group_tree_items[group_id] = iid
 
+    # Remove grupo do TreeView.
     def _remove_group_from_tree(self, group_id):
-        """Remove grupo do TreeView."""
         if group_id in self._group_tree_items:
             try:
                 self.tree.delete(self._group_tree_items[group_id])
@@ -5304,26 +5311,25 @@ class LanMessengerApp:
                 pass
             del self._group_tree_items[group_id]
 
+    # Carrega grupos fixos do DB e exibe no TreeView.
     def _load_saved_groups(self):
-        """Carrega grupos fixos do DB e exibe no TreeView."""
         groups = self.messenger.load_saved_groups()
         for g in groups:
             self._add_group_to_tree(g['group_id'], g['name'], 'fixed')
 
+    # Abre/reexibe janela de grupo ao duplo-clicar no TreeView.
     def _on_tree_dbl_group(self, item):
-        """Abre/reexibe janela de grupo ao duplo-clicar no TreeView."""
         for gid, iid in self._group_tree_items.items():
             if iid == item:
                 self._open_group(gid)
                 return True
         return False
 
+    # Marca contato no TreeView como nao lido: aplica tag bold e exibe contagem.
+    #
+    # Atualiza o avatar do item para refletir o status atual e adiciona
+    # o numero de mensagens nao lidas entre parenteses no nome.
     def _mark_unread(self, uid):
-        """Marca contato no TreeView como nao lido: aplica tag bold e exibe contagem.
-
-        Atualiza o avatar do item para refletir o status atual e adiciona
-        o numero de mensagens nao lidas entre parenteses no nome.
-        """
         if uid in self.peer_items:  # contato esta no TreeView?
             item = self.peer_items[uid]                         # iid do item no TreeView
             tags = list(self.tree.item(item, 'tags'))          # tags atuais como lista
@@ -5340,12 +5346,11 @@ class LanMessengerApp:
             self.tree.item(item, text=f'  {name} ({unread})',
                            image=avatar)
 
+    # Remove a marcacao de nao lido do contato no TreeView.
+    #
+    # Remove a tag 'unread' (negrito) e restaura o texto do item
+    # para apenas o nome, sem contagem de mensagens pendentes.
     def _clear_unread(self, uid):
-        """Remove a marcacao de nao lido do contato no TreeView.
-
-        Remove a tag 'unread' (negrito) e restaura o texto do item
-        para apenas o nome, sem contagem de mensagens pendentes.
-        """
         if uid in self.peer_items:  # contato esta no TreeView?
             item = self.peer_items[uid]  # iid do item
             # Remove a tag 'unread' da lista (filter), mantendo as demais
@@ -5359,8 +5364,8 @@ class LanMessengerApp:
             self.tree.item(item, text=f'  {name}',
                            image=avatar)
 
+    # Marca grupo no TreeView como unread (bold).
     def _mark_group_unread(self, group_id):
-        """Marca grupo no TreeView como unread (bold)."""
         if group_id in self._group_tree_items:
             item = self._group_tree_items[group_id]
             tags = list(self.tree.item(item, 'tags'))  # tags atuais
@@ -5382,8 +5387,8 @@ class LanMessengerApp:
             except Exception:
                 pass
 
+    # Limpa unread do grupo no TreeView.
     def _clear_group_unread(self, group_id):
-        """Limpa unread do grupo no TreeView."""
         if group_id in self._group_tree_items:
             item = self._group_tree_items[group_id]
             tags = [t for t in self.tree.item(item, 'tags') if t != 'unread']
@@ -5395,12 +5400,11 @@ class LanMessengerApp:
             self.tree.item(item,
                 text=f'  \U0001f4ac {g_name} {suffix}')
 
+    # Mostra notificacao toast Windows para mensagem de grupo.
+    #
+    # Titulo: 'Nome do Grupo - Remetente'. Preview truncado em 120 chars.
+    # Usa winotify (toast clicavel) se disponivel, senao balloon tip do tray.
     def _show_group_toast(self, group_id, display_name, content):
-        """Mostra notificacao toast Windows para mensagem de grupo.
-
-        Titulo: 'Nome do Grupo - Remetente'. Preview truncado em 120 chars.
-        Usa winotify (toast clicavel) se disponivel, senao balloon tip do tray.
-        """
         group_data = self.messenger._groups.get(group_id)             # dados do grupo
         g_name = group_data.get('name', 'Grupo') if group_data else 'Grupo'  # nome do grupo
         title = f'{g_name} - {display_name}'                          # titulo: Grupo - Remetente
@@ -5428,8 +5432,8 @@ class LanMessengerApp:
             except Exception:
                 pass
 
+    # Abre/reexibe janela de grupo com foco no input.
     def _open_group(self, group_id):
-        """Abre/reexibe janela de grupo com foco no input."""
         if group_id in self.group_windows:  # janela do grupo ja existe?
             gw = self.group_windows[group_id]
             gw.deiconify()   # exibe se estava oculta (hidden)
@@ -5461,8 +5465,8 @@ class LanMessengerApp:
         except Exception:
             pass  # pode falhar se a janela ainda nao terminou de construir
 
+    # Trata duplo clique no TreeView: abre chat (contato) ou janela de grupo.
     def _on_tree_dbl(self, e):
-        """Trata duplo clique no TreeView: abre chat (contato) ou janela de grupo."""
         sel = self.tree.selection()  # item selecionado no TreeView
         if sel and sel[0] in self._group_tree_items.values():
             self._on_tree_dbl_group(sel[0])
@@ -5471,8 +5475,8 @@ class LanMessengerApp:
         if uid:
             self._open_chat(uid)
 
+    # Trata clique direito no TreeView: exibe menu de contexto para contatos online.
     def _on_tree_right(self, e):
-        """Trata clique direito no TreeView: exibe menu de contexto para contatos online."""
         item = self.tree.identify_row(e.y)  # identifica o item na posicao Y do mouse
         if item and item not in (self.group_general, self.group_offline,
                                   self.group_groups):
@@ -5483,22 +5487,22 @@ class LanMessengerApp:
             self.tree.selection_set(item)
             self.ctx_menu.tk_popup(e.x_root, e.y_root)
 
+    # Abre chat com o contato selecionado via menu de contexto.
     def _ctx_chat(self):
-        """Abre chat com o contato selecionado via menu de contexto."""
         uid = self._get_selected_peer()  # pega uid do contato selecionado no TreeView
         if uid:
             self._open_chat(uid)
 
+    # Abre dialogo de arquivo e envia para o contato selecionado via menu de contexto.
     def _ctx_file(self):
-        """Abre dialogo de arquivo e envia para o contato selecionado via menu de contexto."""
         uid = self._get_selected_peer()  # pega uid do contato selecionado
         if uid:
             fp = filedialog.askopenfilename(title='Enviar arquivo')
             if fp:
                 self.messenger.send_file(uid, fp)
 
+    # Exibe dialogo com informacoes detalhadas do contato selecionado.
     def _ctx_info(self):
-        """Exibe dialogo com informacoes detalhadas do contato selecionado."""
         uid = self._get_selected_peer()  # pega uid do contato selecionado
         if uid and uid in self.peer_info:
             i = self.peer_info[uid]
@@ -5509,13 +5513,12 @@ class LanMessengerApp:
                 f"OS: {i.get('os','?')}\n"
                 f"Status: {i.get('status','?')}")
 
+    # Abre ou traz ao foco a janela de chat individual com peer_id.
+    #
+    # Se a janela ja existe, apenas levanta e da foco no campo de texto.
+    # Se nao existe, cria uma nova ChatWindow e aplica o tema atual.
+    # Limpa o marcador de nao lido do contato ao abrir.
     def _open_chat(self, peer_id):
-        """Abre ou traz ao foco a janela de chat individual com peer_id.
-
-        Se a janela ja existe, apenas levanta e da foco no campo de texto.
-        Se nao existe, cria uma nova ChatWindow e aplica o tema atual.
-        Limpa o marcador de nao lido do contato ao abrir.
-        """
         if peer_id in self.chat_windows:  # janela de chat ja esta aberta?
             cw = self.chat_windows[peer_id]
             cw.lift()        # traz para frente
@@ -5533,8 +5536,8 @@ class LanMessengerApp:
         self._clear_unread(peer_id)           # remove marcacao de nao lido
 
     # --- Menu commands ---
+    # Abre dialog para o usuario alterar seu proprio nome de exibicao.
     def _change_name(self):
-        """Abre dialog para o usuario alterar seu proprio nome de exibicao."""
         win = tk.Toplevel(self.root)  # cria janela modal
         win.title('Alterar Nome')
         win.resizable(False, False)
@@ -5561,20 +5564,19 @@ class LanMessengerApp:
         tk.Button(win, text='OK', font=FONT, width=8, command=save).pack(pady=10)
         e.bind('<Return>', lambda ev: save())
 
+    # Abre a janela de Preferencias (tema, autostart, avatar, etc).
     def _show_preferences(self):
-        """Abre a janela de Preferencias (tema, autostart, avatar, etc)."""
         PreferencesWindow(self)  # instancia e exibe a janela de preferencias
 
+    # Abre a janela de Conta (nome, avatar personalizado).
     def _show_account(self):
-        """Abre a janela de Conta (nome, avatar personalizado)."""
         AccountWindow(self)  # instancia e exibe a janela de conta
 
+    # Abre janela de Historico de Mensagens com filtro por contato, data e texto.
+    #
+    # Layout: painel esquerdo (lista de contatos com ultima data) + painel direito
+    # (mensagens do contato selecionado). Suporta filtro de data e busca por texto.
     def _show_all_history(self):
-        """Abre janela de Historico de Mensagens com filtro por contato, data e texto.
-
-        Layout: painel esquerdo (lista de contatos com ultima data) + painel direito
-        (mensagens do contato selecionado). Suporta filtro de data e busca por texto.
-        """
         win = tk.Toplevel(self.root)           # cria janela secundaria
         win.title('Histórico de Mensagens')     # titulo da janela
         win.configure(bg=BG_WINDOW)
@@ -5750,16 +5752,16 @@ class LanMessengerApp:
             contact_tree.selection_set(children[0])
             show_messages()
 
+    # Delega para _show_transfers_window() que abre/mostra a janela de transferencias.
     def _show_transfers(self):
-        """Delega para _show_transfers_window() que abre/mostra a janela de transferencias."""
         self._show_transfers_window()  # abre ou traz ao foco a janela de transferencias
 
+    # Delega para _show_broadcast() que abre o dialog de Transmitir Mensagem.
     def _send_broadcast(self):
-        """Delega para _show_broadcast() que abre o dialog de Transmitir Mensagem."""
         self._show_broadcast()  # abre o dialog de transmissao de mensagem em massa
 
+    # Janela Transmitir Mensagem — envia para contatos selecionados.
     def _show_broadcast(self):
-        """Janela Transmitir Mensagem — envia para contatos selecionados."""
         NAVY = '#0f2a5c'
         win = tk.Toplevel(self.root)
         win.title('Transmitir Mensagem')
@@ -6123,8 +6125,8 @@ class LanMessengerApp:
 
         txt.focus_set()
 
+    # Dialog moderno para criar grupo.
     def _show_group_chat_dialog(self):
-        """Dialog moderno para criar grupo."""
         NAVY = '#0f2a5c'
         win = tk.Toplevel(self.root)
         win.title('Criar Grupo - Selecionar Contatos')
@@ -6329,12 +6331,11 @@ class LanMessengerApp:
 
     def _create_group_window(self, group_id, group_name, member_ids,
                               group_type='temp'):
-        """Cria uma nova GroupChatWindow e envia convites MT_GROUP_INV para todos os membros.
-
-        Se a janela ja existir, apenas a exibe. Adiciona o proprio usuario e todos
-        os membros selecionados ao painel da janela. Registra o grupo no TreeView.
-        O envio de convites ocorre em thread separada para nao bloquear a UI.
-        """
+        # Cria uma nova GroupChatWindow e envia convites MT_GROUP_INV para todos os membros.
+        #
+        # Se a janela ja existir, apenas a exibe. Adiciona o proprio usuario e todos
+        # os membros selecionados ao painel da janela. Registra o grupo no TreeView.
+        # O envio de convites ocorre em thread separada para nao bloquear a UI.
         if group_id in self.group_windows:  # janela ja existe? apenas exibe
             gw = self.group_windows[group_id]
             gw.deiconify()  # exibe se oculta
@@ -6357,14 +6358,13 @@ class LanMessengerApp:
 
     def _on_group_invite(self, group_id, group_name, from_uid, members,
                           group_type='temp'):
-        """Recebe convite para entrar em grupo e abre a GroupChatWindow correspondente.
-
-        Chamado pelo messenger quando chega MT_GROUP_INV pela rede.
-        Se a janela do grupo ja existir, apenas exibe/levanta ela.
-        Adiciona todos os membros recebidos no convite ao painel lateral.
-        Exibe mensagem de sistema informando quem criou o grupo.
-        Pisca a janela para alertar o usuario sobre o novo grupo.
-        """
+        # Recebe convite para entrar em grupo e abre a GroupChatWindow correspondente.
+        #
+        # Chamado pelo messenger quando chega MT_GROUP_INV pela rede.
+        # Se a janela do grupo ja existir, apenas exibe/levanta ela.
+        # Adiciona todos os membros recebidos no convite ao painel lateral.
+        # Exibe mensagem de sistema informando quem criou o grupo.
+        # Pisca a janela para alertar o usuario sobre o novo grupo.
         if group_id in self.group_windows:
             gw = self.group_windows[group_id]
             gw.deiconify()
@@ -6384,15 +6384,14 @@ class LanMessengerApp:
 
     def _on_group_message(self, group_id, from_uid, display_name,
                            content, timestamp):
-        """Roteia mensagem de grupo recebida para a janela correta ou acumula pendente.
-
-        Chamado pelo messenger quando chega MT_GROUP_MSG pela rede.
-        Se a janela do grupo esta aberta: entrega a mensagem diretamente.
-          - Se nao esta em foco: mostra toast + pisca janela e taskbar.
-        Se a janela NAO esta aberta: salva em _pending_group_msgs, marca unread
-          no TreeView, mostra toast e pisca a taskbar principal.
-        Em ambos os casos toca o som de notificacao.
-        """
+        # Roteia mensagem de grupo recebida para a janela correta ou acumula pendente.
+        #
+        # Chamado pelo messenger quando chega MT_GROUP_MSG pela rede.
+        # Se a janela do grupo esta aberta: entrega a mensagem diretamente.
+        # - Se nao esta em foco: mostra toast + pisca janela e taskbar.
+        # Se a janela NAO esta aberta: salva em _pending_group_msgs, marca unread
+        # no TreeView, mostra toast e pisca a taskbar principal.
+        # Em ambos os casos toca o som de notificacao.
         SoundPlayer.play_notification()
         if group_id in self.group_windows:  # janela do grupo esta aberta?
             gw = self.group_windows[group_id]
@@ -6418,23 +6417,21 @@ class LanMessengerApp:
             except Exception:
                 pass
 
+    # Processa notificacao de saida de membro do grupo (MT_GROUP_LEAVE).
+    #
+    # Se a janela do grupo estiver aberta, exibe mensagem de sistema
+    # ('X saiu do grupo.') e remove o membro do painel de participantes.
     def _on_group_leave(self, group_id, uid, display_name):
-        """Processa notificacao de saida de membro do grupo (MT_GROUP_LEAVE).
-
-        Se a janela do grupo estiver aberta, exibe mensagem de sistema
-        ('X saiu do grupo.') e remove o membro do painel de participantes.
-        """
         if group_id in self.group_windows:
             gw = self.group_windows[group_id]
             gw.system_message(f'{display_name} saiu do grupo.')
             gw.remove_member(uid)
 
+    # Processa notificacao de entrada de novo membro no grupo (MT_GROUP_JOIN).
+    #
+    # Se a janela do grupo estiver aberta, adiciona o membro ao painel
+    # de participantes e exibe mensagem de sistema ('X entrou no grupo.').
     def _on_group_join(self, group_id, uid, display_name):
-        """Processa notificacao de entrada de novo membro no grupo (MT_GROUP_JOIN).
-
-        Se a janela do grupo estiver aberta, adiciona o membro ao painel
-        de participantes e exibe mensagem de sistema ('X entrou no grupo.').
-        """
         if group_id in self.group_windows:
             gw = self.group_windows[group_id]
             m_info = self.peer_info.get(uid, {'ip': '', 'status': 'online',
@@ -6442,11 +6439,10 @@ class LanMessengerApp:
             gw.add_member(uid, display_name, m_info)
             gw.system_message(f'{display_name} entrou no grupo.')
 
+    # Abre dialogo de selecao de arquivo e envia ao contato selecionado na toolbar.
+    #
+    # Se nenhum contato estiver selecionado, exibe aviso ao usuario.
     def _send_file_toolbar(self):
-        """Abre dialogo de selecao de arquivo e envia ao contato selecionado na toolbar.
-
-        Se nenhum contato estiver selecionado, exibe aviso ao usuario.
-        """
         uid = self._get_selected_peer()  # uid do contato selecionado no TreeView
         if not uid:                        # nenhum contato selecionado?
             messagebox.showinfo(_t('send_file_btn'), _t('file_select_contact'))  # avisa
@@ -6455,8 +6451,8 @@ class LanMessengerApp:
         if fp:
             self._start_file_send(uid, fp)
 
+    # Inicia envio de arquivo com dialogo de progresso.
     def _start_file_send(self, peer_id, filepath):
-        """Inicia envio de arquivo com dialogo de progresso."""
         fid = self.messenger.send_file(peer_id, filepath)
         if fid:
             name = self.peer_info.get(peer_id, {}).get('display_name', 'Unknown')
@@ -6471,12 +6467,12 @@ class LanMessengerApp:
             self._add_transfer_entry(fid, fname, name, 'send', fsize,
                                       'pending')
 
+    # Dispara um announce UDP imediato para redescobrir peers na rede.
     def _refresh_peers(self):
-        """Dispara um announce UDP imediato para redescobrir peers na rede."""
         self.messenger.discovery._send_announce()  # envia pacote UDP de presenca agora
 
+    # Exibe dialog 'Sobre o MB Chat' com informacoes do aplicativo.
     def _show_about(self):
-        """Exibe dialog 'Sobre o MB Chat' com informacoes do aplicativo."""
         messagebox.showinfo(f'Sobre o {APP_NAME}',  # titulo da caixa de dialogo
             f'{APP_NAME}\n\n'
             'Mensageiro de rede local\n\n'
@@ -6489,32 +6485,29 @@ class LanMessengerApp:
             'Python + tkinter')
 
     # --- Network callbacks ---
+    # Callback: novo peer descoberto ou peer existente atualizou presenca via UDP.
+    #
+    # Se for um peer realmente novo (nao estava na lista), toca som de conexao.
+    # Adiciona ou atualiza o contato no TreeView via _add_contact().
     def _on_user_found(self, uid, info):
-        """Callback: novo peer descoberto ou peer existente atualizou presenca via UDP.
-
-        Se for um peer realmente novo (nao estava na lista), toca som de conexao.
-        Adiciona ou atualiza o contato no TreeView via _add_contact().
-        """
         is_new = uid not in self.peer_items  # e um contato novo (nao estava na lista)?
         self._add_contact(uid, info)          # adiciona/atualiza no TreeView e peer_info
         if is_new:
             SoundPlayer.play_connect()
 
+    # Callback: peer saiu da rede (timeout no UDP discovery).
+    #
+    # Move o contato para a secao Offline no TreeView via _remove_contact().
     def _on_user_lost(self, uid, info):
-        """Callback: peer saiu da rede (timeout no UDP discovery).
-
-        Move o contato para a secao Offline no TreeView via _remove_contact().
-        """
         self._remove_contact(uid)  # move para secao Offline no TreeView
 
+    # Callback: mensagem individual recebida via TCP.
+    #
+    # Se a janela de chat esta aberta: entrega a mensagem diretamente.
+    # - Se nao esta em foco: mostra toast + pisca as janelas.
+    # Se a janela NAO esta aberta: marca contato como nao lido (bold + contagem),
+    # mostra toast de notificacao, pisca taskbar e toca o bell do sistema.
     def _on_message(self, from_user, content, msg_id, timestamp):
-        """Callback: mensagem individual recebida via TCP.
-
-        Se a janela de chat esta aberta: entrega a mensagem diretamente.
-          - Se nao esta em foco: mostra toast + pisca as janelas.
-        Se a janela NAO esta aberta: marca contato como nao lido (bold + contagem),
-          mostra toast de notificacao, pisca taskbar e toca o bell do sistema.
-        """
         SoundPlayer.play_notification()  # toca som de nova mensagem
         if from_user in self.chat_windows:  # janela de chat com este usuario esta aberta?
             cw = self.chat_windows[from_user]
@@ -6536,21 +6529,19 @@ class LanMessengerApp:
             except Exception:
                 pass
 
+    # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
+    #
+    # Repassa para a ChatWindow do remetente que exibe/oculta 'digitando...'.
     def _on_typing(self, from_user, is_typing):
-        """Callback: indicador de digitacao recebido via TCP (MT_TYPING).
-
-        Repassa para a ChatWindow do remetente que exibe/oculta 'digitando...'.
-        """
         if from_user in self.chat_windows:                    # janela do remetente aberta?
             self.chat_windows[from_user].set_typing(is_typing)  # atualiza indicador
 
     def _on_file_incoming(self, file_id, from_user, display_name,
                           filename, filesize):
-        """Callback: solicitacao de transferencia de arquivo recebida (MT_FILE_REQ).
-
-        Abre o dialogo de transferencia para o usuario aceitar ou recusar.
-        Registra na lista de historico de transferencias. Pisca taskbar e toca som.
-        """
+        # Callback: solicitacao de transferencia de arquivo recebida (MT_FILE_REQ).
+        #
+        # Abre o dialogo de transferencia para o usuario aceitar ou recusar.
+        # Registra na lista de historico de transferencias. Pisca taskbar e toca som.
         dlg = FileTransferDialog(  # cria dialogo de confirmacao de recebimento
             self.root, file_id, filename, display_name,
             direction='receive', filesize=filesize,
@@ -6564,32 +6555,29 @@ class LanMessengerApp:
         self._flash_window()
         SoundPlayer.play_notification()
 
+    # Callback: progresso de transferencia atualizado.
+    #
+    # Atualiza a barra de progresso do dialogo ativo e o status na lista
+    # de historico de transferencias para 'transferindo'.
     def _on_file_progress(self, file_id, transferred, total):
-        """Callback: progresso de transferencia atualizado.
-
-        Atualiza a barra de progresso do dialogo ativo e o status na lista
-        de historico de transferencias para 'transferindo'.
-        """
         if file_id in self._file_dialogs:                                        # dialogo aberto?
             self._file_dialogs[file_id].update_progress(transferred, total)  # atualiza progresso
         self._update_transfer_entry(file_id, 'transferring')                  # atualiza historico
 
+    # Callback: transferencia de arquivo concluida com sucesso.
+    #
+    # Notifica o dialogo ativo (exibe botao Abrir Pasta para receptor)
+    # e marca o status como 'concluido' no historico.
     def _on_file_complete(self, file_id, filepath):
-        """Callback: transferencia de arquivo concluida com sucesso.
-
-        Notifica o dialogo ativo (exibe botao Abrir Pasta para receptor)
-        e marca o status como 'concluido' no historico.
-        """
         if file_id in self._file_dialogs:                                              # dialogo aberto?
             self._file_dialogs[file_id].finish(success=True, filepath=filepath)  # marca sucesso
         self._update_transfer_entry(file_id, 'completed', filepath=filepath)     # atualiza historico
 
+    # Callback: transferencia de arquivo falhou ou foi cancelada.
+    #
+    # Notifica o dialogo ativo sobre o erro, remove-o do dicionario ativo
+    # e marca o status como 'erro' no historico.
     def _on_file_error(self, file_id, error):
-        """Callback: transferencia de arquivo falhou ou foi cancelada.
-
-        Notifica o dialogo ativo sobre o erro, remove-o do dicionario ativo
-        e marca o status como 'erro' no historico.
-        """
         if file_id in self._file_dialogs:                          # dialogo aberto?
             self._file_dialogs[file_id].finish(success=False)  # exibe erro no dialogo
             del self._file_dialogs[file_id]                    # remove do dicionario ativo
@@ -6597,11 +6585,10 @@ class LanMessengerApp:
 
     def _add_transfer_entry(self, file_id, filename, peer_name,
                              direction, filesize, status):
-        """Adiciona nova entrada no historico de transferencias e atualiza a janela de transfers.
-
-        Cria um dicionario com todos os dados da transferencia e o append em
-        self._transfer_history. Se a janela de transfers estiver aberta, atualiza ela.
-        """
+        # Adiciona nova entrada no historico de transferencias e atualiza a janela de transfers.
+        #
+        # Cria um dicionario com todos os dados da transferencia e o append em
+        # self._transfer_history. Se a janela de transfers estiver aberta, atualiza ela.
         entry = {'file_id': file_id, 'filename': filename,  # dicionario com dados da transferencia
                  'peer_name': peer_name, 'direction': direction,
                  'filesize': filesize, 'status': status, 'filepath': ''}
@@ -6612,12 +6599,11 @@ class LanMessengerApp:
             except tk.TclError:
                 self._transfers_window = None
 
+    # Atualiza status (e filepath opcional) de uma transferencia no historico.
+    #
+    # Procura a entrada pelo file_id e atualiza o status e caminho do arquivo.
+    # Se a janela de transfers estiver aberta, atualiza o item exibido.
     def _update_transfer_entry(self, file_id, status, filepath=''):
-        """Atualiza status (e filepath opcional) de uma transferencia no historico.
-
-        Procura a entrada pelo file_id e atualiza o status e caminho do arquivo.
-        Se a janela de transfers estiver aberta, atualiza o item exibido.
-        """
         for e in self._transfer_history:  # procura a entrada pelo file_id
             if e['file_id'] == file_id:
                 e['status'] = status
@@ -6633,8 +6619,8 @@ class LanMessengerApp:
             except tk.TclError:
                 self._transfers_window = None
 
+    # Abre/mostra janela de Transferencias de Arquivos.
     def _show_transfers_window(self):
-        """Abre/mostra janela de Transferencias de Arquivos."""
         if self._transfers_window:
             try:
                 self._transfers_window.deiconify()
@@ -6644,8 +6630,8 @@ class LanMessengerApp:
                 self._transfers_window = None
         self._transfers_window = FileTransfersWindow(self)
 
+    # Pisca o ícone na barra de tarefas (Windows FlashWindowEx).
     def _flash_window(self, widget=None):
-        """Pisca o ícone na barra de tarefas (Windows FlashWindowEx)."""
         try:
             flash_on = self.messenger.db.get_setting('flash_taskbar', '1') == '1'
             if not flash_on:
@@ -6681,8 +6667,8 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Para de piscar a barra de tarefas.
     def _stop_flash(self, widget=None):
-        """Para de piscar a barra de tarefas."""
         try:
             import ctypes
             from ctypes import wintypes
@@ -6710,8 +6696,8 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Mostra notificacao toast nativa do Windows (clicavel via winotify).
     def _show_toast(self, from_user, content):
-        """Mostra notificacao toast nativa do Windows (clicavel via winotify)."""
         self._last_notif_peer = from_user  # guarda quem enviou (para abrir ao clicar)
         name = self.peer_info.get(from_user, {}).get('display_name', 'Mensagem')  # nome do remetente
         preview = content[:120] + '...' if len(content) > 120 else content  # trunca em 120 chars
@@ -6747,28 +6733,26 @@ class LanMessengerApp:
             except Exception:
                 pass
 
+    # Minimiza para o system tray ao fechar a janela (se pystray+PIL disponivel).
+    #
+    # Comportamento:
+    # - Com tray disponivel: oculta janela (withdraw) e ativa icone na bandeja.
+    # - Sem tray: encerra o aplicativo completamente via _quit().
     def _on_close(self):
-        """Minimiza para o system tray ao fechar a janela (se pystray+PIL disponivel).
-
-        Comportamento:
-        - Com tray disponivel: oculta janela (withdraw) e ativa icone na bandeja.
-        - Sem tray: encerra o aplicativo completamente via _quit().
-        """
         if HAS_TRAY and HAS_PIL:   # bibliotecas de tray disponiveis?
             self.root.withdraw()   # esconde a janela (nao destroi)
             self._start_tray()     # inicia o icone na bandeja do sistema
         else:
             self._quit()           # sem tray: encerra o processo
 
+    # Encerra o aplicativo completamente: para tray, destroi janelas, para rede.
+    #
+    # Sequencia segura de shutdown:
+    # 1. Remove icone do tray
+    # 2. Destroi janelas de chat abertas
+    # 3. Para o messenger (fecha sockets, threads de rede)
+    # 4. Destroi a janela principal (encerra o mainloop)
     def _quit(self):
-        """Encerra o aplicativo completamente: para tray, destroi janelas, para rede.
-
-        Sequencia segura de shutdown:
-        1. Remove icone do tray
-        2. Destroi janelas de chat abertas
-        3. Para o messenger (fecha sockets, threads de rede)
-        4. Destroi a janela principal (encerra o mainloop)
-        """
         self._stop_tray()                          # remove icone da bandeja do sistema
         for w in list(self.chat_windows.values()):  # percorre copia da lista (evita mutar durante iteracao)
             try:
@@ -6779,12 +6763,11 @@ class LanMessengerApp:
         self.root.destroy()    # destroi janela principal e encerra mainloop
 
     # --- System Tray ---
+    # Inicia o icone do MB Chat na bandeja do sistema (system tray).
+    #
+    # Requer pystray e PIL. Cria icone com menu de duplo-clique (Abrir) e Sair.
+    # O icone roda em thread daemon separada para nao bloquear o mainloop.
     def _start_tray(self):
-        """Inicia o icone do MB Chat na bandeja do sistema (system tray).
-
-        Requer pystray e PIL. Cria icone com menu de duplo-clique (Abrir) e Sair.
-        O icone roda em thread daemon separada para nao bloquear o mainloop.
-        """
         if self._tray_icon is not None:   # ja existe um icone no tray?
             return                         # nao cria outro
         if not HAS_TRAY or not HAS_PIL:   # bibliotecas disponiveis?
@@ -6805,8 +6788,8 @@ class LanMessengerApp:
                                         APP_NAME, menu)  # cria o icone do tray
         threading.Thread(target=self._tray_icon.run, daemon=True).start()  # roda em thread daemon
 
+    # Remove o icone do system tray.
     def _stop_tray(self):
-        """Remove o icone do system tray."""
         if self._tray_icon is not None:
             try:
                 self._tray_icon.stop()
@@ -6814,23 +6797,21 @@ class LanMessengerApp:
                 pass
             self._tray_icon = None
 
+    # Callback do icone do tray (duplo-clique): restaura janela e abre chat pendente.
+    #
+    # Captura o ultimo peer que enviou notificacao e o passa para _restore_and_open.
+    # Usa root.after(0) para executar na thread principal do tkinter (thread-safe).
     def _tray_show(self, icon=None, item=None):
-        """Callback do icone do tray (duplo-clique): restaura janela e abre chat pendente.
-
-        Captura o ultimo peer que enviou notificacao e o passa para _restore_and_open.
-        Usa root.after(0) para executar na thread principal do tkinter (thread-safe).
-        """
         peer = self._last_notif_peer    # pega o peer da ultima notificacao (pode ser None)
         self._last_notif_peer = None    # limpa para nao reabrir na proxima vez
         self.root.after(0, lambda: self._restore_and_open(peer))  # agenda na main thread
 
+    # Restaura a janela principal do tray e abre chat/grupo se peer for fornecido.
+    #
+    # Usada pelo system tray (click) e pelo listener de instancia unica (OPEN:peer_id).
+    # Usa topmost temporario (200ms) para garantir que a janela venha a frente.
+    # peer pode ser: uid do contato, 'group:gid' para abrir grupo, ou None.
     def _restore_and_open(self, peer=None):
-        """Restaura a janela principal do tray e abre chat/grupo se peer for fornecido.
-
-        Usada pelo system tray (click) e pelo listener de instancia unica (OPEN:peer_id).
-        Usa topmost temporario (200ms) para garantir que a janela venha a frente.
-        peer pode ser: uid do contato, 'group:gid' para abrir grupo, ou None.
-        """
         self.root.deiconify()                             # mostra a janela que estava oculta
         self.root.state('normal')                         # restaura tamanho normal (nao minimizado)
         self.root.lift()                                  # traz para frente
@@ -6845,22 +6826,21 @@ class LanMessengerApp:
             elif peer in self.peer_info:           # e um contato conhecido?
                 self._open_chat(peer)              # abre/exibe a janela de chat
 
+    # Encerra via menu do tray.
     def _tray_quit(self, icon=None, item=None):
-        """Encerra via menu do tray."""
         self.root.after(0, self._quit)
 
+    # Inicia o loop principal do tkinter — bloqueia ate o app fechar.
     def run(self):
-        """Inicia o loop principal do tkinter — bloqueia ate o app fechar."""
         self.root.mainloop()  # loop de eventos tkinter (bloqueia aqui ate destroy)
 
 
 # =============================================================
+# Formata um tamanho em bytes para string legivel (B, KB, MB, GB).
+#
+# Exemplos: 512 -> '512 B', 1536 -> '1.5 KB', 2097152 -> '2.0 MB'.
+# Usado na janela de transferencia de arquivos e no historico.
 def _format_size(size):
-    """Formata um tamanho em bytes para string legivel (B, KB, MB, GB).
-
-    Exemplos: 512 -> '512 B', 1536 -> '1.5 KB', 2097152 -> '2.0 MB'.
-    Usado na janela de transferencia de arquivos e no historico.
-    """
     if size < 1024:              # menos de 1 KB
         return f'{size} B'
     elif size < 1024**2:         # menos de 1 MB
@@ -6870,13 +6850,12 @@ def _format_size(size):
     return f'{size/1024**3:.1f} GB'  # gigabytes
 
 
+# Registra o MB Chat para iniciar automaticamente com o sistema operacional.
+#
+# Windows: adiciona entrada no Registro em HKCU\\...\\Run com flag --silent.
+# Linux: cria arquivo .desktop em ~/.config/autostart/.
+# macOS: cria arquivo .plist em ~/Library/LaunchAgents/.
 def _setup_autostart():
-    """Registra o MB Chat para iniciar automaticamente com o sistema operacional.
-
-    Windows: adiciona entrada no Registro em HKCU\\...\\Run com flag --silent.
-    Linux: cria arquivo .desktop em ~/.config/autostart/.
-    macOS: cria arquivo .plist em ~/Library/LaunchAgents/.
-    """
     script = os.path.abspath(sys.argv[0])  # caminho absoluto do script/exe atual
     python = sys.executable                # caminho do interpretador Python
     if platform.system() == 'Windows':     # plataforma Windows?
@@ -6912,13 +6891,12 @@ def _setup_autostart():
                     f'<key>RunAtLoad</key><true/></dict></plist>')
 
 
+# Remove o registro de inicializacao automatica do MB Chat.
+#
+# Windows: remove entrada do Registro em HKCU\\...\\Run.
+# Linux: remove o arquivo .desktop de autostart.
+# macOS: remove o arquivo .plist do LaunchAgents.
 def _remove_autostart():
-    """Remove o registro de inicializacao automatica do MB Chat.
-
-    Windows: remove entrada do Registro em HKCU\\...\\Run.
-    Linux: remove o arquivo .desktop de autostart.
-    macOS: remove o arquivo .plist do LaunchAgents.
-    """
     if platform.system() == 'Windows':  # remove chave do Registro do Windows
         try:
             import winreg
@@ -6942,8 +6920,8 @@ def _remove_autostart():
 SINGLE_INSTANCE_PORT = 50199
 
 
+# Registra o protocolo mbchat:// no Windows para notificacoes clicaveis.
 def _register_url_protocol():
-    """Registra o protocolo mbchat:// no Windows para notificacoes clicaveis."""
     if platform.system() != 'Windows':
         return
     try:
@@ -6972,13 +6950,12 @@ def _register_url_protocol():
         pass  # falha silenciosa: nao e critico para o funcionamento do app
 
 
+# Verifica se ja existe uma instancia do MB Chat rodando.
+#
+# Tenta conectar na porta loopback 50199. Se conseguir, envia 'SHOW' para
+# restaurar a instancia existente e retorna False (ja existe outra instancia).
+# Se a conexao for recusada (porta livre), somos a primeira instancia: retorna True.
 def _check_single_instance():
-    """Verifica se ja existe uma instancia do MB Chat rodando.
-
-    Tenta conectar na porta loopback 50199. Se conseguir, envia 'SHOW' para
-    restaurar a instancia existente e retorna False (ja existe outra instancia).
-    Se a conexao for recusada (porta livre), somos a primeira instancia: retorna True.
-    """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(0.3)   # loopback e rapido, 300ms e suficiente
@@ -6990,15 +6967,14 @@ def _check_single_instance():
         return True  # porta livre = somos a primeira instancia
 
 
+# Inicia listener TCP loopback para receber comandos de novas tentativas de abertura.
+#
+# Escuta na porta 50199 (loopback). Quando outra instancia ou uma notificacao
+# clicavel (protocolo mbchat://) envia um comando:
+# - 'SHOW': restaura a janela principal
+# - 'OPEN:peer_id': restaura e abre chat com o peer (ou grupo)
+# Roda em thread daemon para nao bloquear o loop principal.
 def _start_instance_listener(app):
-    """Inicia listener TCP loopback para receber comandos de novas tentativas de abertura.
-
-    Escuta na porta 50199 (loopback). Quando outra instancia ou uma notificacao
-    clicavel (protocolo mbchat://) envia um comando:
-      - 'SHOW': restaura a janela principal
-      - 'OPEN:peer_id': restaura e abre chat com o peer (ou grupo)
-    Roda em thread daemon para nao bloquear o loop principal.
-    """
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # socket TCP
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # reutiliza porta imediatamente
     try:
@@ -7008,8 +6984,8 @@ def _start_instance_listener(app):
     srv.listen(5)              # aceita ate 5 conexoes na fila
     srv.settimeout(0.2)        # timeout curto para responder notificacoes rapidamente
 
+    # Loop de escuta que processa comandos de outras instancias ou do protocolo URL.
     def listen():
-        """Loop de escuta que processa comandos de outras instancias ou do protocolo URL."""
         while True:
             try:
                 client, _ = srv.accept()  # aguarda conexao de outro processo
@@ -7029,18 +7005,17 @@ def _start_instance_listener(app):
     t.start()
 
 
+# Ponto de entrada principal do MB Chat.
+#
+# Fluxo de inicializacao:
+# 1. Verifica se foi ativado por protocolo mbchat:// (notificacao clicavel).
+# Se sim, envia o comando para a instancia existente e sai.
+# 2. Verifica instancia unica via porta loopback 50199.
+# Se ja existe outra instancia, sai silenciosamente.
+# 3. Registra o protocolo mbchat:// no Registro do Windows.
+# 4. Cria a LanMessengerApp, inicia o listener de instancia e executa o mainloop.
+# 5. O app inicia minimizado na bandeja (root.withdraw).
 def main():
-    """Ponto de entrada principal do MB Chat.
-
-    Fluxo de inicializacao:
-    1. Verifica se foi ativado por protocolo mbchat:// (notificacao clicavel).
-       Se sim, envia o comando para a instancia existente e sai.
-    2. Verifica instancia unica via porta loopback 50199.
-       Se ja existe outra instancia, sai silenciosamente.
-    3. Registra o protocolo mbchat:// no Registro do Windows.
-    4. Cria a LanMessengerApp, inicia o listener de instancia e executa o mainloop.
-    5. O app inicia minimizado na bandeja (root.withdraw).
-    """
     # Verifica se foi ativado por protocolo mbchat:// (ex: clique em notificacao)
     for arg in sys.argv[1:]:  # percorre todos os argumentos da linha de comando
         if arg.startswith('mbchat://'):  # foi ativado pelo protocolo mbchat://?

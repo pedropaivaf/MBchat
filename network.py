@@ -1,31 +1,30 @@
-"""
-MB Chat - Camada de rede
-UDP broadcast/multicast discovery + TCP messaging + File transfer
+# MB Chat - Camada de rede
+# UDP broadcast/multicast discovery + TCP messaging + File transfer
+#
+# Este modulo implementa toda a comunicacao de rede do app:
+# - UDPDiscovery: descobre peers na LAN via multicast (239.255.100.200) e broadcast
+# - TCPServer/TCPClient: mensagens ponto-a-ponto com protocolo length-prefixed
+# - FileSender/FileReceiver: transferencia de arquivos em chunks de 256KB
+# - Constantes de tipos de mensagem (MT_*) usadas por todas as camadas
+#
+# Portas:
+# - UDP 50100: Discovery (multicast + broadcast)
+# - TCP 50101: Mensagens (texto, grupo, convites, status, typing)
+# - TCP 50102: Transferencia de arquivos (file port = TCP_PORT + 1)
+# - TCP 50199: Lock de instancia unica (loopback, definido em gui.py)
+#
+# IMPORTANTE: Portas escolhidas para NAO conflitar com LAN Messenger (50000-50002)
 
-Este módulo implementa toda a comunicação de rede do app:
-- UDPDiscovery: descobre peers na LAN via multicast (239.255.100.200) e broadcast
-- TCPServer/TCPClient: mensagens ponto-a-ponto com protocolo length-prefixed
-- FileSender/FileReceiver: transferência de arquivos em chunks de 256KB
-- Constantes de tipos de mensagem (MT_*) usadas por todas as camadas
-
-Portas:
-- UDP 50100: Discovery (multicast + broadcast)
-- TCP 50101: Mensagens (texto, grupo, convites, status, typing)
-- TCP 50102: Transferência de arquivos (file port = TCP_PORT + 1)
-- TCP 50199: Lock de instância única (loopback, definido em gui.py)
-
-IMPORTANTE: Portas escolhidas para NÃO conflitar com LAN Messenger (50000-50002)
-"""
 import socket      # Sockets UDP e TCP
-import struct      # Pack/unpack de headers binários (4 bytes length)
-import json        # Serialização de mensagens
+import struct      # Pack/unpack de headers binarios (4 bytes length)
+import json        # Serializacao de mensagens
 import threading   # Threads para servidor e discovery
 import time        # Timestamps e intervalos
-import uuid        # Geração de IDs únicos
+import uuid        # Geracao de IDs unicos
 import os          # Caminhos de arquivos
-import platform    # Detecção de OS
-import subprocess  # Execução de netsh para firewall
-from pathlib import Path  # Manipulação de caminhos
+import platform    # Deteccao de OS
+import subprocess  # Execucao de netsh para firewall
+from pathlib import Path  # Manipulacao de caminhos
 
 
 # === Portas de rede ===
@@ -34,17 +33,15 @@ TCP_PORT = 50101  # Porta para mensagens TCP (texto, grupo, etc.)
 # File transfer usa TCP_PORT + 1 = 50102
 
 
+# Tenta adicionar regra de firewall no Windows para as portas do app.
+# Executado automaticamente em background na importacao do modulo.
+# Usa netsh para criar regra "MBChat" se nao existir.
+# Silencia todos os erros (pode nao ter permissao de admin).
 def _add_firewall_rule():
-    """Tenta adicionar regra de firewall no Windows para as portas do app.
-
-    Executado automaticamente em background na importação do módulo.
-    Usa netsh para criar regra "MBChat" se não existir.
-    Silencia todos os erros (pode não ter permissão de admin).
-    """
     if platform.system() != 'Windows':
-        return  # Só funciona no Windows
+        return  # So funciona no Windows
     try:
-        # Verifica se a regra já existe no firewall
+        # Verifica se a regra ja existe no firewall
         result = subprocess.run(
             ['netsh', 'advfirewall', 'firewall', 'show', 'rule',
              'name=MBChat'],
@@ -52,7 +49,7 @@ def _add_firewall_rule():
             creationflags=0x08000000  # CREATE_NO_WINDOW (sem janela cmd)
         )
         if 'MBChat' in result.stdout:
-            return  # Regra já existe, não precisa criar
+            return  # Regra ja existe, nao precisa criar
     except Exception:
         pass  # Ignora erros ao verificar
 
@@ -69,52 +66,50 @@ def _add_firewall_rule():
                 creationflags=0x08000000  # Sem janela
             )
     except Exception:
-        pass  # Sem permissão de admin, ignora silenciosamente
+        pass  # Sem permissao de admin, ignora silenciosamente
 
 
-# Configura firewall em thread background (não bloqueia startup)
+# Configura firewall em thread background (nao bloqueia startup)
 threading.Thread(target=_add_firewall_rule, daemon=True).start()
 
 # === Constantes de rede ===
 MULTICAST_GROUP = '239.255.100.200'  # Grupo multicast para discovery
-BROADCAST_ADDR = '255.255.255.255'   # Endereço de broadcast para fallback
-BUFFER_SIZE = 65536    # 64KB - tamanho máximo de pacote UDP
-FILE_CHUNK = 262144    # 256KB - tamanho de chunk para transferência de arquivos
-DISCOVERY_INTERVAL = 5  # Segundos entre announcements periódicos
-PING_INTERVAL = 10      # Segundos entre verificações de peers perdidos
+BROADCAST_ADDR = '255.255.255.255'   # Endereco de broadcast para fallback
+BUFFER_SIZE = 65536    # 64KB - tamanho maximo de pacote UDP
+FILE_CHUNK = 262144    # 256KB - tamanho de chunk para transferencia de arquivos
+DISCOVERY_INTERVAL = 5  # Segundos entre announcements periodicos
+PING_INTERVAL = 10      # Segundos entre verificacoes de peers perdidos
 PING_TIMEOUT = 30       # Segundos sem resposta para considerar peer perdido
 
 # === Tipos de mensagem ===
-# Usados como campo 'type' nos JSONs de comunicação
-MT_ANNOUNCE = 'announce'        # UDP: anúncio de presença (discovery)
-MT_DEPART = 'depart'            # UDP: saída da rede (app fechando)
-MT_PING = 'ping'                # UDP: verificação de vida (não usado atualmente)
-MT_PONG = 'pong'                # UDP: resposta ao ping (não usado atualmente)
+# Usados como campo 'type' nos JSONs de comunicacao
+MT_ANNOUNCE = 'announce'        # UDP: anuncio de presenca (discovery)
+MT_DEPART = 'depart'            # UDP: saida da rede (app fechando)
+MT_PING = 'ping'                # UDP: verificacao de vida (nao usado atualmente)
+MT_PONG = 'pong'                # UDP: resposta ao ping (nao usado atualmente)
 MT_MESSAGE = 'message'          # TCP: mensagem de texto individual
-MT_FILE_REQ = 'file_request'    # TCP: solicitação de envio de arquivo
-MT_FILE_ACC = 'file_accept'     # TCP: aceitação de arquivo
+MT_FILE_REQ = 'file_request'    # TCP: solicitacao de envio de arquivo
+MT_FILE_ACC = 'file_accept'     # TCP: aceitacao de arquivo
 MT_FILE_DEC = 'file_decline'    # TCP: recusa de arquivo
-MT_FILE_CANCEL = 'file_cancel'  # TCP: cancelamento de transferência
-MT_STATUS = 'status_change'     # TCP: mudança de status (online/away/busy)
-MT_TYPING = 'typing'            # TCP: indicador de digitação
-MT_ACK = 'ack'                  # TCP: confirmação de recebimento de mensagem
+MT_FILE_CANCEL = 'file_cancel'  # TCP: cancelamento de transferencia
+MT_STATUS = 'status_change'     # TCP: mudanca de status (online/away/busy)
+MT_TYPING = 'typing'            # TCP: indicador de digitacao
+MT_ACK = 'ack'                  # TCP: confirmacao de recebimento de mensagem
 MT_GROUP_INV = 'group_invite'   # TCP: convite para entrar em grupo
 MT_GROUP_MSG = 'group_message'  # TCP: mensagem de texto em grupo (mesh)
-MT_GROUP_LEAVE = 'group_leave'  # TCP: notificação de saída do grupo
-MT_GROUP_JOIN = 'group_join'    # TCP: notificação de entrada no grupo
+MT_GROUP_LEAVE = 'group_leave'  # TCP: notificacao de saida do grupo
+MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
 
 
+# Detecta IP local da maquina na rede.
+# Cria socket UDP e "conecta" ao DNS do Google (8.8.8.8)
+# para descobrir qual interface de rede seria usada.
+# Nao envia dados, apenas verifica o roteamento.
+# Retorna '127.0.0.1' se nao conseguir detectar.
 def get_local_ip():
-    """Detecta IP local da máquina na rede.
-
-    Cria socket UDP e "conecta" ao DNS do Google (8.8.8.8)
-    para descobrir qual interface de rede seria usada.
-    Não envia dados, apenas verifica o roteamento.
-    Retorna '127.0.0.1' se não conseguir detectar.
-    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8', 80))  # Não envia dados, só verifica rota
+        s.connect(('8.8.8.8', 80))  # Nao envia dados, so verifica rota
         ip = s.getsockname()[0]  # IP local da interface usada
         s.close()
         return ip
@@ -122,21 +117,19 @@ def get_local_ip():
         return '127.0.0.1'  # Fallback para loopback
 
 
+# Gera ID unico baseado no MAC address + hostname.
+# Formato: "mac12digitos_hostname"
+# Garante que o mesmo PC sempre gere o mesmo ID.
 def generate_user_id():
-    """Gera ID único baseado no MAC address + hostname.
-
-    Formato: "mac12digitos_hostname"
-    Garante que o mesmo PC sempre gere o mesmo ID.
-    """
     mac = uuid.getnode()  # MAC address como inteiro
-    host = socket.gethostname()  # Nome da máquina
-    return f"{mac:012x}_{host}"  # MAC em hex (12 dígitos) + underscore + hostname
+    host = socket.gethostname()  # Nome da maquina
+    return f"{mac:012x}_{host}"  # MAC em hex (12 digitos) + underscore + hostname
 
 
+# Retorna informacoes da maquina local como dict
 def get_machine_info():
-    """Retorna informações da máquina local como dict."""
     return {
-        'hostname': socket.gethostname(),       # Nome da máquina
+        'hostname': socket.gethostname(),       # Nome da maquina
         'os': f"{platform.system()} {platform.release()}",  # Ex: "Windows 11"
         'ip': get_local_ip()                    # IP local
     }
@@ -146,35 +139,29 @@ def get_machine_info():
 # UDP DISCOVERY — Descoberta de peers na LAN
 # ========================================
 
+# Descoberta de peers via UDP multicast + broadcast.
+# Funciona assim:
+# 1. Envia announcements periodicos (a cada 5s) via multicast E broadcast
+# 2. Recebe announcements de outros peers e registra em self.peers
+# 3. Se um peer nao responde por 30s, e considerado perdido
+# 4. Ao fechar, envia MT_DEPART para notificar saida imediata
+# O pacote de announce inclui: user_id, display_name, status, note,
+# avatar_index, avatar_data (thumbnail base64), ip, hostname, os.
 class UDPDiscovery:
-    """Descoberta de peers via UDP multicast + broadcast.
 
-    Funciona assim:
-    1. Envia announcements periódicos (a cada 5s) via multicast E broadcast
-    2. Recebe announcements de outros peers e registra em self.peers
-    3. Se um peer não responde por 30s, é considerado perdido
-    4. Ao fechar, envia MT_DEPART para notificar saída imediata
-
-    O pacote de announce inclui: user_id, display_name, status, note,
-    avatar_index, avatar_data (thumbnail base64), ip, hostname, os.
-    """
-
+    # Inicializa o discovery
+    # user_id: ID unico deste usuario
+    # display_name: Nome de exibicao
+    # status: Status inicial (online/away/busy)
+    # on_peer_found: Callback(uid, info) quando peer encontrado
+    # on_peer_lost: Callback(uid, info) quando peer perdido
     def __init__(self, user_id, display_name, status='online',
                  on_peer_found=None, on_peer_lost=None):
-        """Inicializa o discovery.
-
-        Args:
-            user_id: ID único deste usuário
-            display_name: Nome de exibição
-            status: Status inicial (online/away/busy)
-            on_peer_found: Callback(uid, info) quando peer encontrado
-            on_peer_lost: Callback(uid, info) quando peer perdido
-        """
         self.user_id = user_id
         self.display_name = display_name
         self.status = status
         self.note = ''           # Nota pessoal (sincronizada via announce)
-        self.avatar_index = 0    # Índice do avatar padrão
+        self.avatar_index = 0    # Indice do avatar padrao
         self.avatar_data = ''    # Thumbnail base64 JPEG do avatar custom
         self.on_peer_found = on_peer_found  # Callback: peer descoberto
         self.on_peer_lost = on_peer_lost    # Callback: peer perdido
@@ -184,8 +171,8 @@ class UDPDiscovery:
         self._sock_send = None   # Socket de envio
         self._lock = threading.Lock()  # Lock para acesso thread-safe a self.peers
 
+    # Inicia o discovery: sockets, threads e primeiro announce
     def start(self):
-        """Inicia o discovery: sockets, threads e primeiro announce."""
         self.running = True
 
         # --- Socket de recebimento (bind na porta UDP) ---
@@ -193,7 +180,7 @@ class UDPDiscovery:
                                         socket.IPPROTO_UDP)
         self._sock_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # SO_REUSEPORT permite múltiplas instâncias na mesma porta (Linux/Mac)
+        # SO_REUSEPORT permite multiplas instancias na mesma porta (Linux/Mac)
         if hasattr(socket, 'SO_REUSEPORT'):
             try:
                 self._sock_recv.setsockopt(socket.SOL_SOCKET,
@@ -213,21 +200,21 @@ class UDPDiscovery:
             except OSError:
                 continue
         if not bound:
-            self._sock_recv.bind(('', 0))  # Último recurso: porta aleatória
+            self._sock_recv.bind(('', 0))  # Ultimo recurso: porta aleatoria
 
         # Junta ao grupo multicast para receber announcements
         try:
             local_ip = get_local_ip()
-            # mreq = endereço multicast + interface local
+            # mreq = endereco multicast + interface local
             mreq = struct.pack('4s4s',
                                socket.inet_aton(MULTICAST_GROUP),
                                socket.inet_aton(local_ip))
             self._sock_recv.setsockopt(socket.IPPROTO_IP,
                                        socket.IP_ADD_MEMBERSHIP, mreq)
         except Exception:
-            pass  # Multicast pode não estar disponível na rede
+            pass  # Multicast pode nao estar disponivel na rede
 
-        # Aumenta buffer UDP para suportar 30+ peers simultâneos
+        # Aumenta buffer UDP para suportar 30+ peers simultaneos
         try:
             self._sock_recv.setsockopt(socket.SOL_SOCKET,
                                        socket.SO_RCVBUF, 262144)  # 256KB
@@ -240,20 +227,20 @@ class UDPDiscovery:
                                         socket.IPPROTO_UDP)
         self._sock_send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         try:
-            # TTL=2 para multicast (alcança roteadores próximos)
+            # TTL=2 para multicast (alcanca roteadores proximos)
             self._sock_send.setsockopt(socket.IPPROTO_IP,
                                        socket.IP_MULTICAST_TTL, 2)
         except Exception:
             pass
 
-        # --- Inicia as 3 threads de operação ---
+        # --- Inicia as 3 threads de operacao ---
         # Thread 1: recebe pacotes UDP de outros peers
         self._recv_thread = threading.Thread(target=self._receive_loop,
                                              daemon=True)
-        # Thread 2: envia announcements periódicos
+        # Thread 2: envia announcements periodicos
         self._announce_thread = threading.Thread(target=self._announce_loop,
                                                  daemon=True)
-        # Thread 3: limpa peers que não respondem há muito tempo
+        # Thread 3: limpa peers que nao respondem ha muito tempo
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop,
                                                 daemon=True)
         self._recv_thread.start()
@@ -263,8 +250,8 @@ class UDPDiscovery:
         # Envia o primeiro announce imediatamente
         self._send_announce()
 
+    # Para o discovery: envia depart e fecha sockets
     def stop(self):
-        """Para o discovery: envia depart e fecha sockets."""
         self.running = False
         self._send_depart()  # Notifica peers que estamos saindo
         time.sleep(0.2)  # Aguarda envio do depart
@@ -273,53 +260,46 @@ class UDPDiscovery:
         if self._sock_send:
             self._sock_send.close()
 
+    # Atualiza status e envia announce imediato para propagar
     def update_status(self, status):
-        """Atualiza status e envia announce imediato para propagar."""
         self.status = status
         self._send_announce()
 
+    # Atualiza nome de exibicao e propaga via announce
     def update_name(self, name):
-        """Atualiza nome de exibição e propaga via announce."""
         self.display_name = name
         self._send_announce()
 
+    # Atualiza nota pessoal e propaga via announce
     def update_note(self, note):
-        """Atualiza nota pessoal e propaga via announce."""
         self.note = note
         self._send_announce()
 
+    # Atualiza avatar e propaga via announce
+    # index: Indice do avatar padrao
+    # data_b64: Thumbnail JPEG em base64 (~1-2KB no pacote UDP)
     def update_avatar(self, index, data_b64=''):
-        """Atualiza avatar e propaga via announce.
-
-        Args:
-            index: Índice do avatar padrão
-            data_b64: Thumbnail JPEG em base64 (~1-2KB no pacote UDP)
-        """
         self.avatar_index = index
         self.avatar_data = data_b64
         self._send_announce()
 
+    # Monta pacote JSON para envio UDP
+    # Inclui todos os dados do usuario local no pacote
+    # O pacote e serializado como JSON UTF-8
+    # msg_type: MT_ANNOUNCE ou MT_DEPART
+    # extra: Dict adicional para merge no pacote
     def _make_packet(self, msg_type, extra=None):
-        """Monta pacote JSON para envio UDP.
-
-        Inclui todos os dados do usuário local no pacote.
-        O pacote é serializado como JSON UTF-8.
-
-        Args:
-            msg_type: MT_ANNOUNCE ou MT_DEPART
-            extra: Dict adicional para merge no pacote
-        """
         data = {
             'app': 'mbchat',           # Identificador do app (ignora pacotes de outros)
             'type': msg_type,           # Tipo de mensagem
-            'user_id': self.user_id,    # ID único do remetente
-            'display_name': self.display_name,  # Nome de exibição
+            'user_id': self.user_id,    # ID unico do remetente
+            'display_name': self.display_name,  # Nome de exibicao
             'status': self.status,      # Status atual
             'note': self.note,          # Nota pessoal
-            'avatar_index': self.avatar_index,  # Índice do avatar
+            'avatar_index': self.avatar_index,  # Indice do avatar
             'avatar_data': self.avatar_data,    # Thumbnail base64 JPEG
             'ip': get_local_ip(),       # IP local atual
-            'hostname': socket.gethostname(),   # Nome da máquina
+            'hostname': socket.gethostname(),   # Nome da maquina
             'os': f"{platform.system()} {platform.release()}",  # OS info
             'tcp_port': TCP_PORT,       # Porta TCP para mensagens
             'time': time.time()         # Timestamp do pacote
@@ -328,13 +308,11 @@ class UDPDiscovery:
             data.update(extra)  # Merge dados extras
         return json.dumps(data, ensure_ascii=False).encode('utf-8')
 
+    # Envia pacote de announce via multicast E broadcast
+    # Envia por ambos os metodos para maxima compatibilidade:
+    # - Multicast: mais eficiente, mas precisa de suporte da rede
+    # - Broadcast: funciona em qualquer rede, mas gera mais trafego
     def _send_announce(self):
-        """Envia pacote de announce via multicast E broadcast.
-
-        Envia por ambos os métodos para máxima compatibilidade:
-        - Multicast: mais eficiente, mas precisa de suporte da rede
-        - Broadcast: funciona em qualquer rede, mas gera mais tráfego
-        """
         pkt = self._make_packet(MT_ANNOUNCE)
         try:
             self._sock_send.sendto(pkt, (MULTICAST_GROUP, UDP_PORT))
@@ -345,8 +323,8 @@ class UDPDiscovery:
         except Exception:
             pass  # Broadcast pode ser bloqueado
 
+    # Envia pacote de saida (depart) para todos os peers
     def _send_depart(self):
-        """Envia pacote de saída (depart) para todos os peers."""
         pkt = self._make_packet(MT_DEPART)
         try:
             self._sock_send.sendto(pkt, (MULTICAST_GROUP, UDP_PORT))
@@ -357,8 +335,8 @@ class UDPDiscovery:
         except Exception:
             pass
 
+    # Loop de recebimento de pacotes UDP (roda em thread daemon)
     def _receive_loop(self):
-        """Loop de recebimento de pacotes UDP (roda em thread daemon)."""
         while self.running:
             try:
                 data, addr = self._sock_recv.recvfrom(BUFFER_SIZE)
@@ -369,28 +347,26 @@ class UDPDiscovery:
                 if self.running:
                     time.sleep(0.5)  # Erro de socket, espera antes de tentar
 
+    # Processa um pacote UDP recebido
+    # Ignora pacotes de outros apps (app != 'mbchat') e os proprios
+    # Para MT_DEPART: remove peer da lista
+    # Para MT_ANNOUNCE: adiciona/atualiza peer e notifica via callback
     def _handle_packet(self, data, addr):
-        """Processa um pacote UDP recebido.
-
-        Ignora pacotes de outros apps (app != 'mbchat') e os próprios.
-        Para MT_DEPART: remove peer da lista.
-        Para MT_ANNOUNCE: adiciona/atualiza peer e notifica via callback.
-        """
         try:
             pkt = json.loads(data.decode('utf-8'))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return  # Pacote inválido, ignora
+            return  # Pacote invalido, ignora
 
         if pkt.get('app') != 'mbchat':
             return  # Pacote de outro app, ignora
         if pkt.get('user_id') == self.user_id:
-            return  # Pacote próprio (eco), ignora
+            return  # Pacote proprio (eco), ignora
 
         uid = pkt['user_id']
         msg_type = pkt.get('type')
 
         if msg_type == MT_DEPART:
-            # Peer está saindo da rede
+            # Peer esta saindo da rede
             with self._lock:
                 if uid in self.peers:
                     peer = self.peers.pop(uid)  # Remove da lista
@@ -399,7 +375,7 @@ class UDPDiscovery:
             return
 
         if msg_type == MT_ANNOUNCE:
-            # Peer está se anunciando (novo ou atualização)
+            # Peer esta se anunciando (novo ou atualizacao)
             peer_info = {
                 'user_id': uid,
                 'display_name': pkt.get('display_name', 'Unknown'),
@@ -423,21 +399,19 @@ class UDPDiscovery:
                 self.on_peer_found(uid, peer_info)  # Notifica GUI
 
             if is_new:
-                # Responde ao novo peer para que ele nos descubra também
+                # Responde ao novo peer para que ele nos descubra tambem
                 self._send_announce()
 
+    # Loop periodico de announcements (a cada DISCOVERY_INTERVAL segundos)
     def _announce_loop(self):
-        """Loop periódico de announcements (a cada DISCOVERY_INTERVAL segundos)."""
         while self.running:
             time.sleep(DISCOVERY_INTERVAL)  # Espera 5 segundos
             if self.running:
                 self._send_announce()  # Envia announce
 
+    # Loop de limpeza de peers inativos (a cada PING_INTERVAL segundos)
+    # Remove peers que nao enviam announce ha mais de PING_TIMEOUT segundos
     def _cleanup_loop(self):
-        """Loop de limpeza de peers inativos (a cada PING_INTERVAL segundos).
-
-        Remove peers que não enviam announce há mais de PING_TIMEOUT segundos.
-        """
         while self.running:
             time.sleep(PING_INTERVAL)  # Verifica a cada 10 segundos
             now = time.time()
@@ -445,7 +419,7 @@ class UDPDiscovery:
             with self._lock:
                 for uid, info in list(self.peers.items()):
                     if now - info['last_seen'] > PING_TIMEOUT:
-                        # Peer sem resposta há mais de 30s
+                        # Peer sem resposta ha mais de 30s
                         lost.append((uid, self.peers.pop(uid)))
             # Notifica GUI para cada peer perdido (fora do lock)
             for uid, info in lost:
@@ -457,36 +431,31 @@ class UDPDiscovery:
 # TCP SERVER — Recebe mensagens via TCP
 # ========================================
 
+# Servidor TCP para receber mensagens e comandos
+# Protocolo:
+# 1. Cliente conecta via TCP
+# 2. Envia header de 4 bytes (big-endian uint32) com tamanho da mensagem
+# 3. Envia mensagem JSON de N bytes
+# 4. Pode enviar multiplas mensagens na mesma conexao
+# 5. Servidor processa cada mensagem e chama callback
 class TCPServer:
-    """Servidor TCP para receber mensagens e comandos.
 
-    Protocolo:
-    1. Cliente conecta via TCP
-    2. Envia header de 4 bytes (big-endian uint32) com tamanho da mensagem
-    3. Envia mensagem JSON de N bytes
-    4. Pode enviar múltiplas mensagens na mesma conexão
-    5. Servidor processa cada mensagem e chama callback
-    """
-
+    # Inicializa o servidor TCP
+    # on_message: Callback(msg_dict, addr) para mensagens gerais
+    # on_file_request: Callback(msg_dict, addr) para pedidos de arquivo
+    # on_file_data: Callback para dados de arquivo (nao usado)
     def __init__(self, on_message=None, on_file_request=None,
                  on_file_data=None):
-        """Inicializa o servidor TCP.
-
-        Args:
-            on_message: Callback(msg_dict, addr) para mensagens gerais
-            on_file_request: Callback(msg_dict, addr) para pedidos de arquivo
-            on_file_data: Callback para dados de arquivo (não usado)
-        """
         self.on_message = on_message
         self.on_file_request = on_file_request
         self.on_file_data = on_file_data
         self.running = False
         self._server = None                # Socket do servidor
-        self._connections = {}             # user_id -> socket (conexões ativas)
+        self._connections = {}             # user_id -> socket (conexoes ativas)
         self._lock = threading.Lock()
 
+    # Inicia o servidor TCP na porta TCP_PORT
     def start(self):
-        """Inicia o servidor TCP na porta TCP_PORT."""
         self.running = True
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -498,16 +467,16 @@ class TCPServer:
                 break
             except (PermissionError, OSError):
                 continue
-        self._server.listen(100)  # Backlog de 100 conexões
+        self._server.listen(100)  # Backlog de 100 conexoes
         self._server.settimeout(0.3)  # Timeout para loop responsivo
 
-        # Thread que aceita novas conexões
+        # Thread que aceita novas conexoes
         self._accept_thread = threading.Thread(target=self._accept_loop,
                                                daemon=True)
         self._accept_thread.start()
 
+    # Para o servidor e fecha todas as conexoes
     def stop(self):
-        """Para o servidor e fecha todas as conexões."""
         self.running = False
         with self._lock:
             for sock in self._connections.values():
@@ -519,12 +488,12 @@ class TCPServer:
         if self._server:
             self._server.close()
 
+    # Loop que aceita novas conexoes TCP (roda em thread daemon)
     def _accept_loop(self):
-        """Loop que aceita novas conexões TCP (roda em thread daemon)."""
         while self.running:
             try:
                 client, addr = self._server.accept()
-                # Cada conexão é tratada em sua própria thread
+                # Cada conexao e tratada em sua propria thread
                 t = threading.Thread(target=self._handle_client,
                                      args=(client, addr), daemon=True)
                 t.start()
@@ -534,29 +503,27 @@ class TCPServer:
                 if self.running:
                     time.sleep(0.5)
 
+    # Trata uma conexao TCP individual
+    # Le mensagens em loop enquanto o cliente enviar:
+    # 1. Le header de 4 bytes (tamanho da mensagem)
+    # 2. Le N bytes da mensagem
+    # 3. Processa a mensagem JSON
+    # 4. Repete ate desconexao
     def _handle_client(self, client, addr):
-        """Trata uma conexão TCP individual.
-
-        Lê mensagens em loop enquanto o cliente enviar:
-        1. Lê header de 4 bytes (tamanho da mensagem)
-        2. Lê N bytes da mensagem
-        3. Processa a mensagem JSON
-        4. Repete até desconexão
-        """
         client.settimeout(30.0)  # 30s sem dados = desconecta
         try:
             while self.running:
-                # Lê header de 4 bytes com tamanho da mensagem
+                # Le header de 4 bytes com tamanho da mensagem
                 header = self._recv_exact(client, 4)
                 if not header:
-                    break  # Conexão fechada
+                    break  # Conexao fechada
                 msg_len = struct.unpack('!I', header)[0]  # Big-endian uint32
 
-                # Proteção contra mensagens gigantes (máx 10MB)
+                # Protecao contra mensagens gigantes (max 10MB)
                 if msg_len > 10 * 1024 * 1024:
                     break
 
-                # Lê o corpo da mensagem
+                # Le o corpo da mensagem
                 data = self._recv_exact(client, msg_len)
                 if not data:
                     break
@@ -564,47 +531,41 @@ class TCPServer:
                 # Processa a mensagem
                 self._process_message(data, addr, client)
         except (socket.timeout, ConnectionResetError, OSError):
-            pass  # Desconexão normal ou timeout
+            pass  # Desconexao normal ou timeout
         finally:
             client.close()  # Sempre fecha o socket
 
+    # Recebe exatamente N bytes do socket
+    # TCP pode fragmentar dados, entao precisamos ler em loop
+    # ate acumular o numero exato de bytes esperados
+    # Retorna bytes se sucesso, None se conexao fechada
     def _recv_exact(self, sock, n):
-        """Recebe exatamente N bytes do socket.
-
-        TCP pode fragmentar dados, então precisamos ler em loop
-        até acumular o número exato de bytes esperados.
-
-        Returns:
-            bytes se sucesso, None se conexão fechada
-        """
         buf = bytearray()
         while len(buf) < n:
             try:
                 chunk = sock.recv(n - len(buf))
                 if not chunk:
-                    return None  # Conexão fechada pelo peer
+                    return None  # Conexao fechada pelo peer
                 buf.extend(chunk)
             except (socket.timeout, OSError):
                 return None
         return bytes(buf)
 
+    # Processa uma mensagem JSON recebida via TCP
+    # Roteia para o callback apropriado baseado no tipo:
+    # - MT_FILE_REQ: pedido de arquivo -> on_file_request
+    # - Outros: mensagem geral -> on_message
     def _process_message(self, data, addr, client):
-        """Processa uma mensagem JSON recebida via TCP.
-
-        Roteia para o callback apropriado baseado no tipo:
-        - MT_FILE_REQ: pedido de arquivo → on_file_request
-        - Outros: mensagem geral → on_message
-        """
         try:
             msg = json.loads(data.decode('utf-8'))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return  # Mensagem inválida
+            return  # Mensagem invalida
 
         msg_type = msg.get('type')
         if msg_type == MT_FILE_REQ and self.on_file_request:
             self.on_file_request(msg, addr)  # Pedido de arquivo
         elif msg_type == MT_FILE_ACC:
-            pass  # Aceitação de arquivo (tratada pelo sender)
+            pass  # Aceitacao de arquivo (tratada pelo sender)
         elif self.on_message:
             self.on_message(msg, addr)  # Mensagem geral (texto, grupo, etc.)
 
@@ -613,27 +574,19 @@ class TCPServer:
 # TCP CLIENT — Envia mensagens via TCP
 # ========================================
 
+# Cliente TCP para enviar mensagens
+# Metodos estaticos (sem instancia necessaria)
+# Cada envio cria uma conexao TCP nova, envia e fecha
 class TCPClient:
-    """Cliente TCP para enviar mensagens.
-
-    Métodos estáticos (sem instância necessária).
-    Cada envio cria uma conexão TCP nova, envia e fecha.
-    """
 
     @staticmethod
+    # Envia uma mensagem JSON via TCP
+    # Protocolo: [4 bytes tamanho][N bytes JSON]
+    # ip: IP do destinatario
+    # port: Porta TCP do destinatario
+    # message_dict: Dict a ser serializado como JSON
+    # Retorna True se enviou com sucesso, False se houve erro
     def send_message(ip, port, message_dict):
-        """Envia uma mensagem JSON via TCP.
-
-        Protocolo: [4 bytes tamanho][N bytes JSON]
-
-        Args:
-            ip: IP do destinatário
-            port: Porta TCP do destinatário
-            message_dict: Dict a ser serializado como JSON
-
-        Returns:
-            True se enviou com sucesso, False se houve erro
-        """
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10.0)  # 10s para conectar e enviar
@@ -647,14 +600,10 @@ class TCPClient:
             return False
 
     @staticmethod
+    # Envia mensagem e aguarda resposta JSON
+    # Usado quando precisamos de confirmacao do destinatario
+    # Retorna Dict com resposta se sucesso, None se erro
     def send_message_with_response(ip, port, message_dict, timeout=10):
-        """Envia mensagem e aguarda resposta JSON.
-
-        Usado quando precisamos de confirmação do destinatário.
-
-        Returns:
-            Dict com resposta se sucesso, None se erro
-        """
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
@@ -662,7 +611,7 @@ class TCPClient:
             data = json.dumps(message_dict, ensure_ascii=False).encode('utf-8')
             sock.sendall(struct.pack('!I', len(data)) + data)
 
-            # Lê header da resposta
+            # Le header da resposta
             header = b''
             while len(header) < 4:
                 chunk = sock.recv(4 - len(header))
@@ -672,7 +621,7 @@ class TCPClient:
                 header += chunk
             resp_len = struct.unpack('!I', header)[0]
 
-            # Lê corpo da resposta
+            # Le corpo da resposta
             resp_data = b''
             while len(resp_data) < resp_len:
                 chunk = sock.recv(resp_len - len(resp_data))
@@ -690,30 +639,25 @@ class TCPClient:
 # FILE SENDER — Envia arquivos via TCP
 # ========================================
 
+# Envia arquivo via TCP dedicado (porta TCP_PORT + 1)
+# Protocolo:
+# 1. Conecta na porta de arquivo do receiver
+# 2. Envia header JSON com file_id, filename, filesize
+# 3. Aguarda resposta: b'OKAY' (aceito) ou b'DENY' (recusado)
+# 4. Se aceito, envia arquivo em chunks de 256KB
+# 5. Reporta progresso via callback
 class FileSender:
-    """Envia arquivo via TCP dedicado (porta TCP_PORT + 1).
 
-    Protocolo:
-    1. Conecta na porta de arquivo do receiver
-    2. Envia header JSON com file_id, filename, filesize
-    3. Aguarda resposta: b'OKAY' (aceito) ou b'DENY' (recusado)
-    4. Se aceito, envia arquivo em chunks de 256KB
-    5. Reporta progresso via callback
-    """
-
+    # Inicializa o sender
+    # filepath: Caminho do arquivo a enviar
+    # peer_ip: IP do destinatario
+    # peer_port: Porta TCP base (file port = peer_port + 1)
+    # file_id: ID unico desta transferencia
+    # on_progress: Callback(file_id, sent, total) para atualizar progresso
+    # on_complete: Callback(file_id) quando envio completar
+    # on_error: Callback(file_id, error_msg) quando houver erro
     def __init__(self, filepath, peer_ip, peer_port, file_id,
                  on_progress=None, on_complete=None, on_error=None):
-        """Inicializa o sender.
-
-        Args:
-            filepath: Caminho do arquivo a enviar
-            peer_ip: IP do destinatário
-            peer_port: Porta TCP base (file port = peer_port + 1)
-            file_id: ID único desta transferência
-            on_progress: Callback(file_id, sent, total) para atualizar progresso
-            on_complete: Callback(file_id) quando envio completar
-            on_error: Callback(file_id, error_msg) quando houver erro
-        """
         self.filepath = filepath
         self.peer_ip = peer_ip
         self.peer_port = peer_port
@@ -724,23 +668,23 @@ class FileSender:
         self.cancelled = False  # Flag para cancelamento
         self.filesize = os.path.getsize(filepath)  # Tamanho do arquivo
 
+    # Inicia envio em thread background
     def start(self):
-        """Inicia envio em thread background."""
         t = threading.Thread(target=self._send, daemon=True)
         t.start()
 
+    # Cancela o envio em andamento
     def cancel(self):
-        """Cancela o envio em andamento."""
         self.cancelled = True
 
+    # Thread de envio do arquivo
     def _send(self):
-        """Thread de envio do arquivo."""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(120.0)  # 2 min para usuário aceitar
+            sock.settimeout(120.0)  # 2 min para usuario aceitar
             sock.connect((self.peer_ip, self.peer_port + 1))  # File port = TCP+1
 
-            # Envia header JSON com informações do arquivo
+            # Envia header JSON com informacoes do arquivo
             header = json.dumps({
                 'file_id': self.file_id,
                 'filename': os.path.basename(self.filepath),
@@ -752,7 +696,7 @@ class FileSender:
             resp = sock.recv(4)
             if not resp:
                 if self.on_error:
-                    self.on_error(self.file_id, 'Conexão perdida')
+                    self.on_error(self.file_id, 'Conexao perdida')
                 sock.close()
                 return
             if resp != b'OKAY':
@@ -765,7 +709,7 @@ class FileSender:
             sent = 0
             with open(self.filepath, 'rb') as f:
                 while not self.cancelled:
-                    chunk = f.read(FILE_CHUNK)  # Lê 256KB
+                    chunk = f.read(FILE_CHUNK)  # Le 256KB
                     if not chunk:
                         break  # Fim do arquivo
                     sock.sendall(chunk)  # Envia chunk
@@ -777,7 +721,7 @@ class FileSender:
             if not self.cancelled and self.on_complete:
                 self.on_complete(self.file_id)  # Sucesso
             elif self.cancelled and self.on_error:
-                self.on_error(self.file_id, 'Cancelado')  # Cancelado pelo usuário
+                self.on_error(self.file_id, 'Cancelado')  # Cancelado pelo usuario
         except Exception as e:
             if self.on_error:
                 self.on_error(self.file_id, str(e))
@@ -787,28 +731,23 @@ class FileSender:
 # FILE RECEIVER — Recebe arquivos via TCP
 # ========================================
 
+# Servidor para receber arquivos (porta TCP_PORT + 1)
+# Protocolo:
+# 1. Aceita conexao na porta de arquivo
+# 2. Le header JSON com file_id, filename, filesize
+# 3. Notifica GUI para pedir aceitacao do usuario
+# 4. Se aceito, salva arquivo em temp (.tmp) e renomeia ao completar
+# 5. Trata duplicatas adicionando sufixo numerico ao nome
 class FileReceiver:
-    """Servidor para receber arquivos (porta TCP_PORT + 1).
 
-    Protocolo:
-    1. Aceita conexão na porta de arquivo
-    2. Lê header JSON com file_id, filename, filesize
-    3. Notifica GUI para pedir aceitação do usuário
-    4. Se aceito, salva arquivo em temp (.tmp) e renomeia ao completar
-    5. Trata duplicatas adicionando sufixo numérico ao nome
-    """
-
+    # Inicializa o receiver
+    # save_dir: Diretorio onde salvar arquivos recebidos
+    # on_incoming: Callback(file_id, filename, filesize, ip) para pedido recebido
+    # on_progress: Callback(file_id, received, total) para progresso
+    # on_complete: Callback(file_id, save_path) quando completo
+    # on_error: Callback(file_id, error_msg) quando erro
     def __init__(self, save_dir, on_incoming=None, on_progress=None,
                  on_complete=None, on_error=None):
-        """Inicializa o receiver.
-
-        Args:
-            save_dir: Diretório onde salvar arquivos recebidos
-            on_incoming: Callback(file_id, filename, filesize, ip) para pedido recebido
-            on_progress: Callback(file_id, received, total) para progresso
-            on_complete: Callback(file_id, save_path) quando completo
-            on_error: Callback(file_id, error_msg) quando erro
-        """
         self.save_dir = save_dir
         self.on_incoming = on_incoming
         self.on_progress = on_progress
@@ -816,11 +755,11 @@ class FileReceiver:
         self.on_error = on_error
         self.running = False
         self._server = None
-        self._pending_accepts = {}  # file_id -> True/False (decisão do usuário)
+        self._pending_accepts = {}  # file_id -> True/False (decisao do usuario)
         self._lock = threading.Lock()
 
+    # Inicia o servidor de recebimento de arquivos
     def start(self):
-        """Inicia o servidor de recebimento de arquivos."""
         self.running = True
         os.makedirs(self.save_dir, exist_ok=True)  # Cria pasta de downloads
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -836,32 +775,32 @@ class FileReceiver:
         self._server.listen(100)
         self._server.settimeout(0.3)
 
-        # Thread que aceita conexões de arquivo
+        # Thread que aceita conexoes de arquivo
         t = threading.Thread(target=self._accept_loop, daemon=True)
         t.start()
 
+    # Para o servidor de arquivos
     def stop(self):
-        """Para o servidor de arquivos."""
         self.running = False
         if self._server:
             self._server.close()
 
+    # GUI chama este metodo quando usuario aceita o arquivo
     def accept_file(self, file_id):
-        """GUI chama este método quando usuário aceita o arquivo."""
         with self._lock:
             self._pending_accepts[file_id] = True
 
+    # GUI chama este metodo quando usuario recusa o arquivo
     def decline_file(self, file_id):
-        """GUI chama este método quando usuário recusa o arquivo."""
         with self._lock:
             self._pending_accepts[file_id] = False
 
+    # Loop que aceita conexoes de arquivo
     def _accept_loop(self):
-        """Loop que aceita conexões de arquivo."""
         while self.running:
             try:
                 client, addr = self._server.accept()
-                # Cada arquivo em sua própria thread
+                # Cada arquivo em sua propria thread
                 t = threading.Thread(target=self._handle_file,
                                      args=(client, addr), daemon=True)
                 t.start()
@@ -871,21 +810,19 @@ class FileReceiver:
                 if self.running:
                     time.sleep(0.5)
 
+    # Trata uma transferencia de arquivo individual
+    # 1. Le header com info do arquivo
+    # 2. Notifica GUI e aguarda decisao do usuario (ate 60s)
+    # 3. Se aceito, recebe dados e salva em temp file
+    # 4. Se completo, renomeia temp -> arquivo final
     def _handle_file(self, client, addr):
-        """Trata uma transferência de arquivo individual.
-
-        1. Lê header com info do arquivo
-        2. Notifica GUI e aguarda decisão do usuário (até 60s)
-        3. Se aceito, recebe dados e salva em temp file
-        4. Se completo, renomeia temp → arquivo final
-        """
         file_id = None
-        tmp_path = None   # Caminho do arquivo temporário
+        tmp_path = None   # Caminho do arquivo temporario
         save_path = None  # Caminho final
         try:
             client.settimeout(120.0)  # 2 min de timeout
 
-            # Lê tamanho do header (4 bytes)
+            # Le tamanho do header (4 bytes)
             hdr_len_data = b''
             while len(hdr_len_data) < 4:
                 chunk = client.recv(4 - len(hdr_len_data))
@@ -894,7 +831,7 @@ class FileReceiver:
                     return
                 hdr_len_data += chunk
 
-            # Lê o header JSON
+            # Le o header JSON
             hdr_len = struct.unpack('!I', hdr_len_data)[0]
             hdr_data = b''
             while len(hdr_data) < hdr_len:
@@ -903,17 +840,17 @@ class FileReceiver:
                     break
                 hdr_data += chunk
 
-            # Extrai informações do arquivo
+            # Extrai informacoes do arquivo
             info = json.loads(hdr_data.decode('utf-8'))
             file_id = info['file_id']
             filename = info['filename']
             filesize = info['filesize']
 
-            # Notifica GUI para mostrar diálogo de aceitação
+            # Notifica GUI para mostrar dialogo de aceitacao
             if self.on_incoming:
                 self.on_incoming(file_id, filename, filesize, addr[0])
 
-            # Aguarda decisão do usuário (polling a cada 200ms, max 60s)
+            # Aguarda decisao do usuario (polling a cada 200ms, max 60s)
             deadline = time.time() + 60
             accepted = None
             while time.time() < deadline:
@@ -944,14 +881,14 @@ class FileReceiver:
                 save_path = f"{base}_{counter}{ext}"
                 counter += 1
 
-            # Salva em arquivo temporário (.tmp) para atomicidade
+            # Salva em arquivo temporario (.tmp) para atomicidade
             tmp_path = save_path + '.tmp'
             received = 0
             with open(tmp_path, 'wb') as f:
                 while received < filesize:
                     chunk = client.recv(min(FILE_CHUNK, filesize - received))
                     if not chunk:
-                        break  # Conexão perdida
+                        break  # Conexao perdida
                     f.write(chunk)
                     received += len(chunk)
                     if self.on_progress:
@@ -960,15 +897,15 @@ class FileReceiver:
             client.close()
 
             if received >= filesize:
-                # Transferência completa: renomeia temp → final
+                # Transferencia completa: renomeia temp -> final
                 os.rename(tmp_path, save_path)
-                tmp_path = None  # Marca como None para não deletar no finally
+                tmp_path = None  # Marca como None para nao deletar no finally
                 if self.on_complete:
                     self.on_complete(file_id, save_path)
             else:
-                # Transferência incompleta
+                # Transferencia incompleta
                 if self.on_error:
-                    self.on_error(file_id, 'Transferência incompleta')
+                    self.on_error(file_id, 'Transferencia incompleta')
         except Exception as e:
             if file_id and self.on_error:
                 self.on_error(file_id, str(e))
@@ -977,7 +914,7 @@ class FileReceiver:
             except Exception:
                 pass
         finally:
-            # Limpa arquivo temporário se transferência não completou
+            # Limpa arquivo temporario se transferencia nao completou
             if tmp_path:
                 try:
                     os.remove(tmp_path)

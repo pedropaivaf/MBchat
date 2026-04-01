@@ -69,6 +69,9 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
   - Dialogo de transferencia com progresso em MB, velocidade, estado visual
   - Quem envia ve "Envio concluido"; quem recebe ve "Abrir Pasta" + "Fechar"
 - Historico com busca e filtro por data
+- Dois estilos de mensagem (Preferencias): linear (padrao LAN Messenger) e bolhas (estilo WhatsApp)
+  - Funciona tanto em chat individual quanto em grupo
+  - Bolhas proprias alinhadas a direita (azul claro), peer a esquerda (cinza)
 - 3 temas visuais + UI modernizada (flat design, hover effects)
 - Bordas arredondadas DWM em todas as janelas (Windows 11+)
 - Notificacoes Windows clicaveis (winotify) para chats individuais e grupos
@@ -94,6 +97,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
 - Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
+- Comentarios no codigo: usar apenas `#` (inline comments), NUNCA `"""docstrings"""`. Docstrings poluem o sistema (help(), __doc__, error traces).
 
 ## Tipos de mensagem de rede
 

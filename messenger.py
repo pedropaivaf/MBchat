@@ -1,21 +1,20 @@
-"""
-MB Chat - Camada de mensagens (controller)
-Liga network <-> database <-> GUI
+# MB Chat - Camada de mensagens (controller)
+# Liga network <-> database <-> GUI
+#
+# Este modulo e o cerebro do app. Orquestra:
+# - Discovery de peers (via UDPDiscovery)
+# - Envio/recebimento de mensagens (via TCPClient/TCPServer)
+# - Transferencia de arquivos (via FileSender/FileReceiver)
+# - Gerenciamento de grupos (convites, mensagens, entrada/saida)
+# - Persistencia no banco de dados (via Database)
+# - Notificacao da GUI via callbacks
+#
+# A GUI nunca acessa rede ou banco diretamente — tudo passa por aqui.
+# Arquitetura: gui.py -> messenger.py -> network.py / database.py
 
-Este módulo é o cérebro do app. Orquestra:
-- Discovery de peers (via UDPDiscovery)
-- Envio/recebimento de mensagens (via TCPClient/TCPServer)
-- Transferência de arquivos (via FileSender/FileReceiver)
-- Gerenciamento de grupos (convites, mensagens, entrada/saída)
-- Persistência no banco de dados (via Database)
-- Notificação da GUI via callbacks
-
-A GUI nunca acessa rede ou banco diretamente — tudo passa por aqui.
-Arquitetura: gui.py → messenger.py → network.py / database.py
-"""
 import time       # Timestamps para mensagens
-import uuid       # IDs únicos para mensagens e transferências
-import os         # Caminhos de arquivos e diretórios
+import uuid       # IDs unicos para mensagens e transferencias
+import os         # Caminhos de arquivos e diretorios
 import threading  # Lock para contadores thread-safe
 
 # Importa componentes de rede e constantes
@@ -29,14 +28,27 @@ from network import (
 from database import Database  # Banco de dados local
 
 
+# Controller principal do MB Chat
+# Conecta as 3 camadas: GUI <-> Rede <-> Banco de dados
+# A GUI registra callbacks no __init__ e recebe notificacoes
+# quando eventos acontecem (nova mensagem, peer encontrado, etc)
 class Messenger:
-    """Controller principal do MB Chat.
 
-    Conecta as 3 camadas: GUI ↔ Rede ↔ Banco de dados.
-    A GUI registra callbacks no __init__ e recebe notificações
-    quando eventos acontecem (nova mensagem, peer encontrado, etc).
-    """
-
+    # Inicializa o messenger com todos os callbacks da GUI
+    # display_name: Nome de exibicao (None = usa do banco ou login do OS)
+    # on_user_found: Callback(uid, info) - peer descoberto na rede
+    # on_user_lost: Callback(uid, info) - peer perdeu conexao
+    # on_message: Callback(from_user, content, msg_id, timestamp) - msg recebida
+    # on_status: Callback(from_user, status) - peer mudou status
+    # on_typing: Callback(from_user, is_typing) - peer digitando
+    # on_file_incoming: Callback(file_id, from_user, name, filename, size) - arquivo recebido
+    # on_file_progress: Callback(file_id, transferred, total) - progresso
+    # on_file_complete: Callback(file_id, filepath) - transferencia completa
+    # on_file_error: Callback(file_id, error_msg) - erro na transferencia
+    # on_group_invite: Callback(group_id, name, from_user, members, type) - convite grupo
+    # on_group_message: Callback(group_id, from_uid, name, content, ts) - msg grupo
+    # on_group_leave: Callback(group_id, uid, name) - membro saiu do grupo
+    # on_group_join: Callback(group_id, uid, name) - membro entrou no grupo
     def __init__(self, display_name=None, on_user_found=None,
                  on_user_lost=None, on_message=None, on_status=None,
                  on_typing=None, on_file_incoming=None,
@@ -44,27 +56,9 @@ class Messenger:
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
                  on_group_join=None):
-        """Inicializa o messenger com todos os callbacks da GUI.
-
-        Args:
-            display_name: Nome de exibição (None = usa do banco ou login do OS)
-            on_user_found: Callback(uid, info) - peer descoberto na rede
-            on_user_lost: Callback(uid, info) - peer perdeu conexão
-            on_message: Callback(from_user, content, msg_id, timestamp) - msg recebida
-            on_status: Callback(from_user, status) - peer mudou status
-            on_typing: Callback(from_user, is_typing) - peer digitando
-            on_file_incoming: Callback(file_id, from_user, name, filename, size) - arquivo recebido
-            on_file_progress: Callback(file_id, transferred, total) - progresso
-            on_file_complete: Callback(file_id, filepath) - transferência completa
-            on_file_error: Callback(file_id, error_msg) - erro na transferência
-            on_group_invite: Callback(group_id, name, from_user, members, type) - convite grupo
-            on_group_message: Callback(group_id, from_uid, name, content, ts) - msg grupo
-            on_group_leave: Callback(group_id, uid, name) - membro saiu do grupo
-            on_group_join: Callback(group_id, uid, name) - membro entrou no grupo
-        """
-        self.db = Database()  # Conexão com banco de dados local
-        self._msg_counter = 0  # Contador para IDs únicos de mensagem
-        self._lock = threading.Lock()  # Lock para operações thread-safe
+        self.db = Database()  # Conexao com banco de dados local
+        self._msg_counter = 0  # Contador para IDs unicos de mensagem
+        self._lock = threading.Lock()  # Lock para operacoes thread-safe
         self._file_senders = {}  # file_id -> FileSender (envios ativos)
         self._file_receiver = None  # FileReceiver (receptor de arquivos)
 
@@ -73,7 +67,7 @@ class Messenger:
         self.on_user_lost = on_user_lost        # Peer perdido
         self.on_message = on_message            # Mensagem recebida
         self.on_status = on_status              # Status mudou
-        self.on_typing = on_typing              # Indicador de digitação
+        self.on_typing = on_typing              # Indicador de digitacao
         self.on_file_incoming = on_file_incoming  # Arquivo chegando
         self.on_file_progress = on_file_progress  # Progresso do arquivo
         self.on_file_complete = on_file_complete  # Arquivo completo
@@ -83,11 +77,11 @@ class Messenger:
         self.on_group_leave = on_group_leave    # Membro saiu do grupo
         self.on_group_join = on_group_join      # Membro entrou no grupo
 
-        # === Grupos em memória ===
+        # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
         self._groups = {}
 
-        # === Setup do usuário local ===
+        # === Setup do usuario local ===
         self.user_id = generate_user_id()  # ID baseado em MAC+hostname
         local = self.db.get_local_user()   # Tenta carregar do banco
 
@@ -101,12 +95,12 @@ class Messenger:
 
         self.status = 'online'  # Status inicial
         self.note = self.db.get_local_note()  # Nota pessoal do banco
-        self.avatar_index = int(self.db.get_setting('avatar_index', '0'))  # Avatar padrão
+        self.avatar_index = int(self.db.get_setting('avatar_index', '0'))  # Avatar padrao
         self.avatar_data = self._generate_avatar_thumbnail()  # Thumbnail base64
         self.db.set_local_user(self.user_id, self.display_name, self.status)
 
         # Marca todos os contatos como offline no startup
-        # (não sabemos quem está online até receber announces)
+        # (nao sabemos quem esta online ate receber announces)
         self.db.set_all_contacts_offline()
 
         # === Componentes de rede ===
@@ -141,30 +135,28 @@ class Messenger:
         )
 
     # ========================================
-    # LIFECYCLE — Iniciar e parar serviços
+    # LIFECYCLE — Iniciar e parar servicos
     # ========================================
 
+    # Inicia todos os servicos de rede (discovery + TCP + file)
     def start(self):
-        """Inicia todos os serviços de rede (discovery + TCP + file)."""
-        self.discovery.start()      # Começa a enviar/receber announces UDP
-        self.tcp_server.start()     # Começa a aceitar conexões TCP
-        self._file_receiver.start()  # Começa a aceitar arquivos
+        self.discovery.start()      # Comeca a enviar/receber announces UDP
+        self.tcp_server.start()     # Comeca a aceitar conexoes TCP
+        self._file_receiver.start()  # Comeca a aceitar arquivos
 
+    # Para todos os servicos e limpa estado
     def stop(self):
-        """Para todos os serviços e limpa estado."""
         self.db.update_local_status('offline')   # Marca como offline no banco
         self.db.set_all_contacts_offline()        # Marca todos os contatos como offline
         self.discovery.stop()      # Para discovery (envia depart)
         self.tcp_server.stop()     # Para servidor TCP
         self._file_receiver.stop()  # Para receptor de arquivos
-        self.db.close()            # Fecha conexão do banco
+        self.db.close()            # Fecha conexao do banco
 
+    # Gera um ID unico para mensagem
+    # Formato: "user_id_contador_timestamp_ms"
+    # Thread-safe gracas ao lock
     def _next_msg_id(self):
-        """Gera um ID único para mensagem.
-
-        Formato: "user_id_contador_timestamp_ms"
-        Thread-safe graças ao lock.
-        """
         with self._lock:
             self._msg_counter += 1
             return f"{self.user_id}_{self._msg_counter}_{int(time.time()*1000)}"
@@ -173,12 +165,10 @@ class Messenger:
     # PEER DISCOVERY — Callbacks do UDP
     # ========================================
 
+    # Callback chamado quando um peer e encontrado/atualizado via UDP
+    # Salva no banco e notifica a GUI
+    # Chamado a cada announce recebido (nao so novos peers)
     def _on_peer_found(self, uid, info):
-        """Callback chamado quando um peer é encontrado/atualizado via UDP.
-
-        Salva no banco e notifica a GUI.
-        Chamado a cada announce recebido (não só novos peers).
-        """
         self.db.upsert_contact(
             uid, info['display_name'], info['ip'],
             hostname=info.get('hostname', ''),
@@ -191,11 +181,9 @@ class Messenger:
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
 
+    # Callback chamado quando um peer e perdido (timeout ou depart)
+    # Marca como offline no banco e notifica a GUI
     def _on_peer_lost(self, uid, info):
-        """Callback chamado quando um peer é perdido (timeout ou depart).
-
-        Marca como offline no banco e notifica a GUI.
-        """
         self.db.set_contact_offline(uid)
         if self.on_user_lost:
             self.on_user_lost(uid, info)  # Notifica GUI
@@ -204,19 +192,17 @@ class Messenger:
     # TCP MESSAGES — Processamento de mensagens
     # ========================================
 
+    # Callback central que roteia todas as mensagens TCP recebidas
+    # Tipos tratados:
+    # - MT_MESSAGE: mensagem de texto individual
+    # - MT_TYPING: indicador de digitacao
+    # - MT_STATUS: mudanca de status
+    # - MT_ACK: confirmacao de recebimento
+    # - MT_GROUP_INV: convite para grupo
+    # - MT_GROUP_MSG: mensagem de grupo
+    # - MT_GROUP_LEAVE: membro saiu do grupo
+    # - MT_GROUP_JOIN: membro entrou no grupo
     def _on_tcp_message(self, msg, addr):
-        """Callback central que roteia todas as mensagens TCP recebidas.
-
-        Tipos tratados:
-        - MT_MESSAGE: mensagem de texto individual
-        - MT_TYPING: indicador de digitação
-        - MT_STATUS: mudança de status
-        - MT_ACK: confirmação de recebimento
-        - MT_GROUP_INV: convite para grupo
-        - MT_GROUP_MSG: mensagem de grupo
-        - MT_GROUP_LEAVE: membro saiu do grupo
-        - MT_GROUP_JOIN: membro entrou no grupo
-        """
         msg_type = msg.get('type')
         from_user = msg.get('from_user')
 
@@ -231,7 +217,7 @@ class Messenger:
                                 content, 'text', is_sent=False,
                                 timestamp=timestamp)
 
-            # Envia ACK (confirmação de recebimento) de volta
+            # Envia ACK (confirmacao de recebimento) de volta
             contact = self.db.get_contact(from_user)
             if contact:
                 TCPClient.send_message(contact['ip_address'], TCP_PORT, {
@@ -244,12 +230,12 @@ class Messenger:
             if self.on_message:
                 self.on_message(from_user, content, msg_id, timestamp)
 
-        # --- Indicador de digitação ---
+        # --- Indicador de digitacao ---
         elif msg_type == MT_TYPING:
             if self.on_typing:
                 self.on_typing(from_user, msg.get('is_typing', False))
 
-        # --- Mudança de status ---
+        # --- Mudanca de status ---
         elif msg_type == MT_STATUS:
             new_status = msg.get('status', 'online')
             self.db.upsert_contact(
@@ -258,9 +244,9 @@ class Messenger:
             if self.on_status:
                 self.on_status(from_user, new_status)
 
-        # --- Confirmação de recebimento ---
+        # --- Confirmacao de recebimento ---
         elif msg_type == MT_ACK:
-            pass  # Pode ser usado para marcar entrega (não implementado)
+            pass  # Pode ser usado para marcar entrega (nao implementado)
 
         # --- Convite para grupo ---
         elif msg_type == MT_GROUP_INV:
@@ -269,7 +255,7 @@ class Messenger:
             group_type = msg.get('group_type', 'temp')  # temp ou fixed
             members = msg.get('members', [])
 
-            # Salva grupo em memória
+            # Salva grupo em memoria
             self._groups[group_id] = {'name': group_name, 'members': members,
                                        'group_type': group_type}
 
@@ -303,12 +289,12 @@ class Messenger:
             group_id = msg.get('group_id')
             display_name = msg.get('display_name', from_user)
 
-            # Remove membro da lista em memória
+            # Remove membro da lista em memoria
             group = self._groups.get(group_id)
             if group:
                 group['members'] = [m for m in group['members']
                                     if m['uid'] != from_user]
-                # Se grupo fixo, atualiza o banco também
+                # Se grupo fixo, atualiza o banco tambem
                 if group.get('group_type') == 'fixed':
                     self.db.delete_group_member(group_id, from_user)
 
@@ -322,7 +308,7 @@ class Messenger:
             display_name = msg.get('display_name', from_user)
             new_ip = msg.get('ip', '')
 
-            # Adiciona membro à lista em memória (evita duplicata)
+            # Adiciona membro a lista em memoria (evita duplicata)
             group = self._groups.get(group_id)
             if group:
                 if not any(m['uid'] == from_user for m in group['members']):
@@ -341,26 +327,20 @@ class Messenger:
                 self.on_group_join(group_id, from_user, display_name)
 
     # ========================================
-    # SEND — Ações de envio
+    # SEND — Acoes de envio
     # ========================================
 
+    # Envia uma mensagem de texto para um peer
+    # Salva no banco local e envia via TCP
+    # to_user_id: user_id do destinatario
+    # content: Texto da mensagem
+    # Retorna True se enviou com sucesso, False se falhou
     def send_message(self, to_user_id, content):
-        """Envia uma mensagem de texto para um peer.
-
-        Salva no banco local e envia via TCP.
-
-        Args:
-            to_user_id: user_id do destinatário
-            content: Texto da mensagem
-
-        Returns:
-            True se enviou com sucesso, False se falhou
-        """
         contact = self.db.get_contact(to_user_id)
         if not contact:
-            return False  # Contato não encontrado
+            return False  # Contato nao encontrado
 
-        msg_id = self._next_msg_id()  # Gera ID único
+        msg_id = self._next_msg_id()  # Gera ID unico
         timestamp = time.time()
 
         # Salva mensagem como enviada no banco local
@@ -379,8 +359,8 @@ class Messenger:
             'timestamp': timestamp
         })
 
+    # Envia indicador de digitacao para um peer
     def send_typing(self, to_user_id, is_typing=True):
-        """Envia indicador de digitação para um peer."""
         contact = self.db.get_contact(to_user_id)
         if not contact:
             return
@@ -390,44 +370,39 @@ class Messenger:
             'is_typing': is_typing
         })
 
+    # Altera status do usuario (online/away/busy) e propaga
     def change_status(self, status):
-        """Altera status do usuário (online/away/busy) e propaga."""
         self.status = status
         self.db.update_local_status(status)   # Salva no banco
         self.discovery.update_status(status)   # Propaga via UDP announce
 
+    # Altera nome de exibicao e propaga
     def change_name(self, name):
-        """Altera nome de exibição e propaga."""
         self.display_name = name
         self.db.set_local_user(self.user_id, name, self.status)  # Salva
         self.discovery.update_name(name)  # Propaga
 
+    # Altera nota pessoal e propaga
     def change_note(self, note):
-        """Altera nota pessoal e propaga."""
         self.note = note
         self.db.update_local_note(note)   # Salva no banco
         self.discovery.update_note(note)  # Propaga via announce
 
+    # Altera avatar e propaga para todos os peers
+    # index: Indice do avatar padrao
+    # custom_path: Caminho da foto custom (vazio = avatar padrao)
     def change_avatar(self, index, custom_path=''):
-        """Altera avatar e propaga para todos os peers.
-
-        Args:
-            index: Índice do avatar padrão
-            custom_path: Caminho da foto custom (vazio = avatar padrão)
-        """
         self.avatar_index = index
-        self.db.set_setting('avatar_index', str(index))    # Salva índice
+        self.db.set_setting('avatar_index', str(index))    # Salva indice
         self.db.set_setting('custom_avatar', custom_path)  # Salva caminho
         self.avatar_data = self._generate_avatar_thumbnail()  # Gera thumbnail
         self.discovery.update_avatar(index, self.avatar_data)  # Propaga
 
+    # Gera thumbnail base64 JPEG do avatar custom para envio via rede
+    # Reduz a imagem para 48x48 pixels com qualidade 70% (~1-2KB)
+    # Esse thumbnail e incluido no pacote UDP announce
+    # Retorna string vazia se nao ha avatar custom
     def _generate_avatar_thumbnail(self):
-        """Gera thumbnail base64 JPEG do avatar custom para envio via rede.
-
-        Reduz a imagem para 48x48 pixels com qualidade 70% (~1-2KB).
-        Esse thumbnail é incluído no pacote UDP announce.
-        Retorna string vazia se não há avatar custom.
-        """
         custom = self.db.get_setting('custom_avatar', '')
         if not custom or not os.path.exists(custom):
             return ''  # Sem avatar custom
@@ -436,37 +411,31 @@ class Messenger:
             from PIL import Image
             from io import BytesIO
             img = Image.open(custom)
-            img.thumbnail((48, 48), Image.LANCZOS)  # Reduz mantendo proporção
+            img.thumbnail((48, 48), Image.LANCZOS)  # Reduz mantendo proporcao
             buf = BytesIO()
             img.convert('RGB').save(buf, format='JPEG', quality=70)
             return base64.b64encode(buf.getvalue()).decode('ascii')
         except Exception:
-            return ''  # PIL não disponível ou erro na imagem
+            return ''  # PIL nao disponivel ou erro na imagem
 
     # ========================================
-    # FILE TRANSFER — Transferência de arquivos
+    # FILE TRANSFER — Transferencia de arquivos
     # ========================================
 
+    # Inicia envio de arquivo para um peer
+    # 1. Registra transferencia no banco
+    # 2. Envia pedido (MT_FILE_REQ) via TCP
+    # 3. Cria FileSender que conecta na porta de arquivo
+    # 4. Aguarda aceitacao e comeca a enviar
+    # to_user_id: user_id do destinatario
+    # filepath: Caminho completo do arquivo
+    # Retorna file_id se sucesso, None se contato nao encontrado
     def send_file(self, to_user_id, filepath):
-        """Inicia envio de arquivo para um peer.
-
-        1. Registra transferência no banco
-        2. Envia pedido (MT_FILE_REQ) via TCP
-        3. Cria FileSender que conecta na porta de arquivo
-        4. Aguarda aceitação e começa a enviar
-
-        Args:
-            to_user_id: user_id do destinatário
-            filepath: Caminho completo do arquivo
-
-        Returns:
-            file_id se sucesso, None se contato não encontrado
-        """
         contact = self.db.get_contact(to_user_id)
         if not contact:
             return None
 
-        file_id = str(uuid.uuid4()).replace('-', '')  # ID único sem hífens
+        file_id = str(uuid.uuid4()).replace('-', '')  # ID unico sem hifens
         filename = os.path.basename(filepath)
         filesize = os.path.getsize(filepath)
 
@@ -474,7 +443,7 @@ class Messenger:
         self.db.save_file_transfer(file_id, self.user_id, to_user_id,
                                    filename, filesize, filepath)
 
-        # Envia pedido de transferência via mensagem TCP
+        # Envia pedido de transferencia via mensagem TCP
         TCPClient.send_message(contact['ip_address'], TCP_PORT, {
             'type': MT_FILE_REQ,
             'from_user': self.user_id,
@@ -496,21 +465,21 @@ class Messenger:
         sender.start()  # Inicia thread de envio
         return file_id
 
+    # Aceita um arquivo recebido (chamado pela GUI)
     def accept_file(self, file_id):
-        """Aceita um arquivo recebido (chamado pela GUI)."""
         self._file_receiver.accept_file(file_id)
 
+    # Recusa um arquivo recebido (chamado pela GUI)
     def decline_file(self, file_id):
-        """Recusa um arquivo recebido (chamado pela GUI)."""
         self._file_receiver.decline_file(file_id)
 
+    # Cancela envio de arquivo em andamento
     def cancel_file(self, file_id):
-        """Cancela envio de arquivo em andamento."""
         if file_id in self._file_senders:
             self._file_senders[file_id].cancel()
 
+    # Callback quando recebe pedido de arquivo via TCP
     def _on_file_request(self, msg, addr):
-        """Callback quando recebe pedido de arquivo via TCP."""
         if self.on_file_incoming:
             self.on_file_incoming(
                 msg.get('file_id'),
@@ -520,23 +489,23 @@ class Messenger:
                 msg.get('filesize', 0)
             )
 
+    # Callback interno do FileReceiver (nao usado, tratado via TCP)
     def _on_file_incoming_internal(self, file_id, filename, filesize, ip):
-        """Callback interno do FileReceiver (não usado, tratado via TCP)."""
         pass
 
+    # Callback de progresso — repassa para GUI
     def _on_file_progress_internal(self, file_id, transferred, total):
-        """Callback de progresso — repassa para GUI."""
         if self.on_file_progress:
             self.on_file_progress(file_id, transferred, total)
 
+    # Callback de conclusao — atualiza banco e notifica GUI
     def _on_file_complete_internal(self, file_id, filepath=''):
-        """Callback de conclusão — atualiza banco e notifica GUI."""
         self.db.update_file_transfer(file_id, status='completed', progress=100)
         if self.on_file_complete:
             self.on_file_complete(file_id, filepath)
 
+    # Callback de erro — atualiza banco e notifica GUI
     def _on_file_error_internal(self, file_id, error):
-        """Callback de erro — atualiza banco e notifica GUI."""
         self.db.update_file_transfer(file_id, status='error')
         if self.on_file_error:
             self.on_file_error(file_id, error)
@@ -545,17 +514,14 @@ class Messenger:
     # GROUP CHAT — Grupos de conversa
     # ========================================
 
+    # Cria grupo e envia convite para todos os membros
+    # group_id: ID unico do grupo
+    # group_name: Nome do grupo
+    # member_ids: Lista de user_ids dos membros convidados
+    # group_type: 'temp' (temporario) ou 'fixed' (fixo/persistente)
     def send_group_invite(self, group_id, group_name, member_ids,
                           group_type='temp'):
-        """Cria grupo e envia convite para todos os membros.
-
-        Args:
-            group_id: ID único do grupo
-            group_name: Nome do grupo
-            member_ids: Lista de user_ids dos membros convidados
-            group_type: 'temp' (temporário) ou 'fixed' (fixo/persistente)
-        """
-        # Monta lista de membros começando pelo próprio usuário
+        # Monta lista de membros comecando pelo proprio usuario
         members_info = [{'uid': self.user_id, 'display_name': self.display_name,
                          'ip': get_local_ip()}]
         for uid in member_ids:
@@ -565,7 +531,7 @@ class Messenger:
                                      'display_name': contact['display_name'],
                                      'ip': contact['ip_address']})
 
-        # Salva grupo em memória
+        # Salva grupo em memoria
         self._groups[group_id] = {'name': group_name, 'members': members_info,
                                    'group_type': group_type}
 
@@ -590,17 +556,15 @@ class Messenger:
                     'members': members_info,  # Lista completa de membros
                 })
 
+    # Notifica membros existentes que alguem entrou no grupo
+    # Envia MT_GROUP_JOIN para todos os membros (exceto nos mesmos)
     def notify_group_join(self, group_id, new_uid, new_display_name):
-        """Notifica membros existentes que alguém entrou no grupo.
-
-        Envia MT_GROUP_JOIN para todos os membros (exceto nós mesmos).
-        """
         group = self._groups.get(group_id)
         if not group:
             return
         for member in group['members']:
             if member['uid'] == self.user_id:
-                continue  # Não envia para si mesmo
+                continue  # Nao envia para si mesmo
             TCPClient.send_message(member['ip'], TCP_PORT, {
                 'type': MT_GROUP_JOIN,
                 'from_user': new_uid,
@@ -609,15 +573,11 @@ class Messenger:
                 'ip': get_local_ip() if new_uid == self.user_id else '',
             })
 
+    # Envia arquivo para todos os membros do grupo (individualmente)
+    # Como nao ha servidor central, cada membro recebe uma copia
+    # direta via ponto-a-ponto
+    # Retorna lista de file_ids criados
     def send_file_to_group(self, group_id, filepath):
-        """Envia arquivo para todos os membros do grupo (individualmente).
-
-        Como não há servidor central, cada membro recebe uma cópia
-        direta via ponto-a-ponto.
-
-        Returns:
-            Lista de file_ids criados
-        """
         group = self._groups.get(group_id)
         if not group:
             return []
@@ -625,18 +585,16 @@ class Messenger:
         for member in group['members']:
             uid = member['uid']
             if uid == self.user_id:
-                continue  # Não envia para si mesmo
+                continue  # Nao envia para si mesmo
             fid = self.send_file(uid, filepath)
             if fid:
                 file_ids.append(fid)
         return file_ids
 
+    # Envia mensagem de texto para todos os membros do grupo
+    # Usa mesh: cada membro envia diretamente para todos os outros
+    # Nao ha servidor central intermediando
     def send_group_message(self, group_id, content):
-        """Envia mensagem de texto para todos os membros do grupo.
-
-        Usa mesh: cada membro envia diretamente para todos os outros.
-        Não há servidor central intermediando.
-        """
         group = self._groups.get(group_id)
         if not group:
             return
@@ -658,15 +616,11 @@ class Messenger:
                 'timestamp': timestamp,
             })
 
+    # Carrega grupos fixos do banco para memoria
+    # Chamado no startup para restaurar grupos persistidos
+    # Temporarios nao sao salvos no banco, existem so em memoria
+    # Retorna lista de dicts dos grupos carregados
     def load_saved_groups(self):
-        """Carrega grupos fixos do banco para memória.
-
-        Chamado no startup para restaurar grupos persistidos.
-        Temporários não são salvos no banco, existem só em memória.
-
-        Returns:
-            Lista de dicts dos grupos carregados
-        """
         groups = self.db.get_groups('fixed')  # Busca apenas fixos
         for g in groups:
             gid = g['group_id']
@@ -679,13 +633,11 @@ class Messenger:
             }
         return groups
 
+    # Sai de um grupo: notifica membros e remove dados
+    # 1. Envia MT_GROUP_LEAVE para todos os membros
+    # 2. Remove grupo da memoria
+    # 3. Remove grupo do banco (se fixo)
     def leave_group(self, group_id):
-        """Sai de um grupo: notifica membros e remove dados.
-
-        1. Envia MT_GROUP_LEAVE para todos os membros
-        2. Remove grupo da memória
-        3. Remove grupo do banco (se fixo)
-        """
         group = self._groups.get(group_id)
         if group:
             # Notifica todos os membros antes de sair
@@ -698,33 +650,33 @@ class Messenger:
                     'display_name': self.display_name,
                     'group_id': group_id,
                 })
-            del self._groups[group_id]  # Remove da memória
+            del self._groups[group_id]  # Remove da memoria
         self.db.delete_group(group_id)  # Remove do banco (CASCADE nos membros)
 
     # ========================================
-    # HISTORY — Acesso ao histórico
+    # HISTORY — Acesso ao historico
     # ========================================
 
+    # Retorna historico de conversa com um peer
     def get_chat_history(self, peer_id, limit=None):
-        """Retorna histórico de conversa com um peer."""
         return self.db.get_chat_history(self.user_id, peer_id, limit)
 
+    # Retorna lista de contatos do banco
     def get_contacts(self, online_only=False):
-        """Retorna lista de contatos do banco."""
         return self.db.get_contacts(online_only)
 
+    # Busca mensagens por texto
     def search_messages(self, query):
-        """Busca mensagens por texto."""
         return self.db.search_messages(query)
 
+    # Retorna contagem de mensagens nao lidas de um peer
     def get_unread_count(self, from_user_id):
-        """Retorna contagem de mensagens não lidas de um peer."""
         return self.db.get_unread_count(self.user_id, from_user_id)
 
+    # Retorna mensagens nao lidas de um peer
     def get_unread_messages(self, from_user_id):
-        """Retorna mensagens não lidas de um peer."""
         return self.db.get_unread_messages(self.user_id, from_user_id)
 
+    # Marca todas as mensagens de um peer como lidas
     def mark_as_read(self, from_user_id):
-        """Marca todas as mensagens de um peer como lidas."""
         self.db.mark_as_read(self.user_id, from_user_id)
