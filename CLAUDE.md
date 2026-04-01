@@ -59,6 +59,8 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
   - Fixo: fechar janela apenas esconde (permanece no grupo); sair via botao "Sair do Grupo"
   - Notificacoes de entrada/saida: "X entrou no grupo" e "X saiu do grupo" para todos os membros
   - Ao sair: remove participante do painel de todos, remove grupo do TreeView de quem saiu
+  - Mensagem de grupo NAO abre janela automaticamente: pisca taskbar + notificacao Windows
+  - Clicar na notificacao ou duplo-clique no TreeView abre grupo com foco no input
 - Avatares com foto personalizada sincronizada via rede (thumbnail JPEG 48x48 no UDP announce)
   - Recorte circular com antialias 2x (PIL mask), sem borda
   - Fotos quadradas recortadas automaticamente para circulo
@@ -69,7 +71,9 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Historico com busca e filtro por data
 - 3 temas visuais + UI modernizada (flat design, hover effects)
 - Bordas arredondadas DWM em todas as janelas (Windows 11+)
-- Notificacoes Windows clicaveis (winotify)
+- Notificacoes Windows clicaveis (winotify) para chats individuais e grupos
+  - Chat individual: `mbchat://open/{peer_id}` — abre chat
+  - Grupo: `mbchat://group/{group_id}` — abre grupo com msgs pendentes
 - System tray, instancia unica, auto-start
 - Popups fecham com Escape, emoji pickers fecham ao clicar fora
 
