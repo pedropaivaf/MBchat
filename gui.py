@@ -2716,87 +2716,79 @@ class GroupChatWindow(tk.Toplevel):
         self._btn_toggle.pack(side='right')
         _add_hover(self._btn_toggle, '#1a3f7a', '#2451a0')
 
-        # ===== Input area (pack bottom FIRST so it gets space) =====
-        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 5))
+        # ===== Barra de ações (bottom - pack antes do input) =====
+        win_bg = t.get('bg_window', '#f5f7fa')
+        btn_frame = tk.Frame(self, bg=win_bg)
+        btn_frame.pack(fill='x', side='bottom', padx=6, pady=(0, 5))
 
-        # Row: campo de texto (esquerda) + botao enviar (direita, separado)
-        input_row = tk.Frame(input_outer, bg=t.get('input_border', '#e2e8f0'))
-        input_row.pack(fill='both', expand=True, padx=1, pady=1)
-
-        # Botao Enviar separado do campo de texto
+        # Botão Enviar destacado em navy
         send_bg = t.get('btn_send_bg', t.get('btn_bg', '#0f2a5c'))
         send_fg = t.get('btn_send_fg', '#ffffff')
-        btn_send = tk.Button(input_row, text=f' {_t("send_btn")} ',
+        btn_send = tk.Button(btn_frame, text=f' {_t("send_btn")} ',
                              font=('Segoe UI', 9, 'bold'),
                              bg=send_bg, fg=send_fg,
                              relief='flat', bd=0, cursor='hand2',
-                             padx=10, pady=3,
+                             padx=12, pady=3,
                              activebackground=t.get('btn_active', '#1a3f7a'),
                              activeforeground=send_fg,
                              command=self._send_message)
-        btn_send.pack(side='right', fill='y', padx=(4, 2), pady=2)
+        btn_send.pack(side='right', pady=2)
         _add_hover(btn_send, '#0f2a5c', '#1a3f7a')
 
-        # Container do texto com margem
-        input_inner = tk.Frame(input_row, bg=t.get('bg_input', '#f7fafc'))
-        input_inner.pack(side='left', fill='both', expand=True)
-
-        # Toolbar compacta dentro do input
-        toolbar = tk.Frame(input_inner, bg=t.get('bg_input', '#f7fafc'))
-        toolbar.pack(side='top', fill='x', padx=4, pady=(4, 0))
+        # Botões flat à esquerda
+        flat_fg = '#4a5568'
 
         # Emoji button
         _emoji_img = _render_color_emoji('\U0001f60a', 18)
         if _emoji_img:
             self._toolbar_emoji_img = _emoji_img
-            btn_emoji = tk.Button(toolbar, image=_emoji_img, relief='flat',
+            btn_emoji = tk.Button(btn_frame, image=_emoji_img, relief='flat',
                                   bd=0, cursor='hand2',
-                                  bg=t.get('bg_input', '#f7fafc'),
-                                  activebackground='#e2e8f0',
+                                  bg=win_bg, activebackground='#e2e8f0',
                                   command=self._show_emoji_picker)
         else:
-            btn_emoji = tk.Button(toolbar, text='\U0001f60a',
+            btn_emoji = tk.Button(btn_frame, text='\U0001f60a',
                                   font=('Segoe UI', 10), relief='flat',
                                   bd=0, cursor='hand2',
-                                  bg=t.get('bg_input', '#f7fafc'),
+                                  bg=win_bg,
                                   command=self._show_emoji_picker)
-        btn_emoji.pack(side='left', padx=2)
+        btn_emoji.pack(side='left', pady=2, padx=(0, 2))
 
         # Font button
-        btn_font = tk.Button(toolbar, text='A', font=('Segoe UI', 10, 'bold'),
+        btn_font = tk.Button(btn_frame, text='A', font=('Segoe UI', 10, 'bold'),
                              relief='flat', bd=0, cursor='hand2',
-                             bg=t.get('bg_input', '#f7fafc'), fg='#4a5568',
+                             bg=win_bg, fg=flat_fg,
                              activebackground='#e2e8f0',
                              command=self._change_font)
-        btn_font.pack(side='left', padx=2)
+        btn_font.pack(side='left', pady=2, padx=(0, 2))
 
         # Attach file button
-        _attach_ico = _create_mdl2_icon_static('\uE723', 18, '#4a5568')
+        _attach_ico = _create_mdl2_icon_static('\uE723', 18, flat_fg)
         if _attach_ico:
             self._toolbar_attach_img = _attach_ico
-            btn_attach = tk.Button(toolbar, image=_attach_ico, relief='flat',
+            btn_attach = tk.Button(btn_frame, image=_attach_ico, relief='flat',
                                    bd=0, cursor='hand2',
-                                   bg=t.get('bg_input', '#f7fafc'),
-                                   activebackground='#e2e8f0',
+                                   bg=win_bg, activebackground='#e2e8f0',
                                    command=self._send_file)
         else:
-            btn_attach = tk.Button(toolbar, text='\U0001f4ce',
+            btn_attach = tk.Button(btn_frame, text='\U0001f4ce',
                                    font=('Segoe UI', 10), relief='flat',
                                    bd=0, cursor='hand2',
-                                   bg=t.get('bg_input', '#f7fafc'),
-                                   activebackground='#e2e8f0',
+                                   bg=win_bg, activebackground='#e2e8f0',
                                    command=self._send_file)
-        btn_attach.pack(side='left', padx=2)
+        btn_attach.pack(side='left', pady=2, padx=(0, 2))
 
-        # Campo de texto
-        self.entry = tk.Text(input_inner, font=('Segoe UI', 11),
+        # ===== Input area =====
+        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
+
+        self.entry = tk.Text(input_outer, font=('Segoe UI', 11),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=3,
-                             wrap='word', padx=8, pady=4,
+                             wrap='word', padx=8, pady=6,
                              insertbackground=t.get('fg_black', '#1a202c'))
-        self.entry.pack(fill='both', expand=True, padx=1, pady=(0, 2))
+        self.entry.pack(fill='both', expand=True, padx=1, pady=1)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.focus_set()

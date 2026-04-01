@@ -75,7 +75,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce.
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
-- Layout GroupChatWindow: input/toolbar packam com side='bottom' ANTES do PanedWindow para garantir espaco.
+- Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
 
 ## Tipos de mensagem de rede
 
