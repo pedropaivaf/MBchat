@@ -2198,6 +2198,7 @@ class ChatWindow(tk.Toplevel):
         self.title(f'{peer_name} - {APP_NAME}')
         self.minsize(350, 350)
         _center_window(self, 420, 480)
+        self.bind('<Escape>', lambda e: self.destroy())
         _apply_rounded_corners(self)
         self.configure(bg=t.get('bg_window', '#f5f7fa'))
         ico = _get_icon_path()
@@ -2452,9 +2453,9 @@ class ChatWindow(tk.Toplevel):
     # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
     # Após exibir, marca todas como lidas no banco de dados.
     def _load_history(self):
-        # Busca mensagens não lidas do banco para este contato
-        unreads = self.messenger.get_unread_messages(self.peer_id)
-        for msg in unreads:
+        # Busca histórico recente (últimas 40 mensagens) para garantir que a janela nunca abra vazia
+        history = self.messenger.db.get_chat_history(self.messenger.user_id, self.peer_id, limit=40)
+        for msg in history:
             # Determina se a mensagem foi enviada por mim ou pelo contato
             is_mine = msg['from_user'] != self.peer_id
             sender = self.app.messenger.display_name if is_mine else self.peer_name
@@ -3476,6 +3477,7 @@ class GroupChatWindow(tk.Toplevel):
         self.minsize(480, 380)
         _center_window(self, 620, 480)
         _apply_rounded_corners(self)
+        self.bind('<Escape>', lambda e: self.destroy())
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
 
@@ -3610,6 +3612,7 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
+        self.entry.bind('<KeyRelease>', self._on_key)
         self.entry.focus_set()
 
         # ===== Separator =====
@@ -4733,7 +4736,22 @@ class LanMessengerApp:
         self.note_entry = tk.Entry(note_border, font=FONT, bg='#1a3f7a',
                                    fg='#c8d6e5', relief='flat', bd=2,
                                    insertbackground='#c8d6e5')
-        self.note_entry.pack(fill='x', ipady=2)
+        self.note_entry.pack(side='left', fill='x', expand=True, ipady=2)
+
+        # Emoji button colorido para a nota
+        self._note_emoji_btn_img = _render_color_emoji('\U0001f60a', 16)
+        if self._note_emoji_btn_img:
+            btn_note_emoji = tk.Button(note_border, image=self._note_emoji_btn_img,
+                                       relief='flat', bd=0, cursor='hand2',
+                                       bg='#1a3f7a', activebackground='#2451a0',
+                                       command=self._show_note_emoji_picker)
+        else:
+            btn_note_emoji = tk.Button(note_border, text='\U0001f60a', font=('Segoe UI', 10),
+                                       relief='flat', bd=0, cursor='hand2',
+                                       bg='#1a3f7a', fg='#c8d6e5', activebackground='#2451a0',
+                                       command=self._show_note_emoji_picker)
+        btn_note_emoji.pack(side='right', padx=2)
+
         self.note_entry.insert(0, _t('note_placeholder'))
         self._last_saved_note = ''
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
@@ -4786,7 +4804,8 @@ class LanMessengerApp:
         _setup_scrollbar_style()
         style.configure('Contacts.Treeview', background='#ffffff',
                          foreground='#1a202c', fieldbackground='#ffffff',
-                         font=('Segoe UI', 10), rowheight=44, borderwidth=0)
+                         font=('Segoe UI', 10), rowheight=44, borderwidth=0,
+                         indent=5)
         style.configure('Contacts.Treeview.Heading', background='#e2e2e2',
                          foreground='#4a5568', font=FONT_BOLD)
         style.map('Contacts.Treeview',
@@ -5063,6 +5082,8 @@ class LanMessengerApp:
                 'status': status,                 # status salvo
             }
         self._update_offline_count()  # recalcula e exibe 'Offline (N)'
+        self._sort_tree_children(self.group_general)
+        self._sort_tree_children(self.group_offline)
 
     # --- Avatar ---
     # Desenha avatar padrao (circulo colorido com letra U) no canvas do header.
@@ -5207,6 +5228,91 @@ class LanMessengerApp:
         # Tirar foco do entry
         self.root.focus_set()
 
+    def _show_note_emoji_picker(self):
+        ep = tk.Toplevel(self.root)
+        ep.title('')
+        ep.overrideredirect(True)
+        ep.configure(bg='#e2e8f0', highlightbackground='#cbd5e0', highlightthickness=1)
+        
+        # Posicionar exatamente acima do campo de nota
+        x = self.note_entry.winfo_rootx()
+        y = self.note_entry.winfo_rooty() - 170
+        ep.geometry(f'+{x}+{y}')
+
+        emojis = ['\U0001f600', '\U0001f601', '\U0001f602', '\U0001f603',
+                  '\U0001f604', '\U0001f605', '\U0001f606', '\U0001f607',
+                  '\U0001f608', '\U0001f609', '\U0001f60a', '\U0001f60b',
+                  '\U0001f60d', '\U0001f60e', '\U0001f60f', '\U0001f610',
+                  '\U0001f611', '\U0001f612', '\U0001f613', '\U0001f614',
+                  '\U0001f615', '\U0001f616', '\U0001f617', '\U0001f618',
+                  '\U0001f619', '\U0001f61a', '\U0001f61b', '\U0001f61c',
+                  '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
+                  '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
+                  '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f']
+        
+        header = tk.Frame(ep, bg='#f5f7fa')
+        header.pack(fill='x')
+        close_btn = tk.Button(header, text='✕', font=('Segoe UI', 8, 'bold'),
+                              relief='flat', bd=0, cursor='hand2',
+                              bg='#f5f7fa', fg='#a0aec0', activebackground='#e2e8f0',
+                              activeforeground='#f56565', command=ep.destroy)
+        close_btn.pack(side='right', padx=4, pady=2)
+
+        fr = tk.Frame(ep, bg='#ffffff')
+        fr.pack(fill='both', expand=True, padx=2, pady=(0, 2))
+        
+        if not hasattr(self, '_note_emoji_cache'):
+            self._note_emoji_cache = {}
+
+        col, row = 0, 0
+        for em in emojis:
+            def ins(e=em):
+                if self.note_entry.get() in ('Digite uma nota', 'Type a note', _t('note_placeholder')):
+                    self.note_entry.delete(0, 'end')
+                    self.note_entry.config(fg='#ffffff')
+                
+                try:
+                    idx = self.note_entry.index('insert')
+                except Exception:
+                    idx = 'end'
+                self.note_entry.insert(idx, e)
+                self.note_entry.focus_set()
+            
+            img = self._note_emoji_cache.get(em)
+            if img is None:
+                img = _render_color_emoji(em, 20)
+                if img:
+                    self._note_emoji_cache[em] = img
+                    
+            if img:
+                b = tk.Button(fr, image=img, relief='flat', bd=0,
+                              cursor='hand2', command=ins,
+                              bg='#ffffff', activebackground='#f0f5ff',
+                              width=24, height=24)
+            else:
+                b = tk.Button(fr, text=em, font=('Segoe UI', 12),
+                              relief='flat', bd=0, cursor='hand2',
+                              command=ins, bg='#ffffff',
+                              activebackground='#f0f5ff')
+            b.grid(row=row, column=col, padx=1, pady=1)
+            col += 1
+            if col >= 8:
+                col = 0
+                row += 1
+
+        ep.bind('<Escape>', lambda e: ep.destroy())
+        def _check_ep_focus():
+            if not ep.winfo_exists():
+                return
+            try:
+                focused = ep.focus_get()
+                if focused is None or not str(focused).startswith(str(ep)):
+                    ep.destroy()
+            except Exception:
+                ep.destroy()
+        ep.bind('<FocusOut>', lambda e: ep.after(100, _check_ep_focus))
+        ep.focus_set()
+
     # Callback do combobox de status: traduz label para codigo e propaga via UDP.
     #
     # Converte o texto exibido ('Disponivel') para o codigo interno ('online')
@@ -5243,6 +5349,12 @@ class LanMessengerApp:
                 return uid  # retorna o uid do contato selecionado
         return None  # item nao encontrado em peer_items
 
+    def _sort_tree_children(self, parent):
+        items = list(self.tree.get_children(parent))
+        items.sort(key=lambda x: self.tree.item(x, 'text').lower())
+        for index, item in enumerate(items):
+            self.tree.move(item, parent, index)
+
     # Adiciona ou atualiza contato no TreeView e em peer_info.
     #
     # Existente: atualiza texto/tag/avatar e move para grupo correto (Geral/Offline).
@@ -5262,12 +5374,14 @@ class LanMessengerApp:
             self.tree.item(self.peer_items[uid], text=display,
                            tags=(tag,), image=avatar)
             # Mover para grupo correto se status mudou
-            self.tree.move(self.peer_items[uid], parent, 'end')
+            if self.tree.parent(self.peer_items[uid]) != parent:
+                self.tree.move(self.peer_items[uid], parent, 'end')
         else:
             iid = self.tree.insert(parent, 'end',
                                    text=display, tags=(tag,),
                                    image=avatar)
             self.peer_items[uid] = iid
+        self._sort_tree_children(parent)
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
         self._update_offline_count()  # recalcula contagem na secao Offline
         # Atualiza a nota do contato em todas as janelas de grupo que ele participa
@@ -5284,7 +5398,9 @@ class LanMessengerApp:
                            text=f'  {name}',
                            tags=('offline',),
                            image=avatar)
-            self.tree.move(self.peer_items[uid], self.group_offline, 'end')
+            if self.tree.parent(self.peer_items[uid]) != self.group_offline:
+                self.tree.move(self.peer_items[uid], self.group_offline, 'end')
+            self._sort_tree_children(self.group_offline)
             self._update_offline_count()
 
     # Atualiza texto do grupo Offline com contagem.
@@ -5768,8 +5884,8 @@ class LanMessengerApp:
         win.transient(self.root)
         win.grab_set()
         win.configure(bg='#f5f7fa')
-        _center_window(win, 660, 430)
-        win.minsize(560, 360)
+        _center_window(win, 660, 480)
+        win.minsize(560, 420)
         win.bind('<Escape>', lambda e: win.destroy())
 
         ico = _get_icon_path()
@@ -5834,6 +5950,10 @@ class LanMessengerApp:
                  fg='#8aa0cc').pack(anchor='w')
 
         font_var = tk.StringVar(value='Médio')
+
+        # Botões principais (pack ANTES do main para ficar embaixo)
+        bottom = tk.Frame(win, bg='#f5f7fa')
+        bottom.pack(fill='x', side='bottom', padx=12, pady=(0, 12))
 
         # Layout principal: esquerda (mensagem) | direita (lista)
         main = tk.Frame(win, bg='#f5f7fa')
@@ -5919,9 +6039,9 @@ class LanMessengerApp:
             except Exception:
                 pass
 
-        canvas_r.bind('<MouseWheel>',
-                      lambda e: canvas_r.yview_scroll(
-                          -1 * (e.delta // 120), 'units'))
+        def _scroll_r(e):
+            canvas_r.yview_scroll(-1 * (e.delta // 120), 'units')
+        win.bind('<MouseWheel>', _scroll_r)
 
         # Botões seleção
         sel_frame = tk.Frame(right, bg='#f5f7fa')
@@ -6083,10 +6203,6 @@ class LanMessengerApp:
                                   command=open_bcast_emoji)
         btn_emoji.pack(side='left', padx=(8, 0))
 
-        # Botões principais
-        bottom = tk.Frame(win, bg='#f5f7fa')
-        bottom.pack(fill='x', padx=12, pady=(0, 12))
-
         def do_send():
             content = _get_bcast_content()
             if not content:
@@ -6133,7 +6249,7 @@ class LanMessengerApp:
         win.transient(self.root)
         win.grab_set()
         win.configure(bg='#f5f7fa')
-        _center_window(win, 340, 520)
+        _center_window(win, 340, 580)
         _apply_rounded_corners(win)
         win.resizable(False, False)
         win.bind('<Escape>', lambda e: win.destroy())
@@ -6293,6 +6409,11 @@ class LanMessengerApp:
                 scrollbar_g.pack_forget()
         inner_g.bind('<Configure>', _on_inner_cfg)
 
+        def _scroll_g(e):
+            canvas_g.yview_scroll(-1 * (e.delta // 120), 'units')
+        
+        win.bind('<MouseWheel>', _scroll_g)
+
         for uid, info in self.peer_info.items():
             status = info.get('status', 'offline')
             if status == 'offline':
@@ -6323,11 +6444,6 @@ class LanMessengerApp:
                 lbl_av.pack(side='right', padx=2)
             except Exception:
                 pass
-
-        def _on_mousewheel(e):
-            canvas_g.yview_scroll(-1 * (e.delta // 120), 'units')
-        canvas_g.bind('<MouseWheel>', _on_mousewheel)
-        inner_g.bind('<MouseWheel>', _on_mousewheel)
 
     def _create_group_window(self, group_id, group_name, member_ids,
                               group_type='temp'):

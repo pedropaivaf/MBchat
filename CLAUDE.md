@@ -78,7 +78,10 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
   - Chat individual: `mbchat://open/{peer_id}` — abre chat
   - Grupo: `mbchat://group/{group_id}` — abre grupo com msgs pendentes
 - System tray, instancia unica, auto-start
-- Popups fecham com Escape, emoji pickers fecham ao clicar fora
+- Popups e todas as janelas de Chat/Grupos fecham agilmente com a tecla Escape
+- Emoji pickers fecham ao clicar fora
+- Scroll dinamico global no listbox ignorando interceptacao de widgets
+- Chat individual carrega automaticamente as ultimas 40 mensagens para garantir preservacao do contexto mesmo ao originar-se de notificacoes em background
 
 ## Convencoes importantes
 
