@@ -140,8 +140,11 @@ class Messenger:
 
     # Inicia todos os servicos de rede (discovery + TCP + file)
     def start(self):
+        self.tcp_server.start()     # Comeca a aceitar conexoes TCP (descobre porta real)
+        # Informa o discovery qual foi a porta TCP efetiva (caso tenha usado fallback)
+        self.discovery.tcp_port = getattr(self.tcp_server, 'port', TCP_PORT)
+        
         self.discovery.start()      # Comeca a enviar/receber announces UDP
-        self.tcp_server.start()     # Comeca a aceitar conexoes TCP
         self._file_receiver.start()  # Comeca a aceitar arquivos
 
     # Para todos os servicos e limpa estado

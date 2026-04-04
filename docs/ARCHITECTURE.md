@@ -59,7 +59,7 @@ Mecanismos importantes:
 - **Notificacoes**: winotify com protocolo mbchat:// para click-to-open
 - **System tray**: pystray com minimize-on-close
 - **Thread safety**: _safe() wrapper com root.after(0, callback)
-- **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf)
+- **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf). Detecção em tempo real via evento <<Modified>> para capturar inserções de teclado, clipboard e Windows Emoji Picker (Win+.).
 - **Canvas scrollavel**: Pattern com create_window + Configure bind para largura total
 - **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
 - **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
@@ -212,6 +212,6 @@ PyInstaller --onefile --windowed com:
 9. **Firewall auto-config**: netsh na importacao de network.py
 10. **Protocolo URL customizado**: mbchat:// registrado em HKCU para notificacoes clicaveis
 11. **Grupo mesh**: sem servidor de grupo, cada membro envia para todos os demais via TCP
-12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True para renderizar como imagem
+12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True para renderizar como imagem. Detecção automática via scans no evento <<Modified>> dos campos de texto.
 13. **UI moderna flat**: _add_hover(), Frame-in-Frame borders, navy header, pill buttons
 14. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)

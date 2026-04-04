@@ -128,13 +128,15 @@ self._file_dialogs = {}  # file_id -> FileTransferDialog
 
 ## Emojis Coloridos
 
-Renderizacao via PIL com fonte Segoe UI Emoji:
-```python
-# Module-level (para broadcast, dialogs)
-img = _render_color_emoji('\U0001f600', size=24)
+Renderizacao via PIL com fonte Segoe UI Emoji. Para janelas de entrada, utiliza-se o evento `<<Modified>>` do `tk.Text` para detecção em tempo real, pois eventos de teclado padrão não capturam inserções via IME/Windows Emoji Picker.
 
-# ChatWindow method (para chat individual)
-img = self._render_emoji_image('\U0001f600', size=28)
+```python
+# Obrigatorio em ChatWindow, GroupChatWindow, Broadcast:
+txt.bind('<<Modified>>', self._on_modified)
+
+def _on_modified(self, event):
+    self.entry.edit_modified(False) # Reset necessario
+    self.after(30, self._do_emoji_scan)
 ```
 
 Insercao em tk.Text com tracking para reconstruir texto:

@@ -301,7 +301,7 @@ class UDPDiscovery:
             'ip': get_local_ip(),       # IP local atual
             'hostname': socket.gethostname(),   # Nome da maquina
             'os': f"{platform.system()} {platform.release()}",  # OS info
-            'tcp_port': TCP_PORT,       # Porta TCP para mensagens
+            'tcp_port': getattr(self, 'tcp_port', TCP_PORT),       # Porta TCP para mensagens
             'time': time.time()         # Timestamp do pacote
         }
         if extra:
@@ -460,13 +460,21 @@ class TCPServer:
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Tenta bind com fallback para portas alternativas
-        for port in [TCP_PORT, TCP_PORT + 10, TCP_PORT + 20]:
+        # Tenta bind com fallback para portas alternativas, com 0 (dinamico) de ultima opcao
+        bound = False
+        self.port = TCP_PORT
+        for port in [TCP_PORT, TCP_PORT + 10, TCP_PORT + 20, 0]:
             try:
                 self._server.bind(('', port))  # '' = todas as interfaces
+                self.port = self._server.getsockname()[1]  # Pega a porta efetiva
+                bound = True
                 break
             except (PermissionError, OSError):
                 continue
+        
+        if not bound:
+            return  # Se realmente falhar em tds (ate na 0), aborta sem fechar o app
+            
         self._server.listen(100)  # Backlog de 100 conexoes
         self._server.settimeout(0.3)  # Timeout para loop responsivo
 
@@ -765,13 +773,21 @@ class FileReceiver:
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Tenta bind com fallback (porta = TCP_PORT + 1 = 50102)
-        for port in [TCP_PORT + 1, TCP_PORT + 11, TCP_PORT + 21]:
+        # Tenta bind com fallback (porta = TCP_PORT + 1 = 50102) e 0 (dinamico) como ultima opcao
+        bound = False
+        self.port = TCP_PORT + 1
+        for port in [TCP_PORT + 1, TCP_PORT + 11, TCP_PORT + 21, 0]:
             try:
                 self._server.bind(('', port))
+                self.port = self._server.getsockname()[1]  # Pega a porta efetiva
+                bound = True
                 break
             except (PermissionError, OSError):
                 continue
+                
+        if not bound:
+            return  # Evita erro 10022 de socket se falhar na porta 0 tb
+            
         self._server.listen(100)
         self._server.settimeout(0.3)
 

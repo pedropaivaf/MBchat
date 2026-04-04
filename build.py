@@ -17,7 +17,7 @@ def build():
     save_icon(ICON)
 
     cmd = [
-        'pyinstaller',
+        sys.executable, '-m', 'PyInstaller',
         '--noconfirm',
         '--onefile',
         '--windowed',           # Sem console / terminal
@@ -28,6 +28,11 @@ def build():
         '--hidden-import=network',
         '--hidden-import=database',
         '--hidden-import=winotify',
+        '--hidden-import=pystray',
+        '--hidden-import=pystray._win32',
+        '--hidden-import=PIL',
+        '--hidden-import=PIL._imagingtk',
+        '--hidden-import=PIL._tkinter_finder',
         '--name=MBChat',
         '--clean',
         MAIN,

@@ -72,21 +72,16 @@ APP_NAME = 'MB Chat'                        # Nome do aplicativo exibido nos tí
 # Usada em _insert_text_with_emojis() para substituir cada emoji por uma imagem colorida
 # renderizada via PIL com a fonte seguiemj.ttf (Segoe UI Emoji da Microsoft).
 _EMOJI_RE = re.compile(
-    '['
-    '\U0001f600-\U0001f64f'  # emoticons (rostos, pessoas, gestos)
-    '\U0001f300-\U0001f5ff'  # símbolos e pictogramas
-    '\U0001f680-\U0001f6ff'  # transporte e mapas
-    '\U0001f900-\U0001f9ff'  # símbolos suplementares
-    '\U0001fa00-\U0001fa6f'  # símbolos de xadrez
-    '\U0001fa70-\U0001faff'  # símbolos estendidos
-    '\u2600-\u26ff'          # símbolos miscelâneos (sol, lua, nuvem, etc.)
-    '\u2700-\u27bf'          # dingbats (setas, tesouras, marcadores)
-    '\u2b50'                 # estrela
-    '\u2728'                 # brilhos/faíscas
-    '\u270a-\u270d'          # punhos e mãos
-    '\u2764'                 # coração vermelho
-    '\u261d'                 # dedo apontando para cima
-    ']+[\ufe0f]?'            # U+FE0F: seletor de variação (força versão colorida do emoji)
+    r'('
+    r'[\U0001f600-\U0001f64f]'  # emoticons (rostos, pessoas, gestos)
+    r'|[\U0001f300-\U0001f5ff]' # símbolos e pictogramas
+    r'|[\U0001f680-\U0001f6ff]' # transporte e mapas
+    r'|[\U0001f900-\U0001f9ff]' # símbolos suplementares
+    r'|[\U0001fa00-\U0001faff]' # símbolos estendidos (chess, icons)
+    r'|[\u2600-\u26ff]'          # símbolos miscelâneos (sol, lua, nuvem, etc.)
+    r'|[\u2700-\u27bf]'          # dingbats (setas, tesouras, marcadores)
+    r'|[\u231a-\u231b\u23e9-\u23ec\u23f0-\u23f3\u25fd\u25fe\u2614\u2615\u263a\u2648-\u2653\u2660\u2663\u2665\u2666\u2668\u267b\u267f\u2692-\u2694\u2696\u2697\u2699\u269b\u269c\u26a0\u26a1\u26aa\u26ab\u26b0\u26b1\u26bd\u26be\u26c4\u26c5\u26c8\u26ce\u26cf\u26d1\u26d3\u26d4\u26e9\u26ea\u26f0-\u26f5\u26f7-\u26fa\u26fd]'
+    r')[\ufe00-\ufe0f\U0001f3fb-\U0001f3ff]?' # seletor de variação e tons de pele
 )
 
 # --- Idiomas ---
@@ -573,6 +568,69 @@ def _render_color_emoji(emoji_char, size=28):
         return None
 
 
+# Função utilitária: varre um widget tk.Text e substitui TODOS os emojis Unicode
+# por imagens coloridas renderizadas via PIL. Usada em todas as janelas de entrada
+# (ChatWindow, GroupChatWindow, Broadcast) para garantir que emojis digitados,
+# colados ou inseridos por atalhos do Windows (Win+.) apareçam sempre coloridos.
+#
+# Usa text_widget.dump() para obter posições exatas de cada segmento de texto,
+# ignorando imagens já embutidas. Processa de trás para frente (reversed) para
+# que a substituição de um emoji não invalide os índices dos emojis anteriores.
+#
+# Args:
+#     text_widget: Widget tk.Text a ser varrido.
+#     emoji_cache: Dict para cache de imagens (evita re-renderizar).
+#     img_map: Dict que mapeia img_name -> emoji_char para reconstrução do texto.
+#     prefix: Prefixo do nome da imagem (para evitar colisão entre janelas).
+#     size: Tamanho do emoji em pixels.
+def _scan_entry_emojis(text_widget, emoji_cache, img_map, prefix='emoji', size=18):
+    """Varre o widget Text e substitui caracteres emoji por imagens coloridas."""
+    if not HAS_PIL:
+        return
+
+    # Coleta todas as posições de emojis a serem substituídos
+    replacements = []  # [(tk_index, emoji_char), ...]
+
+    try:
+        # dump() retorna (tipo, valor, índice) para cada elemento do widget.
+        # 'text' = segmento de texto puro com seu índice tkinter exato.
+        # Imagens já embutidas são retornadas como 'image' e são ignoradas.
+        for item_type, value, index in text_widget.dump('1.0', 'end', text=True):
+            if item_type != 'text' or not value:
+                continue
+            # Procura emojis dentro deste segmento de texto
+            for match in _EMOJI_RE.finditer(value):
+                emoji_char = match.group()
+                char_offset = match.start()
+                # Índice tkinter exato: posição do segmento + offset do match
+                emoji_idx = f'{index}+{char_offset}c'
+                replacements.append((emoji_idx, emoji_char))
+    except Exception:
+        return
+
+    if not replacements:
+        return
+
+    # Processa de trás para frente para manter os índices válidos
+    for idx, emoji_char in reversed(replacements):
+        # Renderiza ou busca do cache
+        if emoji_char in emoji_cache:
+            img = emoji_cache[emoji_char]
+        else:
+            img = _render_color_emoji(emoji_char, size)
+            if img:
+                emoji_cache[emoji_char] = img
+
+        if img:
+            try:
+                end_idx = f'{idx}+{len(emoji_char)}c'
+                text_widget.delete(idx, end_idx)
+                img_name = f'{prefix}_{len(img_map)}'
+                img_map[img_name] = emoji_char
+                text_widget.image_create(idx, image=img, name=img_name, padx=1)
+            except Exception:
+                pass
+
 # Centraliza uma janela na tela.
 def _center_window(win, w, h):
     win.update_idletasks()
@@ -942,7 +1000,7 @@ class PreferencesWindow(tk.Toplevel):
         self.var_show_timestamp = tk.BooleanVar(
             value=db.get_setting('show_timestamp', '1') == '1')
         self.var_msg_style = tk.StringVar(
-            value=db.get_setting('msg_style', 'linear'))
+            value=db.get_setting('msg_style', 'bubble'))
         self.var_avatar_index = tk.IntVar(
             value=int(db.get_setting('avatar_index', '0')))
         self.var_custom_avatar = tk.StringVar(
@@ -2335,8 +2393,11 @@ class ChatWindow(tk.Toplevel):
         # Enter envia (verificado em _on_enter); Shift+Enter insere nova linha
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
-        # Cada tecla liberada verifica emojis digitados e gerencia indicador de digitação
-        self.entry.bind('<KeyRelease>', self._on_key)
+        # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
+        # Este é o único evento confiável para detectar emojis inseridos pelo Windows Emoji Picker
+        self.entry.bind('<<Modified>>', self._on_modified)
+        # <KeyRelease> usado apenas para o indicador de digitação (não para emojis)
+        self.entry.bind('<KeyRelease>', self._on_key_typing)
         self.entry.focus_set()
 
         # Área de exibição das mensagens (chat_frame se expande para preencher o espaço restante)
@@ -2636,7 +2697,7 @@ class ChatWindow(tk.Toplevel):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')  # habilita temporariamente para inserção
 
-        style = self.messenger.db.get_setting('msg_style', 'linear')
+        style = self.messenger.db.get_setting('msg_style', 'bubble')
 
         if style == 'bubble':
             # --- Modo bolha (WhatsApp-style) ---
@@ -2706,35 +2767,41 @@ class ChatWindow(tk.Toplevel):
             self._send_message()
             return 'break'  # consome evento para não inserir nova linha
 
-    # Callback de teclado: detecta emojis digitados e gerencia indicador de digitação.
-    # Se o último caractere digitado for um emoji, substitui por imagem colorida.
-    # Envia notificação 'digitando' para o contato e agenda cancelamento após 2s de inatividade.
-    def _on_key(self, event):
+    # <<Modified>> dispara SEMPRE que o conteudo do tk.Text muda.
+    # Isso inclui: teclado, IME, Windows Emoji Picker (Win+.), paste, etc.
+    # <KeyRelease> NAO dispara para IME/Emoji Picker, por isso usamos <<Modified>>.
+    def _on_modified(self, event):
+        # Reseta o flag de modificação (obrigatório para que o evento dispare novamente)
         try:
-            # Detectar emoji digitado via teclado e substituir por imagem colorida
-            idx = self.entry.index('insert')  # posição atual do cursor
-            if idx != '1.0':
-                prev_idx = self.entry.index(f'{idx}-1c')  # posição do char anterior
-                char = self.entry.get(prev_idx, idx)       # obtém o caractere
-                if char and _EMOJI_RE.match(char):  # é um emoji?
-                    self.entry.delete(prev_idx, idx)             # remove o texto
-                    self._entry_insert_emoji(char, prev_idx)     # substitui por imagem
+            self.entry.edit_modified(False)
         except Exception:
             pass
+        # Agenda scan com delay para que o widget esteja estável após a modificação
+        self.after(30, self._do_emoji_scan)
+
+    # <KeyRelease> usado APENAS para gerenciar o indicador 'digitando...'.
+    # Não processa emojis — isso é feito pelo <<Modified>>.
+    def _on_key_typing(self, event):
         try:
             # Gerencia indicador 'digitando...' para o contato
             if not self._was_typing:
                 self._was_typing = True
-                # Notifica o contato que estamos digitando (em thread separada)
                 threading.Thread(target=self.messenger.send_typing,
                                  args=(self.peer_id, True),
                                  daemon=True).start()
             if self._typing_timer:
-                self.after_cancel(self._typing_timer)  # cancela timer anterior
-            # Agenda parar indicador após 2 segundos sem digitar
+                self.after_cancel(self._typing_timer)
             self._typing_timer = self.after(2000, self._stop_typing)
         except Exception:
-            log.exception('Erro em _on_key')
+            log.exception('Erro em _on_key_typing')
+
+    # Executa o scan de emojis no campo de entrada.
+    def _do_emoji_scan(self):
+        try:
+            _scan_entry_emojis(self.entry, self._entry_emoji_cache,
+                               self._entry_img_map, prefix='entry_emoji', size=18)
+        except Exception:
+            pass
 
     # Para o indicador de digitação e notifica o contato.
     def _stop_typing(self):
@@ -3612,7 +3679,8 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
-        self.entry.bind('<KeyRelease>', self._on_key)
+        # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
+        self.entry.bind('<<Modified>>', self._on_modified)
         self.entry.focus_set()
 
         # ===== Separator =====
@@ -4189,7 +4257,7 @@ class GroupChatWindow(tk.Toplevel):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
 
-        style = self.app.messenger.db.get_setting('msg_style', 'linear')
+        style = self.app.messenger.db.get_setting('msg_style', 'bubble')
 
         if style == 'bubble':
             # --- Modo bolha (WhatsApp-style) ---
@@ -4220,6 +4288,23 @@ class GroupChatWindow(tk.Toplevel):
     # Callback chamado ao receber mensagem de outro membro do grupo.
     def receive_message(self, display_name, content, timestamp=None):
         self._append_message(display_name, content, False, timestamp)
+
+    # <<Modified>> dispara SEMPRE que o conteúdo do tk.Text muda.
+    # Inclui teclado, IME, Windows Emoji Picker (Win+.), paste, etc.
+    def _on_modified(self, event):
+        try:
+            self.entry.edit_modified(False)
+        except Exception:
+            pass
+        self.after(30, self._do_emoji_scan)
+
+    # Executa o scan de emojis no campo de entrada do grupo.
+    def _do_emoji_scan(self):
+        try:
+            _scan_entry_emojis(self.entry, self._entry_emoji_cache,
+                               self._entry_img_map, prefix='gentry_emoji', size=18)
+        except Exception:
+            pass
 
     # Enter envia mensagem; Shift+Enter insere nova linha.
     def _on_enter(self, event):
@@ -5350,10 +5435,30 @@ class LanMessengerApp:
         return None  # item nao encontrado em peer_items
 
     def _sort_tree_children(self, parent):
+        # Obtém a seleção atual para restaurá-la após a movimentação
+        current_sel = self.tree.selection()
+        
         items = list(self.tree.get_children(parent))
-        items.sort(key=lambda x: self.tree.item(x, 'text').lower())
-        for index, item in enumerate(items):
-            self.tree.move(item, parent, index)
+        # Ordena alfabeticamente ignorando maiúsculas/minúsculas
+        sorted_items = sorted(items, key=lambda x: self.tree.item(x, 'text').lower())
+        
+        # Só move se a ordem realmente mudou para evitar flicker visual (piscar)
+        needs_reorder = False
+        for index, item in enumerate(sorted_items):
+            if items[index] != item:
+                needs_reorder = True
+                break
+        
+        if needs_reorder:
+            for index, item in enumerate(sorted_items):
+                self.tree.move(item, parent, index)
+            
+            # Restaura a seleção se ainda existir (evita que a seleção 'suma' ao mover)
+            if current_sel:
+                try:
+                    self.tree.selection_set(current_sel)
+                except Exception:
+                    pass
 
     # Adiciona ou atualiza contato no TreeView e em peer_info.
     #
@@ -5368,20 +5473,36 @@ class LanMessengerApp:
         display = f'  {name}'
         if note:
             display += f'  -  {note}'
-        avatar = self._create_contact_avatar(uid, name, tag)
+        
+        # Determina o grupo pai correto
         parent = self.group_general if tag != 'offline' else self.group_offline
+        
         if uid in self.peer_items:
-            self.tree.item(self.peer_items[uid], text=display,
-                           tags=(tag,), image=avatar)
-            # Mover para grupo correto se status mudou
-            if self.tree.parent(self.peer_items[uid]) != parent:
-                self.tree.move(self.peer_items[uid], parent, 'end')
+            iid = self.peer_items[uid]
+            # Verifica se houve mudança real para evitar atualização e reordenação desnecessária
+            old_item = self.tree.item(iid)
+            old_text = old_item.get('text', '')
+            old_tags = old_item.get('tags', [])
+            old_parent = self.tree.parent(iid)
+            
+            if old_text != display or tag not in old_tags or old_parent != parent:
+                avatar = self._create_contact_avatar(uid, name, tag)
+                self.tree.item(iid, text=display, tags=(tag,), image=avatar)
+                
+                # Mover para grupo correto se status mudou
+                if old_parent != parent:
+                    self.tree.move(iid, parent, 'end')
+                
+                # Só reordena se algo mudou
+                self._sort_tree_children(parent)
         else:
+            avatar = self._create_contact_avatar(uid, name, tag)
             iid = self.tree.insert(parent, 'end',
                                    text=display, tags=(tag,),
                                    image=avatar)
             self.peer_items[uid] = iid
-        self._sort_tree_children(parent)
+            self._sort_tree_children(parent)
+            
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
         self._update_offline_count()  # recalcula contagem na secao Offline
         # Atualiza a nota do contato em todas as janelas de grupo que ele participa
@@ -6104,19 +6225,22 @@ class LanMessengerApp:
                       bd=0, padx=8, pady=6, wrap='word')
         txt.pack(fill='both', expand=True)
 
-        # Detectar emojis digitados e substituir por imagens coloridas
-        def _on_bcast_key(event):
+        # Detectar emojis: <<Modified>> dispara para QUALQUER alteração de conteúdo
+        # (teclado, IME, Windows Emoji Picker, paste). É o único evento confiável.
+        def _do_bcast_scan():
             try:
-                idx = txt.index('insert')
-                if idx != '1.0':
-                    prev_idx = txt.index(f'{idx}-1c')
-                    char = txt.get(prev_idx, idx)
-                    if char and _EMOJI_RE.match(char):
-                        txt.delete(prev_idx, idx)
-                        _bcast_insert_emoji(char, prev_idx)
+                _scan_entry_emojis(txt, _bcast_emoji_cache, _bcast_img_map,
+                                   prefix='bcast_emoji', size=18)
             except Exception:
                 pass
-        txt.bind('<KeyRelease>', _on_bcast_key)
+
+        def _on_bcast_modified(event):
+            try:
+                txt.edit_modified(False)  # Reset obrigatório para re-disparar
+            except Exception:
+                pass
+            txt.after(30, _do_bcast_scan)
+        txt.bind('<<Modified>>', _on_bcast_modified)
 
         def on_pill_click(sel_name):
             sizes = {'Pequeno': 9, 'Médio': 10, 'Grande': 13}
@@ -6877,6 +7001,7 @@ class LanMessengerApp:
                 pass          # ignora erros se ja foi destruida
         self.messenger.stop()  # para threads de rede e fecha sockets UDP/TCP
         self.root.destroy()    # destroi janela principal e encerra mainloop
+        os._exit(0)  # forca o SO a remover o processo garantindo que nao haja zumbis
 
     # --- System Tray ---
     # Inicia o icone do MB Chat na bandeja do sistema (system tray).
@@ -6887,6 +7012,7 @@ class LanMessengerApp:
         if self._tray_icon is not None:   # ja existe um icone no tray?
             return                         # nao cria outro
         if not HAS_TRAY or not HAS_PIL:   # bibliotecas disponiveis?
+            log.warning(f'Tray icon nao iniciado: pystray={HAS_TRAY}, PIL={HAS_PIL}')
             return
 
         if self._icon_path:  # tem arquivo de icone?
@@ -7121,6 +7247,19 @@ def _start_instance_listener(app):
     t.start()
 
 
+def _cleanup_zombie_processes():
+    if platform.system() == 'Windows':
+        import subprocess
+        pid = os.getpid()
+        ppid = os.getppid()
+        try:
+            # Mata qlqr outro MBChat.exe que não seja este processo nem seu processo pai (bootloader do PyInstaller)
+            cmd = f'taskkill /F /IM MBChat.exe /FI "PID ne {pid}" /FI "PID ne {ppid}"'
+            subprocess.run(cmd, shell=True, creationflags=0x08000000, 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
 # Ponto de entrada principal do MB Chat.
 #
 # Fluxo de inicializacao:
@@ -7151,17 +7290,23 @@ def main():
                 sock.close()
             except Exception:
                 pass  # instancia nao respondeu: ignora e sai
-            sys.exit(0)  # esta instancia nao deve continuar (ja delegou)
+            os._exit(0)  # usa os._exit para encerramento imediato e limpo
 
     if not _check_single_instance():  # ja existe outra instancia rodando?
-        sys.exit(0)  # sai silenciosamente (a outra instancia ja recebeu SHOW)
+        os._exit(0)  # usa os._exit para garantir que nao deixa processos pendentes
+
+    # Passamos da verificacao de instancia unica: somos a UNICA instancia legitima.
+    # Vamos limpar processos MBChat.exe zumbis que possam ter ficado travados antes.
+    _cleanup_zombie_processes()
 
     _register_url_protocol()  # registra mbchat:// no Registro do Windows
 
     app = LanMessengerApp()             # cria a aplicacao principal
     _start_instance_listener(app)       # inicia o listener de instancia unica
+    
     # Sempre inicia minimizado na bandeja do sistema (sem mostrar janela principal)
-    app.root.withdraw()  # oculta a janela principal
+    app.root.withdraw()                 # oculta a janela principal
+        
     app.run()            # inicia o mainloop do tkinter
 
 
