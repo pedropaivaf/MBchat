@@ -5331,7 +5331,7 @@ class LanMessengerApp:
         if not HAS_PIL:
             return None
         from PIL import ImageDraw, ImageFont
-        emoji_size = 28  # tamanho do emoji na lista de contatos
+        emoji_size = 20  # tamanho do emoji na lista de contatos
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
             name_font = ImageFont.truetype(font_name, 14)
