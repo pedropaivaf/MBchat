@@ -59,7 +59,7 @@ Mecanismos importantes:
 - **Notificacoes**: winotify com protocolo mbchat:// para click-to-open
 - **System tray**: pystray com minimize-on-close
 - **Thread safety**: _safe() wrapper com root.after(0, callback)
-- **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf). Detecção em tempo real via evento <<Modified>> para capturar inserções de teclado, clipboard e Windows Emoji Picker (Win+.).
+- **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf). Strip `\ufe0f` antes de medir/renderizar (variation selector dobra bbox no PIL). Detecção em tempo real via evento <<Modified>> para capturar inserções de teclado, clipboard e Windows Emoji Picker (Win+.).
 - **Canvas scrollavel**: Pattern com create_window + Configure bind para largura total
 - **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
 - **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
