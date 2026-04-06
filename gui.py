@@ -6175,72 +6175,110 @@ class LanMessengerApp:
     def _show_account(self):
         AccountWindow(self)  # instancia e exibe a janela de conta
 
-    # Abre janela de Historico de Mensagens com filtro por contato, data e texto.
+    # Abre janela de Historico de Mensagens com busca em tempo real e filtro por data.
     #
     # Layout: painel esquerdo (lista de contatos com ultima data) + painel direito
-    # (mensagens do contato selecionado). Suporta filtro de data e busca por texto.
+    # (mensagens do contato selecionado). Busca filtra e destaca matches ao digitar.
     def _show_all_history(self):
-        win = tk.Toplevel(self.root)           # cria janela secundaria
-        win.title('Histórico de Mensagens')     # titulo da janela
-        win.configure(bg=BG_WINDOW)
-        _center_window(win, 700, 480)
+        t = THEMES.get(self._current_theme, THEMES.get('MB Contabilidade', {}))
+        header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
+        header_fg = t.get('chat_header_fg', '#ffffff')
+        win_bg = t.get('bg_window', '#f5f7fa')
+
+        win = tk.Toplevel(self.root)
+        win.title('Histórico de Mensagens')
+        win.configure(bg=win_bg)
+        _center_window(win, 750, 520)
         win.bind('<Escape>', lambda e: win.destroy())
+        _apply_rounded_corners(win)
+        ico = _get_icon_path()
+        if ico:
+            try:
+                win.iconbitmap(ico)
+            except Exception:
+                pass
 
         db = self.messenger.db
         user_id = self.messenger.user_id
 
-        # --- Top filter bar ---
-        filter_bar = tk.Frame(win, bg=BG_WINDOW)
-        filter_bar.pack(fill='x', padx=6, pady=(6, 2))
+        # Header
+        hdr = tk.Frame(win, bg=header_bg)
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='  \U0001f4dc  Histórico de Mensagens',
+                 font=('Segoe UI', 11, 'bold'), bg=header_bg, fg=header_fg,
+                 anchor='w').pack(fill='x', padx=8, pady=8)
 
-        tk.Label(filter_bar, text='Pesquisar:', font=FONT_SMALL,
-                 bg=BG_WINDOW).pack(side='left')
+        # Toolbar: busca + datas
+        toolbar = tk.Frame(win, bg=win_bg)
+        toolbar.pack(fill='x', padx=8, pady=(8, 4))
+
+        tk.Label(toolbar, text='\U0001f50d', font=('Segoe UI', 10),
+                 bg=win_bg).pack(side='left')
         search_var = tk.StringVar()
-        search_entry = tk.Entry(filter_bar, textvariable=search_var,
-                                font=FONT_SMALL, width=18)
-        search_entry.pack(side='left', padx=(4, 10))
+        search_entry = tk.Entry(toolbar, textvariable=search_var,
+                                font=('Segoe UI', 10), width=20)
+        search_entry.pack(side='left', padx=(4, 12), fill='x', expand=True)
 
-        tk.Label(filter_bar, text='De:', font=FONT_SMALL,
-                 bg=BG_WINDOW).pack(side='left')
+        # Contagem de resultados
+        count_lbl = tk.Label(toolbar, text='', font=('Segoe UI', 9),
+                             bg=win_bg, fg='#666666')
+        count_lbl.pack(side='right', padx=(8, 0))
+
+        # Datas De/Até
+        date_frame = tk.Frame(win, bg=win_bg)
+        date_frame.pack(fill='x', padx=8, pady=(0, 4))
+
+        ph = 'dd/mm/aaaa'
+        tk.Label(date_frame, text='De:', font=('Segoe UI', 9),
+                 bg=win_bg).pack(side='left')
         date_from_var = tk.StringVar()
-        date_from_entry = tk.Entry(filter_bar, textvariable=date_from_var,
-                 font=FONT_SMALL, width=10)
-        date_from_entry.pack(side='left', padx=2)
-        _bind_date_mask(date_from_entry, date_from_var)
-        tk.Button(filter_bar, text='\u25bc', font=('Segoe UI', 6),
-                  relief='flat', bd=0, cursor='hand2',
-                  command=lambda: _show_calendar(win, date_from_var,
-                                                  date_from_entry)
-                  ).pack(side='left')
+        date_from_entry = tk.Entry(date_frame, textvariable=date_from_var,
+                                   font=('Segoe UI', 9), width=12)
+        date_from_entry.pack(side='left', padx=(4, 12))
+        date_from_entry.insert(0, ph)
+        date_from_entry.config(fg='#999999')
 
-        tk.Label(filter_bar, text='Até:', font=FONT_SMALL,
-                 bg=BG_WINDOW).pack(side='left')
+        tk.Label(date_frame, text='Até:', font=('Segoe UI', 9),
+                 bg=win_bg).pack(side='left')
         date_to_var = tk.StringVar()
-        date_to_entry = tk.Entry(filter_bar, textvariable=date_to_var,
-                 font=FONT_SMALL, width=10)
-        date_to_entry.pack(side='left', padx=2)
-        _bind_date_mask(date_to_entry, date_to_var)
-        tk.Button(filter_bar, text='\u25bc', font=('Segoe UI', 6),
-                  relief='flat', bd=0, cursor='hand2',
-                  command=lambda: _show_calendar(win, date_to_var,
-                                                  date_to_entry)
-                  ).pack(side='left')
+        date_to_entry = tk.Entry(date_frame, textvariable=date_to_var,
+                                 font=('Segoe UI', 9), width=12)
+        date_to_entry.pack(side='left', padx=(4, 0))
+        date_to_entry.insert(0, ph)
+        date_to_entry.config(fg='#999999')
 
-        # --- Main split: left contacts | right messages ---
-        main = tk.Frame(win, bg=BG_WINDOW)
-        main.pack(fill='both', expand=True, padx=6, pady=2)
+        def _on_focus_in(entry, placeholder):
+            if entry.get() == placeholder:
+                entry.delete(0, 'end')
+                entry.config(fg='#000000')
+        def _on_focus_out(entry, placeholder):
+            if not entry.get().strip():
+                entry.insert(0, placeholder)
+                entry.config(fg='#999999')
 
-        # Left: contact list with Treeview (Name + Date)
-        left = tk.Frame(main, bg=BG_WHITE, bd=1, relief='sunken')
-        left.pack(side='left', fill='y', padx=(0, 4))
+        date_from_entry.bind('<FocusIn>', lambda e: _on_focus_in(date_from_entry, ph))
+        date_from_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_from_entry, ph))
+        date_to_entry.bind('<FocusIn>', lambda e: _on_focus_in(date_to_entry, ph))
+        date_to_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_to_entry, ph))
+
+        # Separador
+        tk.Frame(win, bg='#cccccc', height=1).pack(fill='x', padx=8)
+
+        # Main split: left contacts | right messages
+        main = tk.Frame(win, bg=win_bg)
+        main.pack(fill='both', expand=True, padx=8, pady=(4, 8))
+
+        # Left: contact list
+        left = tk.Frame(main, bg='#ffffff', bd=0, relief='flat')
+        left.pack(side='left', fill='y', padx=(0, 6))
 
         cols = ('nome', 'data')
         contact_tree = ttk.Treeview(left, columns=cols, show='headings',
                                      height=18, selectmode='browse')
         contact_tree.heading('nome', text='Nome')
         contact_tree.heading('data', text='Data')
-        contact_tree.column('nome', width=120, minwidth=80)
-        contact_tree.column('data', width=110, minwidth=80)
+        contact_tree.column('nome', width=130, minwidth=80)
+        contact_tree.column('data', width=115, minwidth=80)
         ct_scroll = ttk.Scrollbar(left, orient='vertical',
                                    command=contact_tree.yview,
                                    style='Clean.Vertical.TScrollbar')
@@ -6249,31 +6287,28 @@ class LanMessengerApp:
         contact_tree.pack(fill='both', expand=True)
 
         # Right: message display
-        right = tk.Frame(main, bg=BG_WHITE, bd=1, relief='sunken')
+        right = tk.Frame(main, bg='#ffffff', bd=0, relief='flat')
         right.pack(side='left', fill='both', expand=True)
 
-        msg_text = tk.Text(right, font=FONT, wrap='word', bg=BG_WHITE,
-                           fg=FG_BLACK, state='disabled', padx=6, pady=4)
-        msg_scroll = ttk.Scrollbar(right, command=msg_text.yview, style='Clean.Vertical.TScrollbar')
+        msg_text = tk.Text(right, font=FONT_SMALL, wrap='word', bg='#ffffff',
+                           fg=FG_BLACK, state='disabled', relief='flat',
+                           bd=0, padx=8, pady=4)
+        msg_scroll = ttk.Scrollbar(right, command=msg_text.yview,
+                                    style='Clean.Vertical.TScrollbar')
         msg_text.configure(yscrollcommand=msg_scroll.set)
         msg_scroll.pack(side='right', fill='y')
         msg_text.pack(fill='both', expand=True)
 
-        msg_text.tag_configure('name_bold', font=FONT_BOLD)
-        msg_text.tag_configure('time_tag', foreground=FG_GRAY,
-                               font=FONT_SMALL)
-        msg_text.tag_configure('highlight', background='#ffff00')
+        msg_text.tag_configure('ts', foreground='#888888')
+        msg_text.tag_configure('me', foreground='#0d47a1',
+                               font=('Segoe UI', 9, 'bold'))
+        msg_text.tag_configure('peer_tag', foreground='#2e7d32',
+                               font=('Segoe UI', 9, 'bold'))
+        msg_text.tag_configure('highlight', background='#fff176',
+                               foreground='#000000')
 
-        # --- Bottom buttons ---
-        bottom = tk.Frame(win, bg=BG_WINDOW)
-        bottom.pack(fill='x', padx=6, pady=(2, 6))
-
-        tk.Button(bottom, text='Fechar', font=FONT_SMALL,
-                  command=win.destroy).pack(side='right')
-
-        # --- Data ---
+        # Data
         contacts_data = db.get_history_contacts()
-        # Resolve display names
         contact_names = {}
         for c in contacts_data:
             peer = c['peer']
@@ -6290,70 +6325,98 @@ class LanMessengerApp:
             ts = datetime.fromtimestamp(c['last_ts']).strftime('%d/%m/%Y %H:%M')
             contact_tree.insert('', 'end', iid=peer, values=(name, ts))
 
-        def show_messages(event=None):
+        def _parse_date(s):
+            s = s.strip()
+            if not s or s == ph:
+                return None
+            try:
+                parts = s.split('/')
+                if len(parts) == 3:
+                    return datetime(int(parts[2]), int(parts[1]), int(parts[0]))
+            except (ValueError, IndexError):
+                pass
+            return None
+
+        _refresh_timer = [None]
+
+        def _schedule_refresh(*_args):
+            if _refresh_timer[0]:
+                try:
+                    win.after_cancel(_refresh_timer[0])
+                except Exception:
+                    pass
+            _refresh_timer[0] = win.after(150, _refresh)
+
+        def _refresh(*_args):
             sel = contact_tree.selection()
             if not sel:
                 return
             peer = sel[0]
-            # Parse date filters
-            d_from = None
-            d_to = None
-            try:
-                df = date_from_var.get().strip()
-                if df:
-                    d_from = datetime.strptime(df, '%d/%m/%Y').timestamp()
-            except ValueError:
-                pass
-            try:
-                dt = date_to_var.get().strip()
-                if dt:
-                    d_to = datetime.strptime(dt, '%d/%m/%Y').replace(
-                        hour=23, minute=59, second=59).timestamp()
-            except ValueError:
-                pass
-            stxt = search_var.get().strip() or None
+            query = search_var.get().strip().lower()
+            d_from = _parse_date(date_from_entry.get())
+            d_to = _parse_date(date_to_entry.get())
+
+            d_from_ts = d_from.timestamp() if d_from else None
+            d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
 
             msgs = db.get_messages_with_peer(user_id, peer,
-                                              date_from=d_from,
-                                              date_to=d_to,
-                                              search_text=stxt)
+                                              date_from=d_from_ts,
+                                              date_to=d_to_ts,
+                                              search_text=query if query else None)
             peer_name = contact_names.get(peer, peer[:20])
             my_name = self.messenger.display_name
 
             msg_text.configure(state='normal')
             msg_text.delete('1.0', 'end')
+            match_count = 0
+
             for m in msgs:
                 who = my_name if m['is_sent'] else peer_name
-                ts = datetime.fromtimestamp(
-                    m['timestamp']).strftime('%H:%M')
-                msg_text.insert('end', f'{who}:', 'name_bold')
-                msg_text.insert('end', f'{ts}', 'time_tag')
+                ts = datetime.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
                 content = m['content']
+
+                start_idx = msg_text.index('end-1c')
+                msg_text.insert('end', f'[{ts}] ', 'ts')
+                who_tag = 'me' if m['is_sent'] else 'peer_tag'
+                msg_text.insert('end', f'{who}: ', who_tag)
                 msg_text.insert('end', f'{content}\n')
-                # Highlight search matches
-                if stxt:
-                    start = msg_text.index('end-1c linestart')
-                    # Search backwards in last inserted line
+
+                if query:
+                    line_start = start_idx
+                    line_end = msg_text.index(f'{start_idx} lineend +1c')
+                    full_line = msg_text.get(line_start, line_end).lower()
+                    search_start = 0
+                    while True:
+                        pos = full_line.find(query, search_start)
+                        if pos < 0:
+                            break
+                        h_start = f'{line_start}+{pos}c'
+                        h_end = f'{line_start}+{pos + len(query)}c'
+                        msg_text.tag_add('highlight', h_start, h_end)
+                        match_count += 1
+                        search_start = pos + 1
+
             msg_text.configure(state='disabled')
 
-        contact_tree.bind('<<TreeviewSelect>>', show_messages)
+            if query:
+                count_lbl.config(text=f'{match_count} ocorrências em {len(msgs)} msgs')
+            elif d_from or d_to:
+                count_lbl.config(text=f'{len(msgs)} mensagens')
+            else:
+                count_lbl.config(text=f'{len(msgs)} mensagens')
 
-        def apply_filter(event=None):
-            show_messages()
-        search_entry.bind('<Return>', apply_filter)
+        contact_tree.bind('<<TreeviewSelect>>', _refresh)
+        search_var.trace_add('write', _schedule_refresh)
+        date_from_var.trace_add('write', _schedule_refresh)
+        date_to_var.trace_add('write', _schedule_refresh)
 
-        # Filter button
-        tk.Button(filter_bar, text='Filtrar', font=FONT_SMALL,
-                  command=apply_filter).pack(side='left', padx=4)
-
-        # Ctrl+F focus search
         win.bind('<Control-f>', lambda e: search_entry.focus_set())
+        search_entry.focus_set()
 
-        # Select first contact if any
         children = contact_tree.get_children()
         if children:
             contact_tree.selection_set(children[0])
-            show_messages()
+            _refresh()
 
     # Delega para _show_transfers_window() que abre/mostra a janela de transferencias.
     def _show_transfers(self):
