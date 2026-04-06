@@ -68,7 +68,7 @@ Mecanismos importantes:
 - **Nota pessoal**: Text (height=1) no header navy, permite emojis coloridos (PIL render as image), salva no DB local, sincroniza via UDP announce em tempo real
 - **Popups dismissaveis**: Todas as janelas popup fecham com Escape chamando _on_close() (limpeza de estado), e emoji pickers fecham ao clicar fora
 - **Filtro de contatos thread-safe**: _add_contact() (chamado pelo UDP announce a cada 5s) verifica se há busca ativa e re-detacha contatos que não batem com o filtro
-- **Histórico com busca em tempo real**: _show_history() (chat) e _show_all_history() (global) filtram e destacam matches ao digitar (debounce 150ms), com filtro De/Até por data e contagem de ocorrências
+- **Histórico com busca em tempo real**: _show_history() (chat individual) e _show_all_history() (busca global em todos os chats, agrupado por contato) filtram e destacam matches ao digitar, com filtro De/Até e contagem de ocorrências. search_all_messages() no database.py faz a query global
 
 ### messenger.py (~360 linhas) - Controller
 
