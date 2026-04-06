@@ -37,7 +37,7 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
-- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico, emojis coloridos)
+- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico com busca em tempo real e filtro por data, emojis coloridos)
 - **GroupChatWindow**: Chat em grupo estilo LAN Messenger (PanedWindow com splitter arrastavel, painel lateral de participantes com avatar/nome/nota colapsavel, emoji colorido, fonte, envio de arquivo para grupo, adicionar participantes, layout bottom-first para input)
 - **FileTransferDialog**: Dialogo de progresso de transferencia (estilo LAN Messenger)
 - **PreferencesWindow**: 9 abas de configuracao (sidebar moderna com hover)
