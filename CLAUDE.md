@@ -106,7 +106,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Grupos: tabelas `groups` e `group_members` no DB, carregados no startup. Todos (temp e fixo) no TreeView com sufixo "(Temporário)" ou "(Fixo)".
 - Avatares: `_make_circular_avatar()` (module-level) recorta foto para circulo com antialias 2x. `_create_contact_avatar()` usa avatar_data do peer via rede.
 - Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow). Sempre strip `\ufe0f` (variation selector) antes de medir bbox — PIL dobra a largura com ele.
-  - Tamanhos: lista de contatos 28px, nota pessoal 18px, chat 20px, input 18px.
+  - Tamanhos: lista de contatos 28px, nota pessoal 14px (limite do tk.Text height=1), chat 20px, input 18px.
 - Lista de contatos: `_render_contact_display()` gera imagem PIL composta (avatar + nome + nota com emojis coloridos) para cada item do TreeView. Fallback para texto plano se PIL indisponivel.
 - Icones MDL2: usar `_create_mdl2_icon_static()` (module-level) para icones Segoe MDL2 Assets.
 - Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce. Usa tk.Text(height=1) para permitir suporte a imagens de emojis coloridos inline.
