@@ -550,19 +550,22 @@ def _render_color_emoji(emoji_char, size=28):
         font_path = 'C:/Windows/Fonts/seguiemj.ttf'
         if not os.path.exists(font_path):
             return None
+        # Strip variation selector para bbox consistente (renderiza igual sem ele)
+        clean = emoji_char.replace('\ufe0f', '')
         font = ImageFont.truetype(font_path, size)
         # Canvas temporário maior para medir o tamanho real do glifo
-        tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+        tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
         d = ImageDraw.Draw(tmp)
-        bbox = d.textbbox((0, 0), emoji_char, font=font)
+        bbox = d.textbbox((0, 0), clean, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        # Canvas final, centralizado
-        img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+        # Canvas final quadrado baseado no tamanho desejado
+        canvas_sz = size + 4
+        img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
         draw = ImageDraw.Draw(img)
-        x = (size + 4 - tw) // 2 - bbox[0]
-        y = (size + 4 - th) // 2 - bbox[1]
+        x = (canvas_sz - tw) // 2 - bbox[0]
+        y = (canvas_sz - th) // 2 - bbox[1]
         # embedded_color=True ativa renderização colorida (COLR/CPAL da fonte)
-        draw.text((x, y), emoji_char, font=font, embedded_color=True)
+        draw.text((x, y), clean, font=font, embedded_color=True)
         return ImageTk.PhotoImage(img)
     except Exception:
         return None
@@ -3228,18 +3231,18 @@ class ChatWindow(tk.Toplevel):
             font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             if not os.path.exists(font_path):
                 return None
+            clean = emoji_char.replace('\ufe0f', '')
             font = ImageFont.truetype(font_path, size)
-            # Medir tamanho do emoji
-            tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+            tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
             d = ImageDraw.Draw(tmp)
-            bbox = d.textbbox((0, 0), emoji_char, font=font)
+            bbox = d.textbbox((0, 0), clean, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            # Renderizar centralizado
-            img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+            canvas_sz = size + 4
+            img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
             draw = ImageDraw.Draw(img)
-            x = (size + 4 - tw) // 2 - bbox[0]
-            y = (size + 4 - th) // 2 - bbox[1]
-            draw.text((x, y), emoji_char, font=font, embedded_color=True)
+            x = (canvas_sz - tw) // 2 - bbox[0]
+            y = (canvas_sz - th) // 2 - bbox[1]
+            draw.text((x, y), clean, font=font, embedded_color=True)
             return ImageTk.PhotoImage(img)
         except Exception:
             log.exception('Erro ao renderizar emoji')
@@ -3397,9 +3400,9 @@ class ChatWindow(tk.Toplevel):
             '\u270f\ufe0f': 'lapis', '\U0001f512': 'cadeado fechado',
             '\U0001f513': 'cadeado aberto', '\U0001f527': 'chave inglesa ferramenta',
             '\U0001f528': 'martelo', '\U0001f6e0\ufe0f': 'ferramentas',
-            '\u2601\ufe0f': 'nuvem cloud', '\U0001f327\ufe0f': 'nuvem chuva',
-            '\U0001f328\ufe0f': 'nuvem neve', '\u26c5': 'sol nuvem parcialmente nublado',
-            '\U0001f324\ufe0f': 'sol nuvem pequena', '\U0001f325\ufe0f': 'sol nuvem grande',
+            '\u2601': 'nuvem cloud', '\U0001f327': 'nuvem chuva',
+            '\U0001f328': 'nuvem neve', '\u26c5': 'sol nuvem parcialmente nublado',
+            '\U0001f324': 'sol nuvem pequena', '\U0001f325': 'sol nuvem grande',
             # Símbolos e Esportes
             '\U0001f3c6': 'trofeu copa', '\U0001f3c5': 'medalha esporte',
             '\U0001f947': 'medalha ouro primeiro', '\U0001f948': 'medalha prata segundo',
@@ -3494,8 +3497,8 @@ class ChatWindow(tk.Toplevel):
                 '\U0001f692', '\U0001f693', '\U0001f3ce\ufe0f',
                 '\u2708\ufe0f', '\U0001f680', '\U0001f6f8',
                 '\U0001f6a2',
-                '\u2601\ufe0f', '\U0001f327\ufe0f', '\U0001f328\ufe0f',
-                '\u26c5', '\U0001f324\ufe0f', '\U0001f325\ufe0f',
+                '\u2601', '\U0001f327', '\U0001f328',
+                '\u26c5', '\U0001f324', '\U0001f325',
                 '\U0001f3e0', '\U0001f3e2', '\U0001f3eb',
                 '\U0001f3e5', '\U0001f3ed', '\u26ea', '\U0001f5fc',
                 '\U0001f4f1', '\U0001f4bb', '\U0001f4f7', '\U0001f4f9',
@@ -4222,19 +4225,18 @@ class GroupChatWindow(tk.Toplevel):
             font_path = 'C:/Windows/Fonts/seguiemj.ttf'  # Fonte Segoe UI Emoji do Windows
             if not os.path.exists(font_path):
                 return None
+            clean = emoji_char.replace('\ufe0f', '')
             font = ImageFont.truetype(font_path, size)
-            # Canvas temporário para medir o tamanho do glifo
-            tmp = Image.new('RGBA', (size + 12, size + 12), (255, 255, 255, 0))
+            tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
             d = ImageDraw.Draw(tmp)
-            bbox = d.textbbox((0, 0), emoji_char, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]  # Largura e altura do glifo
-            # Canvas final centralizado
-            img = Image.new('RGBA', (size + 4, size + 4), (255, 255, 255, 0))
+            bbox = d.textbbox((0, 0), clean, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            canvas_sz = size + 4
+            img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
             draw = ImageDraw.Draw(img)
-            x = (size + 4 - tw) // 2 - bbox[0]  # Centraliza horizontalmente
-            y = (size + 4 - th) // 2 - bbox[1]  # Centraliza verticalmente
-            # embedded_color=True ativa as camadas de cor COLR/CPAL da fonte
-            draw.text((x, y), emoji_char, font=font, embedded_color=True)
+            x = (canvas_sz - tw) // 2 - bbox[0]
+            y = (canvas_sz - th) // 2 - bbox[1]
+            draw.text((x, y), clean, font=font, embedded_color=True)
             return ImageTk.PhotoImage(img)
         except Exception:
             return None
@@ -4320,7 +4322,7 @@ class GroupChatWindow(tk.Toplevel):
             '\U0001f611', '\U0001f636', '\U0001f60f', '\U0001f612',
             '\U0001f620', '\U0001f621', '\U0001f622', '\U0001f62d',
             '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
-            '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b',
+            '\u2601', '\u26c5', '\U0001f37a', '\U0001f37b',
         ]
 
         grid_frame = tk.Frame(popup, bg='#ffffff')
@@ -5417,16 +5419,15 @@ class LanMessengerApp:
         for seg_type, seg_text, seg_w in note_segments:
             if seg_type == 'emoji' and emoji_font:
                 try:
-                    # Canvas maior para capturar o glyph inteiro
-                    buf = emoji_size + 12
+                    clean_seg = seg_text.replace('\ufe0f', '')
+                    buf = emoji_size * 3
                     em_img = Image.new('RGBA', (buf, buf), (255, 255, 255, 0))
                     em_draw = ImageDraw.Draw(em_img)
-                    # Mede o glyph para centralizar
-                    eb = em_draw.textbbox((0, 0), seg_text, font=emoji_font)
+                    eb = em_draw.textbbox((0, 0), clean_seg, font=emoji_font)
                     ew, eh = eb[2] - eb[0], eb[3] - eb[1]
                     ex = (buf - ew) // 2 - eb[0]
                     ey_off = (buf - eh) // 2 - eb[1]
-                    em_draw.text((ex, ey_off), seg_text, font=emoji_font, embedded_color=True)
+                    em_draw.text((ex, ey_off), clean_seg, font=emoji_font, embedded_color=True)
                     # Recorta para o tamanho final
                     em_final = em_img.resize((emoji_render_size, emoji_render_size), Image.LANCZOS)
                     # Cola centralizado verticalmente na linha
@@ -5695,7 +5696,7 @@ class LanMessengerApp:
                   '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
                   '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
                   '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
-                  '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b']
+                  '\u2601', '\u26c5', '\U0001f37a', '\U0001f37b']
         
         header = tk.Frame(ep, bg='#f5f7fa')
         header.pack(fill='x')
@@ -6725,7 +6726,7 @@ class LanMessengerApp:
                       '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
                       '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
                       '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
-                      '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b']
+                      '\u2601', '\u26c5', '\U0001f37a', '\U0001f37b']
             fr = tk.Frame(ep, bg='#ffffff')
             fr.pack(fill='both', expand=True, padx=1, pady=1)
             ep._emoji_imgs = {}  # manter referencia para GC
