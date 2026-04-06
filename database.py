@@ -363,6 +363,24 @@ class Database:
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    # Busca global em todas as mensagens com filtros opcionais
+    def search_all_messages(self, search_text=None, date_from=None, date_to=None, limit=500):
+        sql = "SELECT * FROM messages WHERE 1=1"
+        params = []
+        if search_text:
+            sql += " AND content LIKE ?"
+            params.append(f'%{search_text}%')
+        if date_from:
+            sql += " AND timestamp >= ?"
+            params.append(date_from)
+        if date_to:
+            sql += " AND timestamp <= ?"
+            params.append(date_to)
+        sql += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     # ========================================
     # FILE TRANSFERS — Transferências de arquivos
     # ========================================
