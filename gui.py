@@ -4852,7 +4852,7 @@ class LanMessengerApp:
                                    fg='#c8d6e5', relief='flat', bd=0,
                                    insertbackground='#c8d6e5',
                                    height=1, width=1, wrap='none', undo=False,
-                                   pady=3, padx=4)
+                                   pady=5, padx=4)
         self.note_entry.pack(side='left', fill='x', expand=True)
 
         self.note_entry.insert('1.0', _t('note_placeholder'))
@@ -5438,7 +5438,7 @@ class LanMessengerApp:
     def _do_note_emoji_scan(self):
         try:
             _scan_entry_emojis(self.note_entry, self._note_emoji_cache,
-                               self._note_img_map, prefix='note_emoji', size=16)
+                               self._note_img_map, prefix='note_emoji', size=14)
         except Exception:
             pass
 
@@ -5447,7 +5447,7 @@ class LanMessengerApp:
         if emoji_char in self._note_emoji_cache:
             img = self._note_emoji_cache[emoji_char]
         else:
-            img = _render_color_emoji(emoji_char, 16)
+            img = _render_color_emoji(emoji_char, 14)
             if img:
                 self._note_emoji_cache[emoji_char] = img
         if img:
