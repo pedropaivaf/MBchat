@@ -33,7 +33,7 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 
 ## Modulos
 
-### gui.py (~5200 linhas) - Apresentacao
+### gui.py (~5400 linhas) - Apresentacao
 
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
@@ -79,18 +79,26 @@ Classe **Messenger** - orquestra a comunicacao entre camadas:
 - Gerencia transferencias de arquivo (FileSender pool, FileReceiver)
 - Gerencia estado dos grupos (_groups dict com membros)
 
-### network.py (~680 linhas) - Camada de Rede
+### network.py (~730 linhas) - Camada de Rede
 
 Classes de I/O independentes da GUI:
 - **UDPDiscovery**: multicast 239.255.100.200:50100 + broadcast fallback
   - Announce loop (5s), cleanup loop (timeout 30s), anti-storm protection
   - Bind com fallback de porta (+10, +20) para PermissionError
   - Buffer UDP 262KB para suportar 30+ peers
+  - Multicast join com fallback INADDR_ANY para PCs com multiplas NICs
+  - Subnet-directed broadcast (ex: 192.168.0.255) alem do 255.255.255.255
 - **TCPServer**: aceita conexoes na porta 50101, le frames JSON, backlog 100
 - **TCPClient**: metodos estaticos para enviar mensagens JSON
 - **FileSender**: envia arquivo em chunks 64KB com progresso (porta 50102)
   - Timeout 120s para aguardar aceite do destinatario
 - **FileReceiver**: recebe arquivo com accept/decline handshake
+
+Funcoes utilitarias:
+- **get_local_ip()**: Detecta IP local via rota LAN (10.255.255.255), fallback 8.8.8.8, fallback enumeracao de interfaces. Funciona sem internet.
+- **_get_subnet_broadcast()**: Calcula broadcast da subnet /24 a partir do IP local
+- **generate_user_id()**: MAC + hostname para ID unico persistente
+- **_add_firewall_rule()**: Configura firewall Windows via netsh em background
 
 Protocolo:
 - Frame TCP: [4 bytes big-endian length][JSON payload UTF-8]
@@ -136,10 +144,21 @@ PyInstaller --onefile --windowed com:
 
 ### Descoberta de Peers
 ```
-1. UDPDiscovery._announce_loop() -> multicast/broadcast JSON
+1. UDPDiscovery._announce_loop() -> multicast + broadcast + subnet broadcast JSON
 2. Peer recebe -> _handle_packet() -> envia announce de volta
 3. Messenger._on_peer_found() -> Database.upsert_contact()
-4. GUI._on_user_found() -> adiciona no treeview com status dot
+4. GUI._on_user_found() -> adiciona no treeview com status dot + emoji composto
+```
+
+### Emojis Coloridos na Lista de Contatos
+```
+1. Peer envia note com emojis via UDP announce (texto Unicode)
+2. _add_contact() recebe info com note
+3. _render_contact_display() gera imagem PIL composta:
+   [avatar 36px] [nome em cor do status] [" - " nota com emojis coloridos]
+4. Emojis renderizados via seguiemj.ttf + embedded_color=True + LANCZOS resize
+5. Imagem composta usada como image= do TreeView item (text='')
+6. Fallback: texto plano se PIL indisponivel
 ```
 
 ### Envio de Mensagem
@@ -213,5 +232,7 @@ PyInstaller --onefile --windowed com:
 10. **Protocolo URL customizado**: mbchat:// registrado em HKCU para notificacoes clicaveis
 11. **Grupo mesh**: sem servidor de grupo, cada membro envia para todos os demais via TCP
 12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True para renderizar como imagem. Detecção automática via scans no evento <<Modified>> dos campos de texto.
-13. **UI moderna flat**: _add_hover(), Frame-in-Frame borders, navy header, pill buttons
-14. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)
+13. **Emojis na lista de contatos**: _render_contact_display() gera imagem PIL composta (avatar + nome + nota com emojis) como image do TreeView item. Fallback texto plano sem PIL.
+14. **Discovery robusto**: get_local_ip() com 3 fallbacks (rota LAN, 8.8.8.8, enumeração de interfaces). Multicast join com INADDR_ANY fallback. Subnet-directed broadcast.
+15. **UI moderna flat**: _add_hover(), Frame-in-Frame borders, navy header, pill buttons
+16. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)

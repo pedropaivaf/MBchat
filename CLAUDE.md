@@ -32,12 +32,21 @@ gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
 
 ## Portas de rede
 
-- UDP 50100: Discovery (multicast 239.255.100.200)
+- UDP 50100: Discovery (multicast 239.255.100.200 + broadcast + subnet broadcast)
 - TCP 50101: Mensagens (inclui group_invite e group_message)
 - TCP 50102: File transfer
 - TCP 50199: Single-instance lock (loopback)
 
 **IMPORTANTE**: Portas escolhidas para NAO conflitar com LAN Messenger (50000-50002).
+
+## Troubleshooting de rede
+
+Se um PC nao descobre peers:
+1. **Firewall**: verificar se MBChat tem regra de entrada (UDP+TCP 50100-50102). Rodar como admin uma vez ou adicionar manualmente via `netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=UDP localport=50100,50101,50102 profile=any`
+2. **Antivirus**: Kaspersky, Norton, etc. podem bloquear o executavel. Adicionar excecao.
+3. **Multiplas NICs**: VPN, Hyper-V, Docker criam interfaces virtuais. get_local_ip() tenta detectar a correta (rota LAN -> 8.8.8.8 -> enumeracao), mas pode pegar a errada. Desativar NICs virtuais resolve.
+4. **Subnet diferente**: PC deve estar na mesma subnet /24 dos demais (ex: 192.168.0.x). VLANs separadas nao se comunicam.
+5. **Porta ocupada**: Se 50100 esta ocupada, o app tenta +10, +20, depois aleatoria. Porta aleatoria nao recebe broadcasts. Verificar com `netstat -an | findstr 50100`.
 
 ## Assets
 
