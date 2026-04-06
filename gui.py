@@ -2507,7 +2507,6 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_bind('copy_btn', '<Leave>',
                                 lambda e: self.chat_text.config(cursor='arrow'))
 
-        self._load_history()  # exibe mensagens pendentes/não-lidas ao abrir o chat
         self.protocol('WM_DELETE_WINDOW', self._on_close)  # trata fechamento da janela
         self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))  # para o flash da taskbar ao focar
 

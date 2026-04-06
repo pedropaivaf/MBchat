@@ -24,7 +24,7 @@ Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel stand
 - Emojis coloridos renderizados via PIL (seguiemj.ttf) em todos os campos
 - **Nota pessoal** visivel para todos em tempo real com emojis coloridos
 - Historico ilimitado (SQLite local) com pesquisa e filtro por data
-- Carregamento automatico das ultimas 40 mensagens ao abrir chat
+- Chat abre limpo; historico completo acessivel via botao History
 
 ### Transmitir Mensagem (Broadcast)
 - Envio para multiplos contatos selecionados
