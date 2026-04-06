@@ -107,14 +107,39 @@ MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
 # Nao envia dados, apenas verifica o roteamento.
 # Retorna '127.0.0.1' se nao conseguir detectar.
 def get_local_ip():
+    # Tenta via rota UDP (nao precisa de internet, so verifica roteamento)
+    for target in ['10.255.255.255', '8.8.8.8']:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            s.connect((target, 1))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and ip != '127.0.0.1' and not ip.startswith('169.254'):
+                return ip
+        except Exception:
+            pass
+    # Fallback: enumera interfaces e pega o primeiro IP privado valido
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8', 80))  # Nao envia dados, so verifica rota
-        ip = s.getsockname()[0]  # IP local da interface usada
-        s.close()
-        return ip
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if ip != '127.0.0.1' and not ip.startswith('169.254'):
+                return ip
     except Exception:
-        return '127.0.0.1'  # Fallback para loopback
+        pass
+    return '127.0.0.1'
+
+
+# Calcula endereco de broadcast da subnet local
+def _get_subnet_broadcast():
+    ip = get_local_ip()
+    if ip == '127.0.0.1':
+        return None
+    # Assume /24 para redes corporativas tipicas
+    parts = ip.split('.')
+    if len(parts) == 4:
+        return f'{parts[0]}.{parts[1]}.{parts[2]}.255'
+    return None
 
 
 # Gera ID unico baseado no MAC address + hostname.
@@ -203,16 +228,20 @@ class UDPDiscovery:
             self._sock_recv.bind(('', 0))  # Ultimo recurso: porta aleatoria
 
         # Junta ao grupo multicast para receber announcements
-        try:
-            local_ip = get_local_ip()
-            # mreq = endereco multicast + interface local
-            mreq = struct.pack('4s4s',
-                               socket.inet_aton(MULTICAST_GROUP),
-                               socket.inet_aton(local_ip))
-            self._sock_recv.setsockopt(socket.IPPROTO_IP,
-                                       socket.IP_ADD_MEMBERSHIP, mreq)
-        except Exception:
-            pass  # Multicast pode nao estar disponivel na rede
+        # Tenta com IP local especifico primeiro, depois INADDR_ANY como fallback
+        multicast_joined = False
+        for iface_ip in [get_local_ip(), '0.0.0.0']:
+            try:
+                mreq = struct.pack('4s4s',
+                                   socket.inet_aton(MULTICAST_GROUP),
+                                   socket.inet_aton(iface_ip))
+                self._sock_recv.setsockopt(socket.IPPROTO_IP,
+                                           socket.IP_ADD_MEMBERSHIP, mreq)
+                multicast_joined = True
+                break
+            except Exception:
+                continue
+        # Se nao juntou ao multicast, broadcast sera o unico meio de discovery
 
         # Aumenta buffer UDP para suportar 30+ peers simultaneos
         try:
@@ -321,7 +350,14 @@ class UDPDiscovery:
         try:
             self._sock_send.sendto(pkt, (BROADCAST_ADDR, UDP_PORT))
         except Exception:
-            pass  # Broadcast pode ser bloqueado
+            pass  # Broadcast global pode ser bloqueado
+        # Subnet-directed broadcast (mais confiavel em algumas redes Windows)
+        subnet_bcast = _get_subnet_broadcast()
+        if subnet_bcast and subnet_bcast != BROADCAST_ADDR:
+            try:
+                self._sock_send.sendto(pkt, (subnet_bcast, UDP_PORT))
+            except Exception:
+                pass
 
     # Envia pacote de saida (depart) para todos os peers
     def _send_depart(self):
@@ -334,6 +370,12 @@ class UDPDiscovery:
             self._sock_send.sendto(pkt, (BROADCAST_ADDR, UDP_PORT))
         except Exception:
             pass
+        subnet_bcast = _get_subnet_broadcast()
+        if subnet_bcast and subnet_bcast != BROADCAST_ADDR:
+            try:
+                self._sock_send.sendto(pkt, (subnet_bcast, UDP_PORT))
+            except Exception:
+                pass
 
     # Loop de recebimento de pacotes UDP (roda em thread daemon)
     def _receive_loop(self):
