@@ -5331,7 +5331,7 @@ class LanMessengerApp:
         if not HAS_PIL:
             return None
         from PIL import ImageDraw, ImageFont
-        emoji_size = 20  # tamanho do emoji na lista de contatos
+        emoji_size = 28  # tamanho do emoji na lista de contatos
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
             name_font = ImageFont.truetype(font_name, 14)
@@ -5365,7 +5365,7 @@ class LanMessengerApp:
         # Segmentos da nota (texto e emoji separados)
         note_segments = []
         total_note_w = 0
-        emoji_render_size = emoji_size + 6  # canvas para renderizar cada emoji
+        emoji_render_size = emoji_size  # tamanho final do emoji na imagem composta
         if note:
             sep = '  -  '
             sep_bbox = d.textbbox((0, 0), sep, font=note_font)
@@ -5614,7 +5614,7 @@ class LanMessengerApp:
     def _do_note_emoji_scan(self):
         try:
             _scan_entry_emojis(self.note_entry, self._note_emoji_cache,
-                               self._note_img_map, prefix='note_emoji', size=14)
+                               self._note_img_map, prefix='note_emoji', size=18)
         except Exception:
             pass
 
@@ -5623,7 +5623,7 @@ class LanMessengerApp:
         if emoji_char in self._note_emoji_cache:
             img = self._note_emoji_cache[emoji_char]
         else:
-            img = _render_color_emoji(emoji_char, 14)
+            img = _render_color_emoji(emoji_char, 18)
             if img:
                 self._note_emoji_cache[emoji_char] = img
         if img:
