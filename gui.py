@@ -2834,21 +2834,180 @@ class ChatWindow(tk.Toplevel):
     # Exibe em formato texto puro: [YYYY-MM-DD HH:MM:SS] Nome: mensagem.
     # Somente leitura (state='disabled'). Fecha com Escape.
     def _show_history(self):
-        history = self.messenger.get_chat_history(self.peer_id, limit=500)
+        all_history = self.messenger.get_chat_history(self.peer_id, limit=5000)
+        t = THEMES.get(self.app._current_theme, THEMES.get('MB Contabilidade', {}))
+        header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
+        header_fg = t.get('chat_header_fg', '#ffffff')
+        win_bg = t.get('bg_window', '#f5f7fa')
+
         win = tk.Toplevel(self)
         win.title(f'Histórico - {self.peer_name}')
-        _center_window(win, 500, 400)
+        _center_window(win, 560, 500)
+        win.configure(bg=win_bg)
         win.bind('<Escape>', lambda e: win.destroy())
-        txt = tk.Text(win, font=FONT_SMALL, wrap='word', bg=BG_WHITE)
-        scr = ttk.Scrollbar(win, command=txt.yview, style='Clean.Vertical.TScrollbar')
+        _apply_rounded_corners(win)
+        ico = _get_icon_path()
+        if ico:
+            try:
+                win.iconbitmap(ico)
+            except Exception:
+                pass
+
+        # Header
+        hdr = tk.Frame(win, bg=header_bg)
+        hdr.pack(fill='x')
+        tk.Label(hdr, text=f'  \U0001f4dc  Histórico - {self.peer_name}',
+                 font=('Segoe UI', 11, 'bold'), bg=header_bg, fg=header_fg,
+                 anchor='w').pack(fill='x', padx=8, pady=8)
+
+        # Toolbar: busca + datas
+        toolbar = tk.Frame(win, bg=win_bg)
+        toolbar.pack(fill='x', padx=8, pady=(8, 4))
+
+        # Busca
+        tk.Label(toolbar, text='\U0001f50d', font=('Segoe UI', 10),
+                 bg=win_bg).pack(side='left')
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(toolbar, textvariable=search_var,
+                                font=('Segoe UI', 10), width=20)
+        search_entry.pack(side='left', padx=(4, 12), fill='x', expand=True)
+        search_entry.focus_set()
+
+        # Contagem de resultados
+        count_lbl = tk.Label(toolbar, text='', font=('Segoe UI', 9),
+                             bg=win_bg, fg='#666666')
+        count_lbl.pack(side='right', padx=(8, 0))
+
+        # Datas De/Até
+        date_frame = tk.Frame(win, bg=win_bg)
+        date_frame.pack(fill='x', padx=8, pady=(0, 4))
+
+        tk.Label(date_frame, text='De:', font=('Segoe UI', 9),
+                 bg=win_bg).pack(side='left')
+        date_from_var = tk.StringVar()
+        date_from = tk.Entry(date_frame, textvariable=date_from_var,
+                             font=('Segoe UI', 9), width=12)
+        date_from.pack(side='left', padx=(4, 12))
+        date_from.insert(0, 'dd/mm/aaaa')
+        date_from.config(fg='#999999')
+
+        tk.Label(date_frame, text='Até:', font=('Segoe UI', 9),
+                 bg=win_bg).pack(side='left')
+        date_to_var = tk.StringVar()
+        date_to = tk.Entry(date_frame, textvariable=date_to_var,
+                           font=('Segoe UI', 9), width=12)
+        date_to.pack(side='left', padx=(4, 0))
+        date_to.insert(0, 'dd/mm/aaaa')
+        date_to.config(fg='#999999')
+
+        # Placeholder behavior
+        def _on_focus_in(entry, var, placeholder):
+            if entry.get() == placeholder:
+                entry.delete(0, 'end')
+                entry.config(fg='#000000')
+        def _on_focus_out(entry, var, placeholder):
+            if not entry.get().strip():
+                entry.insert(0, placeholder)
+                entry.config(fg='#999999')
+
+        ph = 'dd/mm/aaaa'
+        date_from.bind('<FocusIn>', lambda e: _on_focus_in(date_from, date_from_var, ph))
+        date_from.bind('<FocusOut>', lambda e: _on_focus_out(date_from, date_from_var, ph))
+        date_to.bind('<FocusIn>', lambda e: _on_focus_in(date_to, date_to_var, ph))
+        date_to.bind('<FocusOut>', lambda e: _on_focus_out(date_to, date_to_var, ph))
+
+        # Separador
+        tk.Frame(win, bg='#cccccc', height=1).pack(fill='x', padx=8)
+
+        # Area de texto
+        txt_frame = tk.Frame(win, bg=win_bg)
+        txt_frame.pack(fill='both', expand=True, padx=8, pady=(4, 8))
+        txt = tk.Text(txt_frame, font=FONT_SMALL, wrap='word', bg='#ffffff',
+                      relief='flat', bd=0, padx=8, pady=4)
+        scr = ttk.Scrollbar(txt_frame, command=txt.yview, style='Clean.Vertical.TScrollbar')
         txt.configure(yscrollcommand=scr.set)
         scr.pack(side='right', fill='y')
         txt.pack(fill='both', expand=True)
-        for m in history:
-            ts = datetime.fromtimestamp(m['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
-            who = 'Você' if m['is_sent'] else self.peer_name
-            txt.insert('end', f'[{ts}] {who}: {m["content"]}\n')
-        txt.configure(state='disabled')
+        txt.tag_configure('highlight', background='#fff176', foreground='#000000')
+        txt.tag_configure('ts', foreground='#888888')
+        txt.tag_configure('me', foreground='#0d47a1', font=('Segoe UI', 9, 'bold'))
+        txt.tag_configure('peer', foreground='#2e7d32', font=('Segoe UI', 9, 'bold'))
+
+        def _parse_date(s):
+            s = s.strip()
+            if not s or s == ph:
+                return None
+            try:
+                parts = s.split('/')
+                if len(parts) == 3:
+                    return datetime(int(parts[2]), int(parts[1]), int(parts[0]))
+            except (ValueError, IndexError):
+                pass
+            return None
+
+        def _refresh(*_args):
+            query = search_var.get().strip().lower()
+            d_from = _parse_date(date_from.get())
+            d_to = _parse_date(date_to.get())
+            if d_to:
+                d_to = d_to.replace(hour=23, minute=59, second=59)
+
+            txt.configure(state='normal')
+            txt.delete('1.0', 'end')
+            match_count = 0
+            total = 0
+
+            for m in all_history:
+                ts_dt = datetime.fromtimestamp(m['timestamp'])
+                if d_from and ts_dt < d_from:
+                    continue
+                if d_to and ts_dt > d_to:
+                    continue
+
+                ts_str = ts_dt.strftime('%d/%m/%Y %H:%M:%S')
+                who = 'Você' if m['is_sent'] else self.peer_name
+                content = m['content']
+
+                if query and query not in content.lower() and query not in who.lower():
+                    continue
+
+                total += 1
+                line = f'[{ts_str}] {who}: {content}\n'
+                start_idx = txt.index('end-1c')
+                txt.insert('end', f'[{ts_str}] ', 'ts')
+                who_tag = 'me' if m['is_sent'] else 'peer'
+                txt.insert('end', f'{who}: ', who_tag)
+                txt.insert('end', f'{content}\n')
+
+                # Highlight matches
+                if query:
+                    line_start = txt.index(f'{start_idx} linestart')
+                    line_end = txt.index(f'{start_idx} lineend +1c')
+                    full_line = txt.get(line_start, line_end).lower()
+                    search_start = 0
+                    while True:
+                        pos = full_line.find(query, search_start)
+                        if pos < 0:
+                            break
+                        h_start = f'{line_start}+{pos}c'
+                        h_end = f'{line_start}+{pos + len(query)}c'
+                        txt.tag_add('highlight', h_start, h_end)
+                        match_count += 1
+                        search_start = pos + 1
+
+            txt.configure(state='disabled')
+
+            if query:
+                count_lbl.config(text=f'{match_count} ocorrências em {total} mensagens')
+            elif d_from or d_to:
+                count_lbl.config(text=f'{total} mensagens')
+            else:
+                count_lbl.config(text=f'{len(all_history)} mensagens')
+
+        search_var.trace_add('write', _refresh)
+        date_from_var.trace_add('write', _refresh)
+        date_to_var.trace_add('write', _refresh)
+        _refresh()
 
     # Abre o diálogo de configuração de fonte, capturando quaisquer exceções.
     def _change_font(self):
