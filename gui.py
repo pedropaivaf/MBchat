@@ -6222,21 +6222,29 @@ class LanMessengerApp:
                              bg=win_bg, fg='#666666')
         count_lbl.pack(side='right', padx=(8, 0))
 
-        # Datas De/Até
-        date_frame = tk.Frame(win, bg=win_bg)
-        date_frame.pack(fill='x', padx=8, pady=(0, 4))
+        # Filtros: contato + datas
+        filter_frame = tk.Frame(win, bg=win_bg)
+        filter_frame.pack(fill='x', padx=8, pady=(0, 4))
+
+        tk.Label(filter_frame, text='Contato:', font=('Segoe UI', 9),
+                 bg=win_bg).pack(side='left')
+        contact_var = tk.StringVar(value='Todos')
+        contact_combo = ttk.Combobox(filter_frame, textvariable=contact_var,
+                                      font=('Segoe UI', 9), width=18,
+                                      state='readonly')
+        contact_combo.pack(side='left', padx=(4, 12))
 
         ph = 'dd/mm/aaaa'
-        tk.Label(date_frame, text='De:', font=('Segoe UI', 9),
+        tk.Label(filter_frame, text='De:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
-        date_from_entry = tk.Entry(date_frame, font=('Segoe UI', 9), width=12)
+        date_from_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12)
         date_from_entry.pack(side='left', padx=(4, 12))
         date_from_entry.insert(0, ph)
         date_from_entry.config(fg='#999999')
 
-        tk.Label(date_frame, text='Até:', font=('Segoe UI', 9),
+        tk.Label(filter_frame, text='Até:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
-        date_to_entry = tk.Entry(date_frame, font=('Segoe UI', 9), width=12)
+        date_to_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12)
         date_to_entry.pack(side='left', padx=(4, 0))
         date_to_entry.insert(0, ph)
         date_to_entry.config(fg='#999999')
@@ -6281,6 +6289,7 @@ class LanMessengerApp:
 
         # Cache de nomes: resolve peer_id -> display_name
         _name_cache = {}
+        _name_to_peer = {}
         def _resolve_name(peer_id):
             if peer_id in _name_cache:
                 return _name_cache[peer_id]
@@ -6290,7 +6299,16 @@ class LanMessengerApp:
                 row = db.get_contact(peer_id)
                 name = row['display_name'] if row else peer_id[:20]
             _name_cache[peer_id] = name
+            _name_to_peer[name] = peer_id
             return name
+
+        # Popula combobox de contatos
+        contacts_data = db.get_history_contacts()
+        _contact_names_list = ['Todos']
+        for c in contacts_data:
+            name = _resolve_name(c['peer'])
+            _contact_names_list.append(name)
+        contact_combo['values'] = _contact_names_list
 
         def _parse_date(s):
             s = s.strip()
@@ -6318,13 +6336,14 @@ class LanMessengerApp:
             query = search_var.get().strip()
             d_from = _parse_date(date_from_entry.get())
             d_to = _parse_date(date_to_entry.get())
+            selected_contact = contact_var.get()
+            selected_peer = _name_to_peer.get(selected_contact) if selected_contact != 'Todos' else None
 
             d_from_ts = d_from.timestamp() if d_from else None
             d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
 
-            if not query and not d_from and not d_to:
+            if not query and not d_from and not d_to and not selected_peer:
                 # Sem filtro: mostra resumo de contatos com historico
-                contacts_data = db.get_history_contacts()
                 msg_text.configure(state='normal')
                 msg_text.delete('1.0', 'end')
                 msg_text.insert('end', 'Digite para buscar em todas as conversas\n\n', 'ts')
@@ -6338,9 +6357,16 @@ class LanMessengerApp:
                 msg_text.configure(state='disabled')
                 return
 
-            msgs = db.search_all_messages(
-                search_text=query if query else None,
-                date_from=d_from_ts, date_to=d_to_ts, limit=500)
+            # Busca: por contato específico ou global
+            if selected_peer:
+                msgs = db.get_messages_with_peer(user_id, selected_peer,
+                                                  date_from=d_from_ts,
+                                                  date_to=d_to_ts,
+                                                  search_text=query if query else None)
+            else:
+                msgs = db.search_all_messages(
+                    search_text=query if query else None,
+                    date_from=d_from_ts, date_to=d_to_ts, limit=500)
 
             my_name = self.messenger.display_name
 
@@ -6402,6 +6428,7 @@ class LanMessengerApp:
         search_var.trace_add('write', _schedule_refresh)
         date_from_entry.bind('<KeyRelease>', _schedule_refresh)
         date_to_entry.bind('<KeyRelease>', _schedule_refresh)
+        contact_combo.bind('<<ComboboxSelected>>', _schedule_refresh)
         win.bind('<Control-f>', lambda e: search_entry.focus_set())
         _refresh()
 
