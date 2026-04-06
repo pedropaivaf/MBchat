@@ -91,6 +91,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Emoji pickers fecham ao clicar fora
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens). Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
+- Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
 
 ## Convencoes importantes
 

@@ -67,6 +67,7 @@ Mecanismos importantes:
 - **Icones MDL2**: _create_mdl2_icon_static() para icones profissionais (Segoe MDL2 Assets)
 - **Nota pessoal**: Text (height=1) no header navy, permite emojis coloridos (PIL render as image), salva no DB local, sincroniza via UDP announce em tempo real
 - **Popups dismissaveis**: Todas as janelas popup fecham com Escape chamando _on_close() (limpeza de estado), e emoji pickers fecham ao clicar fora
+- **Filtro de contatos thread-safe**: _add_contact() (chamado pelo UDP announce a cada 5s) verifica se há busca ativa e re-detacha contatos que não batem com o filtro
 
 ### messenger.py (~360 linhas) - Controller
 
