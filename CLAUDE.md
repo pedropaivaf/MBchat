@@ -90,7 +90,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Popups e todas as janelas de Chat/Grupos fecham com a tecla Escape chamando logicamente _on_close() para limpeza de estado
 - Emoji pickers fecham ao clicar fora
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
-- Chat individual carrega automaticamente as ultimas 40 mensagens para garantir preservacao do contexto mesmo ao originar-se de notificacoes em background
+- Chat individual abre limpo (sem mensagens). Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 
 ## Convencoes importantes
 
