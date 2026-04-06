@@ -5698,6 +5698,13 @@ class LanMessengerApp:
             self._sort_tree_children(parent)
 
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
+
+        # Se ha filtro ativo, esconde o contato se nao bater com a busca
+        query = self._search_var.get().strip().lower()
+        if query and query != 'buscar contatos...':
+            if query not in name.lower() and query not in note.lower():
+                self.tree.detach(iid)
+
         self._update_offline_count()  # recalcula contagem na secao Offline
         # Atualiza a nota do contato em todas as janelas de grupo que ele participa
         for gw in self.group_windows.values():   # percorre janelas de grupo abertas
