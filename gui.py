@@ -3397,6 +3397,9 @@ class ChatWindow(tk.Toplevel):
             '\u270f\ufe0f': 'lapis', '\U0001f512': 'cadeado fechado',
             '\U0001f513': 'cadeado aberto', '\U0001f527': 'chave inglesa ferramenta',
             '\U0001f528': 'martelo', '\U0001f6e0\ufe0f': 'ferramentas',
+            '\u2601\ufe0f': 'nuvem cloud', '\U0001f327\ufe0f': 'nuvem chuva',
+            '\U0001f328\ufe0f': 'nuvem neve', '\u26c5': 'sol nuvem parcialmente nublado',
+            '\U0001f324\ufe0f': 'sol nuvem pequena', '\U0001f325\ufe0f': 'sol nuvem grande',
             # Símbolos e Esportes
             '\U0001f3c6': 'trofeu copa', '\U0001f3c5': 'medalha esporte',
             '\U0001f947': 'medalha ouro primeiro', '\U0001f948': 'medalha prata segundo',
@@ -3490,7 +3493,10 @@ class ChatWindow(tk.Toplevel):
                 '\U0001f697', '\U0001f695', '\U0001f68c', '\U0001f691',
                 '\U0001f692', '\U0001f693', '\U0001f3ce\ufe0f',
                 '\u2708\ufe0f', '\U0001f680', '\U0001f6f8',
-                '\U0001f6a2', '\U0001f3e0', '\U0001f3e2', '\U0001f3eb',
+                '\U0001f6a2',
+                '\u2601\ufe0f', '\U0001f327\ufe0f', '\U0001f328\ufe0f',
+                '\u26c5', '\U0001f324\ufe0f', '\U0001f325\ufe0f',
+                '\U0001f3e0', '\U0001f3e2', '\U0001f3eb',
                 '\U0001f3e5', '\U0001f3ed', '\u26ea', '\U0001f5fc',
                 '\U0001f4f1', '\U0001f4bb', '\U0001f4f7', '\U0001f4f9',
                 '\U0001f4fa', '\U0001f4fb', '\u23f0', '\u231a',
@@ -4314,6 +4320,7 @@ class GroupChatWindow(tk.Toplevel):
             '\U0001f611', '\U0001f636', '\U0001f60f', '\U0001f612',
             '\U0001f620', '\U0001f621', '\U0001f622', '\U0001f62d',
             '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
+            '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b',
         ]
 
         grid_frame = tk.Frame(popup, bg='#ffffff')
@@ -5687,7 +5694,8 @@ class LanMessengerApp:
                   '\U0001f619', '\U0001f61a', '\U0001f61b', '\U0001f61c',
                   '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
                   '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
-                  '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f']
+                  '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
+                  '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b']
         
         header = tk.Frame(ep, bg='#f5f7fa')
         header.pack(fill='x')
@@ -6716,7 +6724,8 @@ class LanMessengerApp:
                       '\U0001f619', '\U0001f61a', '\U0001f61b', '\U0001f61c',
                       '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
                       '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
-                      '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f']
+                      '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
+                      '\u2601\ufe0f', '\u26c5', '\U0001f37a', '\U0001f37b']
             fr = tk.Frame(ep, bg='#ffffff')
             fr.pack(fill='both', expand=True, padx=1, pady=1)
             ep._emoji_imgs = {}  # manter referencia para GC
