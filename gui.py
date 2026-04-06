@@ -568,15 +568,6 @@ def _render_color_emoji(emoji_char, size=28):
         return None
 
 
-# Utilitário: vincula o evento MouseWheel em um widget e em todos os seus filhos recursivamente.
-# Permite que o scroll do mouse funcione mesmo quando o ponteiro está sobre sub-widgets.
-# Handler: função de callback que recebe o evento do mouse.
-def _bind_wheel_recursive(widget, handler):
-    widget.bind('<MouseWheel>', handler)
-    for child in widget.winfo_children():
-        _bind_wheel_recursive(child, handler)
-
-
 # Função utilitária: varre um widget tk.Text e substitui TODOS os emojis Unicode
 # por imagens coloridas renderizadas via PIL. Usada em todas as janelas de entrada
 # (ChatWindow, GroupChatWindow, Broadcast) para garantir que emojis digitados,
@@ -3424,6 +3415,11 @@ class ChatWindow(tk.Toplevel):
         def _emoji_scroll(e):
             canvas.yview_scroll(-1 * (e.delta // 60), 'units')
 
+        def _bind_wheel_recursive(widget):
+            widget.bind('<MouseWheel>', _emoji_scroll)
+            for child in widget.winfo_children():
+                _bind_wheel_recursive(child)
+
         def _populate_grid(emojis):
             for w in inner.winfo_children():
                 w.destroy()
@@ -3451,7 +3447,7 @@ class ChatWindow(tk.Toplevel):
             inner.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox('all'))
             canvas.yview_moveto(0)
-            _bind_wheel_recursive(inner, _emoji_scroll)
+            _bind_wheel_recursive(inner)
 
         def show_category(cat_key):
             _populate_grid(categories[cat_key])
@@ -3501,9 +3497,7 @@ class ChatWindow(tk.Toplevel):
         inner.bind('<MouseWheel>', _emoji_scroll)
 
         show_category(cat_keys[0])
-        def _popup_scroll(e):
-            canvas.yview_scroll(-1 * (e.delta // 60), 'units')
-        _bind_wheel_recursive(inner, _popup_scroll)
+        _bind_wheel_recursive(inner)
         popup.bind('<Escape>', lambda e: popup.destroy())
 
         # Fechar ao clicar fora do popup
@@ -3870,19 +3864,17 @@ class GroupChatWindow(tk.Toplevel):
                             bg='#f8fafc', fg='#2d3748', anchor='w')
         name_lbl.pack(fill='x')
 
-        # Substitui Label por Text para suportar emojis coloridos
         note_txt = tk.Text(info_frame, font=('Segoe UI', 7, 'italic'),
                            bg='#f8fafc', fg='#718096', relief='flat', bd=0,
-                           height=1, wrap='none', highlightthickness=0)
-        note_txt.bind("<FocusIn>", lambda e: self.focus_set()) # impede foco no texto
+                           height=1, wrap='none', highlightthickness=0,
+                           state='disabled', cursor='arrow')
+        note_txt.bind("<FocusIn>", lambda e: self.focus_set())
         if note:
+            note_txt.config(state='normal')
             note_txt.insert('1.0', note)
             note_txt.config(state='disabled')
             note_txt.pack(fill='x')
-            # Renderiza emojis imediatamente
             _scan_entry_emojis(note_txt, self._chat_emoji_cache, {}, prefix=f'part_note_{uid}', size=12)
-        else:
-            note_txt.pack_forget()
 
         self._participant_widgets[uid] = {
             'frame': row, 'name_lbl': name_lbl,
@@ -3897,16 +3889,15 @@ class GroupChatWindow(tk.Toplevel):
         w = self._participant_widgets[uid]
         w['name_lbl'].config(text=member['display_name'])
         note = member.get('note', '')
-        
         w['note_txt'].config(state='normal')
         w['note_txt'].delete('1.0', 'end')
         if note:
             w['note_txt'].insert('1.0', note)
-            # Renderiza emojis
             _scan_entry_emojis(w['note_txt'], self._chat_emoji_cache, {}, prefix=f'part_note_{uid}', size=12)
             w['note_txt'].config(state='disabled')
             w['note_txt'].pack(fill='x')
         else:
+            w['note_txt'].config(state='disabled')
             w['note_txt'].pack_forget()
         # Atualizar avatar com status
         avatar = self._create_member_avatar(uid, member['display_name'],
@@ -4424,15 +4415,6 @@ class LanMessengerApp:
         self.chat_windows = {}              # peer_id -> ChatWindow (chats individuais abertos)
         self.group_windows = {}             # group_id -> GroupChatWindow (grupos abertos)
         self._pending_group_msgs = {}       # group_id -> [(nome, conteúdo, timestamp)] - msgs de grupo sem janela
-        self.peer_items = {}                # uid -> frame iid (custom row)
-        self.peer_info = {}                 # uid -> info dict
-        self._group_tree_items = {}         # group_id -> frame iid (custom row)
-        
-        # Widgets do novo painel de contatos
-        self.contact_widgets = {}           # uid -> {frame, name_lbl, note_txt, avatar_lbl, tag}
-        self.group_widgets = {}             # group_id -> {frame, lbl, count_lbl}
-        self._contact_emoji_cache = {}      # cache global de emojis para a lista
-        self._last_selected_uid = None      # rastreio de selecao manual
         self.peer_items = {}                # peer_id -> item_id do TreeView
         self.peer_info = {}                 # peer_id -> {display_name, ip, status, note, ...}
         self._file_dialogs = {}             # file_id -> FileTransferDialog (diálogos de transferência)
@@ -4461,9 +4443,6 @@ class LanMessengerApp:
             self._last_saved_note = saved_note
             # Renderiza emojis coloridos na nota restaurada
             self.root.after(50, self._do_note_emoji_scan)
-
-        # Inicia o messenger (UDP, DB, etc.) e carrega contatos iniciais
-        self._init_messenger()
 
         # Aplica idioma salvo
         saved_lang = self.messenger.db.get_setting('language', 'Português')
@@ -4550,10 +4529,6 @@ class LanMessengerApp:
 
         self.root.config(menu=menubar)
 
-        if hasattr(self, '_lbl_personal_note'):
-            # Atualiza o header com o nome traduzido se necessário
-            pass
-
         # Update status combo
         self.status_combo['values'] = [
             _t('status_available'), _t('status_away'),
@@ -4570,6 +4545,9 @@ class LanMessengerApp:
            note_text in ('Digite uma nota', 'Type a note'):
             self.note_entry.delete('1.0', 'end')
             self.note_entry.insert('1.0', _t('note_placeholder'))
+
+        # Update group label
+        self.tree.item(self.group_general, text=_t('group_general'))
 
         # Update context menu
         self.ctx_menu.entryconfigure(0, label=_t('ctx_send_msg'))
@@ -4588,31 +4566,35 @@ class LanMessengerApp:
         # Recursivo: todos os frames e labels da janela principal
         self._apply_theme_recursive(self.root, t)
 
+        # --- Treeview style ---
+        style = ttk.Style()
+        style.configure('Contacts.Treeview',
+                        background=t['bg_white'],
+                        foreground=t['fg_black'],
+                        fieldbackground=t['bg_white'],
+                        rowheight=44)
+        style.configure('Contacts.Treeview.Heading',
+                        background=t['bg_group'],
+                        foreground=t.get('fg_group', '#4a5568'))
+        style.map('Contacts.Treeview',
+                  background=[('selected', t['bg_select'])],
+                  foreground=[('selected', t['fg_black'])])
+
         # Custom scrollbar canvas
         if hasattr(self, '_scroll_canvas'):
             self._scroll_canvas.configure(bg=t['bg_white'])
             self._scroll_redraw()
 
-        # Custom Contact List
-        if hasattr(self, '_contact_canvas'):
-            self._contact_canvas.configure(bg=t['bg_white'])
-            self._contact_list_inner.configure(bg=t['bg_white'])
-            
-            # Atualiza cores dos headers de grupo
-            for g in self.group_widgets.values():
-                g['frame'].configure(bg=t['bg_group'])
-                g['lbl'].configure(bg=t['bg_group'], fg=t.get('fg_group', '#4a5568'))
-                g['count_lbl'].configure(bg=t['bg_group'], fg=t.get('fg_group', '#4a5568'))
-            
-            # Atualiza cores dos contatos
-            for c in self.contact_widgets.values():
-                c['frame'].configure(bg=t['bg_white'])
-                c['name_lbl'].configure(bg=t['bg_white'], fg=t['fg_black'])
-                c['note_txt'].configure(bg=t['bg_white'], fg='#718096')
-                c['avatar_lbl'].configure(bg=t['bg_white'])
-                # Re-seleciona para manter cor de selecao se necessário
-                if self._last_selected_uid:
-                    self._select_contact_row(self._last_selected_uid)
+        # Tags do treeview
+        if hasattr(self, 'tree'):
+            self.tree.tag_configure('group', background=t['bg_group'],
+                                    foreground=t.get('fg_group', '#4a5568'),
+                                    font=('Segoe UI', 8, 'bold'))
+            self.tree.tag_configure('online', foreground=t['fg_black'])
+            self.tree.tag_configure('away', foreground=t['fg_orange'])
+            self.tree.tag_configure('busy', foreground=t['fg_red'])
+            self.tree.tag_configure('offline', foreground=t['fg_gray'])
+
 
         # --- User info panel (navy header) ---
         navy = t.get('accent', '#0f2a5c')
@@ -4916,37 +4898,41 @@ class LanMessengerApp:
         self._search_entry.bind('<FocusOut>', self._search_focus_out)
         self._search_var.trace_add('write', self._filter_contacts)
 
-        # Contêiner rolável para a lista de contatos (Custom)
-        tree_frame = tk.Frame(self.root, bg=BG_WHITE, bd=0, highlightthickness=0)
+        # Contact Treeview
+        tree_frame = tk.Frame(self.root, bg=BG_WHITE, bd=0,
+                              highlightthickness=0)
         tree_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
-        # Canvas para scroll
-        self._contact_canvas = tk.Canvas(tree_frame, bg=BG_WHITE, highlightthickness=0, bd=0)
-        self._contact_canvas.pack(side='left', fill='both', expand=True)
+        style = ttk.Style()
+        style.theme_use('clam')
+        _setup_scrollbar_style()
+        style.configure('Contacts.Treeview', background='#ffffff',
+                         foreground='#1a202c', fieldbackground='#ffffff',
+                         font=('Segoe UI', 10), rowheight=44, borderwidth=0,
+                         indent=5)
+        style.configure('Contacts.Treeview.Heading', background='#e2e2e2',
+                         foreground='#4a5568', font=FONT_BOLD)
+        style.map('Contacts.Treeview',
+                   background=[('selected', '#e8f0fe')],
+                   foreground=[('selected', '#1a202c')])
+        style.layout('Contacts.Treeview',
+                      [('Treeview.treearea', {'sticky': 'nswe'})])
 
-        # Frame interno que segura as linhas (rows)
-        self._contact_list_inner = tk.Frame(self._contact_canvas, bg=BG_WHITE)
-        self._contact_canvas.create_window((0, 0), window=self._contact_list_inner, anchor='nw', tags='inner')
+        self.tree = ttk.Treeview(tree_frame, style='Contacts.Treeview',
+                                 show='tree', selectmode='browse')
 
-        def _on_canvas_configure(e):
-            # Garante que o frame interno tenha a largura total do canvas
-            self._contact_canvas.itemconfig('inner', width=e.width)
-
-        def _on_inner_configure(e):
-            # Atualiza a região de scroll
-            self._contact_canvas.configure(scrollregion=self._contact_canvas.bbox('all'))
-
-        self._contact_canvas.bind('<Configure>', _on_canvas_configure)
-        self._contact_list_inner.bind('<Configure>', _on_inner_configure)
-
-        # Suporte a mouse wheel
-        def _contact_scroll(e):
-            self._contact_canvas.yview_scroll(-1 * (e.delta // 60), 'units')
-        _bind_wheel_recursive(self._contact_canvas, _contact_scroll)
-
-        # Custom thin scrollbar
-        self._scroll_canvas = tk.Canvas(tree_frame, width=6, highlightthickness=0, bd=0, bg=BG_WHITE)
-        self._scroll_canvas.pack(side='right', fill='y')
+        # Custom thin scrollbar (LAN Messenger style)
+        self._scroll_canvas = tk.Canvas(tree_frame, width=6,
+                                        highlightthickness=0, bd=0,
+                                        bg=BG_WHITE)
+        self._scroll_thumb = None
+        self._scroll_dragging = False
+        self._scroll_drag_y = 0
+        self._scroll_wide = False
+        self._scroll_lo = 0.0
+        self._scroll_hi = 1.0
+        self._THIN = 6
+        self._WIDE = 12
 
         def _scroll_set(lo, hi):
             self._scroll_lo, self._scroll_hi = float(lo), float(hi)
@@ -4992,7 +4978,7 @@ class LanMessengerApp:
             h = self._scroll_canvas.winfo_height()
             click_frac = e.y / h if h > 0 else 0
             if click_frac < self._scroll_lo or click_frac > self._scroll_hi:
-                self._contact_canvas.yview_moveto(max(click_frac - (self._scroll_hi - self._scroll_lo) / 2, 0))
+                self.tree.yview_moveto(max(click_frac - (self._scroll_hi - self._scroll_lo) / 2, 0))
 
         def _scroll_drag(e):
             if not self._scroll_dragging:
@@ -5003,7 +4989,7 @@ class LanMessengerApp:
             dy = (e.y - self._scroll_drag_y) / h
             self._scroll_drag_y = e.y
             new_lo = self._scroll_lo + dy
-            self._contact_canvas.yview_moveto(max(0.0, min(1.0, new_lo)))
+            self.tree.yview_moveto(max(0.0, min(1.0, new_lo)))
 
         def _scroll_release(e):
             self._scroll_dragging = False
@@ -5019,15 +5005,43 @@ class LanMessengerApp:
         self._scroll_canvas.bind('<Configure>', lambda e: _scroll_redraw())
         self._scroll_redraw = _scroll_redraw
 
-        self._contact_canvas.configure(yscrollcommand=_scroll_set)
+        self.tree.configure(yscrollcommand=_scroll_set)
         self._scroll_canvas.pack(side='right', fill='y')
+        self.tree.pack(fill='both', expand=True)
 
-        # Inicializa headers de grupo (Headers)
-        self._create_group_header('general', _t('group_general'))
-        self._create_group_header('away', 'Ausentes')
-        self._create_group_header('busy', 'Ocupados')
-        self._create_group_header('groups', 'Grupos')
-        self._create_group_header('offline', 'Offline (0)')
+        # Imagens de bolinha colorida para indicar status (10x10 pixels)
+        self._status_dots = {}
+        self._create_status_dots()  # Gera as bolinhas de cor para cada status
+
+        # Cria o nó raiz "Geral" no TreeView — contatos online ficam aqui
+        self.group_general = self.tree.insert('', 'end', text=_t('group_general'),
+                                              open=True, tags=('group',))
+        # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui
+        self.group_groups = self.tree.insert('', 'end', text='Grupos',
+                                             open=True, tags=('group',))
+        # Cria o nó raiz "Offline" — começa recolhido, mostra contagem
+        self.group_offline = self.tree.insert('', 'end', text='Offline (0)',
+                                              open=False, tags=('group',))
+        # Dicionário que mapeia group_id -> iid do item no TreeView
+        self._group_tree_items = {}  # group_id -> tree item id
+        # Configura visual do cabeçalho de seção (cinza, bold, menor)
+        self.tree.tag_configure('group', background='#e2e2e2',
+                                foreground='#4a5568',
+                                font=('Segoe UI', 8, 'bold'))
+        # Configura visual de item de grupo (cor escura, fonte normal)
+        self.tree.tag_configure('group_item', foreground='#1a202c',
+                                font=('Segoe UI', 9))
+        # Tags de cor para cada status de contato
+        self.tree.tag_configure('online', foreground=FG_BLACK)   # online = preto
+        self.tree.tag_configure('away', foreground=FG_ORANGE)    # ausente = laranja
+        self.tree.tag_configure('busy', foreground=FG_RED)       # ocupado = vermelho
+        self.tree.tag_configure('offline', foreground=FG_GRAY)   # offline = cinza
+        self.tree.tag_configure('unread', font=FONT_BOLD)        # não lido = negrito
+
+        # Duplo clique abre chat ou grupo
+        self.tree.bind('<Double-1>', self._on_tree_dbl)
+        # Botão direito abre menu de contexto
+        self.tree.bind('<Button-3>', self._on_tree_right)
 
         # Menu de contexto (clique direito no contato)
         self.ctx_menu = tk.Menu(self.root, tearoff=0, font=FONT)
@@ -5040,6 +5054,10 @@ class LanMessengerApp:
 
 
     # Cria imagens de bolinha colorida (10x10px) para cada status possível.
+    #
+    # Utiliza equação de círculo (dx²+dy² <= r²) pixel a pixel para
+    # desenhar bolinhas suaves sem precisar do PIL.
+    # As imagens ficam salvas em self._status_dots[status].
     def _create_status_dots(self):
         # Mapa de status -> cor hexadecimal da bolinha
         dot_colors = {
@@ -5060,8 +5078,10 @@ class LanMessengerApp:
             self._status_dots[status] = img  # salva no cache
         # Cache de imagens de avatar por contato (uid_status -> PhotoImage)
         self._contact_avatars = {}
+        self._contact_avatar_pil = {}   # uid_status -> PIL Image (para composição)
+        self._row_images = {}           # uid -> PhotoImage da linha composta
 
-    # Cria imagem de avatar circular com status dot para o painel.
+    # Cria imagem de avatar circular com status dot para o treeview.
     def _create_contact_avatar(self, uid, name, status='online'):
         size = 36
         dot_size = 10
@@ -5116,6 +5136,7 @@ class LanMessengerApp:
                          fill='white')
             draw.ellipse([dx, dy, dx + dot_size, dy + dot_size],
                          fill=dot_color)
+            self._contact_avatar_pil[f'{uid}_{status}'] = img.copy()
             photo = ImageTk.PhotoImage(img)
         else:
             photo = tk.PhotoImage(width=size, height=size)
@@ -5137,27 +5158,153 @@ class LanMessengerApp:
         self._contact_avatars[f'{uid}_{status}'] = photo
         return photo
 
-    # Carrega todos os contatos do banco (inclusive offline) no painel ao iniciar.
+    # Renderiza linha composta (avatar + nome + nota com emojis coloridos) para o TreeView.
+    # Retorna ImageTk.PhotoImage ou None se PIL indisponível.
+    def _render_contact_display(self, uid, name, note, status, bold=False, unread_count=0):
+        if not HAS_PIL:
+            return None
+        from PIL import ImageDraw, ImageFont
+        try:
+            font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
+            name_font = ImageFont.truetype(font_name, 14)
+            note_font = ImageFont.truetype('segoeui.ttf', 12)
+            emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
+            has_emoji_font = os.path.exists(emoji_font_path)
+            emoji_font = ImageFont.truetype(emoji_font_path, 14) if has_emoji_font else None
+        except Exception:
+            return None
+
+        # Cores por status
+        status_colors = {
+            'online': '#1a202c', 'away': '#cc8800',
+            'busy': '#cc0000', 'offline': '#888888'
+        }
+        name_color = status_colors.get(status, '#1a202c')
+        note_color = '#718096'
+
+        # Monta texto do nome
+        name_text = name
+        if unread_count > 0:
+            name_text += f' ({unread_count})'
+
+        # Imagem temporária para medição de texto
+        tmp = Image.new('RGBA', (1, 1))
+        d = ImageDraw.Draw(tmp)
+
+        name_bbox = d.textbbox((0, 0), name_text, font=name_font)
+        name_w = name_bbox[2] - name_bbox[0]
+
+        # Segmentos da nota (texto e emoji separados)
+        note_segments = []
+        total_note_w = 0
+        if note:
+            sep = '  -  '
+            sep_bbox = d.textbbox((0, 0), sep, font=note_font)
+            sep_w = sep_bbox[2] - sep_bbox[0]
+            note_segments.append(('text', sep, sep_w))
+            total_note_w += sep_w
+
+            last_end = 0
+            for m in _EMOJI_RE.finditer(note):
+                if m.start() > last_end:
+                    part = note[last_end:m.start()]
+                    bbox = d.textbbox((0, 0), part, font=note_font)
+                    w = bbox[2] - bbox[0]
+                    note_segments.append(('text', part, w))
+                    total_note_w += w
+                emoji_char = m.group()
+                ew = 16  # largura padrão do emoji
+                note_segments.append(('emoji', emoji_char, ew))
+                total_note_w += ew
+                last_end = m.end()
+            if last_end < len(note):
+                part = note[last_end:]
+                bbox = d.textbbox((0, 0), part, font=note_font)
+                w = bbox[2] - bbox[0]
+                note_segments.append(('text', part, w))
+                total_note_w += w
+
+        # Monta imagem composta
+        av_size = 36
+        gap = 10
+        total_w = av_size + gap + name_w + total_note_w + 10
+        height = 40
+
+        img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
+
+        # Cola avatar (centralizado verticalmente)
+        cache_key = f'{uid}_{status}'
+        avatar_pil = self._contact_avatar_pil.get(cache_key)
+        if avatar_pil:
+            av_y = (height - av_size) // 2
+            img.paste(avatar_pil, (0, av_y), avatar_pil)
+
+        draw = ImageDraw.Draw(img)
+        text_y = (height - 16) // 2  # centro vertical para texto ~14px
+
+        # Nome
+        x = av_size + gap
+        draw.text((x, text_y), name_text, fill=name_color, font=name_font)
+        x += name_w
+
+        # Nota com emojis coloridos
+        for seg_type, seg_text, seg_w in note_segments:
+            if seg_type == 'emoji' and emoji_font:
+                # Renderiza emoji colorido como sub-imagem e cola
+                try:
+                    em_img = Image.new('RGBA', (seg_w + 4, seg_w + 4), (255, 255, 255, 0))
+                    em_draw = ImageDraw.Draw(em_img)
+                    em_draw.text((0, 0), seg_text, font=emoji_font, embedded_color=True)
+                    ey = text_y - 1
+                    img.paste(em_img, (int(x), ey), em_img)
+                except Exception:
+                    draw.text((x, text_y), seg_text, fill=note_color, font=note_font)
+            else:
+                draw.text((x, text_y), seg_text, fill=note_color, font=note_font)
+            x += seg_w
+
+        photo = ImageTk.PhotoImage(img)
+        self._row_images[uid] = photo  # previne garbage collection
+        return photo
+
+    # Carrega todos os contatos do banco (inclusive offline) no TreeView ao iniciar.
+    #
+    # Chamado uma vez na inicializacao para popular a lista lateral com
+    # contatos previamente vistos. Online -> secao Geral. Offline -> secao Offline.
+    # Tambem inicializa peer_info com dados do banco.
     def _load_saved_contacts(self):
-        contacts = self.messenger.db.get_contacts(online_only=False)
+        contacts = self.messenger.db.get_contacts(online_only=False)  # busca todos do banco
         for c in contacts:
             uid = c['user_id']
-            if uid == self.messenger.user_id:
+            if uid == self.messenger.user_id:  # pula o proprio usuario
                 continue
-            if uid in self.contact_widgets:
+            if uid in self.peer_items:  # ja esta no TreeView (peer ativo)? pula
                 continue
-            status = c.get('status', 'offline')
+            status = c.get('status', 'offline')  # status salvo no banco
             tag = status if status in ('online', 'away', 'busy') else 'offline'
             name = c.get('display_name', 'Unknown')
+            note = c.get('note', '')
             avatar = self._create_contact_avatar(uid, name, tag)
-            self._create_contact_row(uid, name, c.get('note', ''), tag, avatar)
+            row_img = self._render_contact_display(uid, name, note, tag)
+            parent = self.group_general if tag != 'offline' else self.group_offline
+            if row_img:
+                iid = self.tree.insert(parent, 'end', text='', tags=(tag,), image=row_img)
+            else:
+                display = f'  {name}'
+                if note:
+                    display += f'  -  {note}'
+                iid = self.tree.insert(parent, 'end', text=display, tags=(tag,), image=avatar)
+            self.peer_items[uid] = iid
             self.peer_info[uid] = {
                 'display_name': name,
                 'ip': c.get('ip_address', ''),
                 'hostname': c.get('hostname', ''),
                 'status': status,
+                'note': note,
             }
-        self._repack_all_contacts()
+        self._update_offline_count()
+        self._sort_tree_children(self.group_general)
+        self._sort_tree_children(self.group_offline)
 
     # --- Avatar ---
     # Desenha avatar padrao (circulo colorido com letra U) no canvas do header.
@@ -5170,6 +5317,10 @@ class LanMessengerApp:
                                        font=('Segoe UI', 14, 'bold'))  # letra U centralizada
 
     # Atualiza o canvas de avatar do header com foto ou circulo colorido do usuario.
+    #
+    # Tenta carregar foto personalizada do banco (custom_avatar = caminho do arquivo).
+    # Se nao houver ou falhar, desenha circulo colorido com a inicial do nome.
+    # Suporta PIL (recorte circular antialias) e fallback sem PIL (oval nativa).
     def _update_avatar(self):
         db = self.messenger.db                              # atalho para o banco local
         idx = int(db.get_setting('avatar_index', '0'))    # indice de cor padrao do usuario
@@ -5235,12 +5386,33 @@ class LanMessengerApp:
             self._search_entry.insert(0, 'Buscar contatos...')  # placeholder de volta
             self._search_entry.config(fg='#a0aec0')             # cor cinza do placeholder
 
-    # Filtra contatos visiveis no painel conforme texto da barra de busca.
+    # Filtra contatos visiveis no TreeView conforme texto da barra de busca.
+    #
+    # Busca vazia ou placeholder: restaura todos os contatos no grupo correto.
+    # Texto digitado: oculta (detach) contatos cujo nome nao contem o texto.
     def _filter_contacts(self, *args):
-        self._repack_all_contacts()
+        query = self._search_var.get().strip().lower()  # texto de busca em minusculas
+        if query == 'buscar contatos...' or not query:  # busca vazia ou placeholder
+            # Restaurar todos os contatos nos grupos corretos (online->Geral, offline->Offline)
+            for uid, iid in self.peer_items.items():
+                tags = self.tree.item(iid, 'tags')  # tags do item (online, offline, etc)
+                parent = self.group_offline if 'offline' in tags else self.group_general
+                self.tree.reattach(iid, parent, 'end')  # reinsere no grupo correto
+            return  # nao precisa filtrar
+        for uid, iid in self.peer_items.items():  # percorre todos os contatos
+            info = self.peer_info.get(uid, {})
+            name = info.get('display_name', '').lower()
+            note = info.get('note', '').lower()
+            if query in name or query in note:  # nome ou nota contem o texto buscado?
+                tags = self.tree.item(iid, 'tags')
+                parent = self.group_offline if 'offline' in tags else self.group_general
+                self.tree.reattach(iid, parent, 'end')
+            else:
+                self.tree.detach(iid)
 
     # --- Note ---
     # Lê o conteúdo do campo de nota reconstruindo emojis das imagens embutidas.
+    # Funciona como _get_entry_content() do ChatWindow.
     def _note_get_text(self):
         result = []
         try:
@@ -5294,6 +5466,9 @@ class LanMessengerApp:
             self.note_entry.config(fg='#ffffff')  # cor de texto real (branco)
 
     # Salva ou limpa nota pessoal quando o campo perde foco.
+    #
+    # Campo vazio: restaura placeholder e envia nota vazia via rede.
+    # Texto mudou: persiste no banco local e propaga via UDP announce.
     def _note_focus_out(self, e):
         text = self._note_get_text()  # texto atual sem espacos nas bordas
         if not text:
@@ -5310,6 +5485,9 @@ class LanMessengerApp:
                 self.messenger.change_note(text)        # persiste no banco e propaga via UDP
 
     # Salva nota pessoal ao pressionar Enter; salva no banco e propaga via UDP.
+    #
+    # Ignora placeholders. Salva apenas se o texto mudou desde o ultimo save.
+    # Remove foco do campo apos salvar.
     def _note_save(self, e=None):
         text = self._note_get_text()  # texto atual sem espacos
         placeholders = ('Digite uma nota', 'Type a note', _t('note_placeholder'))
@@ -5403,6 +5581,9 @@ class LanMessengerApp:
         ep.focus_set()
 
     # Callback do combobox de status: traduz label para codigo e propaga via UDP.
+    #
+    # Converte o texto exibido ('Disponivel') para o codigo interno ('online')
+    # e chama messenger.change_status() que atualiza o proximo UDP announce.
     def _on_status_change(self, e=None):
         m = {_t('status_available'): 'online',  # 'Disponivel' -> 'online'
              _t('status_away'): 'away',
@@ -5410,219 +5591,129 @@ class LanMessengerApp:
              _t('status_offline'): 'invisible'}
         self.messenger.change_status(m.get(self.status_var.get(), 'online'))  # envia via UDP
 
-    # --- Painel de Contatos (Custom) ---
-    # Retorna uid do contato selecionado no painel, ou None se invalido.
+    # --- Tree ---
+    # Retorna uid do contato selecionado no TreeView, ou None se invalido.
+    #
+    # Retorna None para: sem selecao, headers de secao, grupos, ou contatos
+    # offline (a menos que allow_offline=True seja passado explicitamente).
     def _get_selected_peer(self, allow_offline=False):
-        uid = self._last_selected_uid
-        if not uid:
+        sel = self.tree.selection()  # lista de items atualmente selecionados
+        if not sel:
             return None
-        if not allow_offline:
-            w = self.contact_widgets.get(uid)
-            if w and w['tag'] == 'offline':
-                return None
-        return uid
+        item = sel[0]
+        if item in (self.group_general, self.group_offline, self.group_groups):
+            return None  # clicou em um header de secao, nao em um contato
+        # Verifica se o item clicado e um grupo (nao um contato)
+        if item in self._group_tree_items.values():
+            return None  # e um item de grupo, nao um contato
+        for uid, iid in self.peer_items.items():  # procura o uid pelo iid do TreeView
+            if iid == item:
+                if not allow_offline:              # bloquear contatos offline?
+                    # Bloqueia interacao com contatos offline por padrao
+                    tags = self.tree.item(item, 'tags')
+                    if 'offline' in tags:          # contato esta offline?
+                        return None               # retorna None para bloquear acao
+                return uid  # retorna o uid do contato selecionado
+        return None  # item nao encontrado em peer_items
 
-    # Reordena visualmente todos os contatos e grupos (Substituiu _sort_tree_children)
-    def _sort_tree_children(self, parent_unused=None):
-        self._repack_all_contacts()
+    def _sort_tree_children(self, parent):
+        # Obtém a seleção atual para restaurá-la após a movimentação
+        current_sel = self.tree.selection()
+        
+        items = list(self.tree.get_children(parent))
+        # Ordena alfabeticamente ignorando maiúsculas/minúsculas
+        sorted_items = sorted(items, key=lambda x: self.tree.item(x, 'text').lower())
+        
+        # Só move se a ordem realmente mudou para evitar flicker visual (piscar)
+        needs_reorder = False
+        for index, item in enumerate(sorted_items):
+            if items[index] != item:
+                needs_reorder = True
+                break
+        
+        if needs_reorder:
+            for index, item in enumerate(sorted_items):
+                self.tree.move(item, parent, index)
+            
+            # Restaura a seleção se ainda existir (evita que a seleção 'suma' ao mover)
+            if current_sel:
+                try:
+                    self.tree.selection_set(current_sel)
+                except Exception:
+                    pass
 
-    # Cria uma linha de grupo (Header) no painel de contatos.
-    def _create_group_header(self, group_id, title):
-        frame = tk.Frame(self._contact_list_inner, bg=THEMES['MB Contabilidade']['bg_group'], height=24)
-        frame.pack(fill='x', pady=(2, 0))
-        
-        lbl = tk.Label(frame, text=title, font=('Segoe UI', 8, 'bold'),
-                       bg=THEMES['MB Contabilidade']['bg_group'], 
-                       fg=THEMES['MB Contabilidade'].get('fg_group', '#4a5568'), 
-                       padx=10, anchor='w')
-        lbl.pack(side='left', fill='both', expand=True)
-        
-        count_lbl = tk.Label(frame, text='', font=('Segoe UI', 8),
-                             bg=THEMES['MB Contabilidade']['bg_group'],
-                             fg=THEMES['MB Contabilidade'].get('fg_group', '#4a5568'),
-                             padx=10, anchor='e')
-        count_lbl.pack(side='right')
-        
-        self.group_widgets[group_id] = {'frame': frame, 'lbl': lbl, 'count_lbl': count_lbl}
-        return group_id
+    # Adiciona ou atualiza contato no TreeView e em peer_info.
+    #
+    # Existente: atualiza texto/tag/avatar e move para grupo correto (Geral/Offline).
+    # Novo: insere como item no TreeView no grupo correspondente ao status.
+    # Tambem propaga atualizacao de nota para janelas de grupo abertas.
+    def _add_contact(self, uid, info):
+        status = info.get('status', 'online')  # status atual do contato recebido
+        tag = status if status in ('online', 'away', 'busy') else 'offline'
+        name = info.get('display_name', 'Unknown')
+        note = info.get('note', '')
 
-    # Cria uma linha de contato individual que suporta emojis coloridos.
-    def _create_contact_row(self, uid, name, note, tag, avatar):
-        row = tk.Frame(self._contact_list_inner, bg='#ffffff', cursor='hand2', height=44)
-        row.pack(fill='x')
-        
-        # Avatar
-        av_lbl = tk.Label(row, image=avatar, bg='#ffffff')
-        av_lbl.pack(side='left', padx=(8, 10), pady=4)
-        
-        # Nome e Nota container
-        info = tk.Frame(row, bg='#ffffff')
-        info.pack(side='left', fill='both', expand=True)
-        
-        name_lbl = tk.Label(info, text=name, font=('Segoe UI', 10),
-                            bg='#ffffff', fg='#1a202c', anchor='w')
-        name_lbl.pack(fill='x', pady=(4, 0))
-        
-        # Nota com suporte a emojis via tk.Text
-        note_txt = tk.Text(info, font=('Segoe UI', 8, 'italic'),
-                           bg='#ffffff', fg='#718096', relief='flat', bd=0,
-                           height=1, wrap='none', highlightthickness=0,
-                           state='disabled', cursor='hand2')
-        if note:
-            note_txt.config(state='normal')
-            note_txt.insert('1.0', note)
-            # Renderiza emojis imediatamente
-            _scan_entry_emojis(note_txt, self._contact_emoji_cache, {}, prefix=f'row_note_{uid}', size=12)
-            note_txt.config(state='disabled')
-            note_txt.pack(fill='x', pady=(0, 4))
+        # Determina o grupo pai correto
+        parent = self.group_general if tag != 'offline' else self.group_offline
+
+        # Tenta renderizar linha composta com emojis coloridos (PIL)
+        avatar = self._create_contact_avatar(uid, name, tag)
+        row_img = self._render_contact_display(uid, name, note, tag)
+
+        if row_img:
+            display = ''  # texto vazio, tudo na imagem
+            image = row_img
         else:
-            note_txt.pack_forget()
+            display = f'  {name}'
+            if note:
+                display += f'  -  {note}'
+            image = avatar
 
-        # Bindings para hover e clique (em todos os componentes da linha)
-        widgets = [row, av_lbl, info, name_lbl, note_txt]
-        
-        def on_enter(e):
-            if self._last_selected_uid != uid:
-                for w in widgets: w.configure(bg='#f7fafc')
-        def on_leave(e):
-            if self._last_selected_uid != uid:
-                for w in widgets: w.configure(bg='#ffffff')
-        def on_click(e):
-            self._select_contact_row(uid)
-        def on_double_click(e):
-            self._on_contact_double_click(uid)
-        def on_right_click(e):
-            self._on_contact_right_click(e, uid)
+        if uid in self.peer_items:
+            iid = self.peer_items[uid]
+            old_tags = self.tree.item(iid, 'tags')
+            old_parent = self.tree.parent(iid)
 
-        for w in widgets:
-            w.bind('<Enter>', on_enter)
-            w.bind('<Leave>', on_leave)
-            w.bind('<Button-1>', on_click)
-            w.bind('<Double-1>', on_double_click)
-            w.bind('<Button-3>', on_right_click)
+            # Sempre atualiza (nota/status podem mudar)
+            self.tree.item(iid, text=display, tags=(tag,), image=image)
 
-        self.contact_widgets[uid] = {
-            'frame': row, 'name_lbl': name_lbl, 'note_txt': note_txt, 
-            'avatar_lbl': av_lbl, 'tag': tag, 'widgets': widgets
-        }
-        return uid
+            if old_parent != parent:
+                self.tree.move(iid, parent, 'end')
 
-    def _select_contact_row(self, uid):
-        # Desmarca anterior
-        if self._last_selected_uid and self._last_selected_uid in self.contact_widgets:
-            old = self.contact_widgets[self._last_selected_uid]
-            for w in old['widgets']: w.configure(bg='#ffffff')
-            
-        # Marca novo
-        self._last_selected_uid = uid
-        if uid in self.contact_widgets:
-            new = self.contact_widgets[uid]
-            for w in new['widgets']: w.configure(bg='#e8f0fe')
-        
-    def _on_contact_double_click(self, uid):
-        # Se for um grupo (UUID), abre janela de grupo
-        if len(str(uid)) > 30: # IDs de grupo sao UUIDs longos
-            self._open_group(uid)
+            self._sort_tree_children(parent)
         else:
-            self._open_chat(uid)
+            iid = self.tree.insert(parent, 'end',
+                                   text=display, tags=(tag,),
+                                   image=image)
+            self.peer_items[uid] = iid
+            self._sort_tree_children(parent)
 
-    def _on_contact_right_click(self, event, uid):
-        self._select_contact_row(uid)
-        self.ctx_menu.post(event.x_root, event.y_root)
+        self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
+        self._update_offline_count()  # recalcula contagem na secao Offline
+        # Atualiza a nota do contato em todas as janelas de grupo que ele participa
+        for gw in self.group_windows.values():   # percorre janelas de grupo abertas
+            if uid in gw._members:               # este contato esta no grupo?
+                gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
-    def _repack_all_contacts(self):
-        # Primeiro limpa tudo (apenas visualmente)
-        for g in self.group_widgets.values(): g['frame'].pack_forget()
-        for c in self.contact_widgets.values(): c['frame'].pack_forget()
-        
-        query = self._search_var.get().lower()
-        if query in ('buscar contatos...', ''): query = ''
-
-        def repack_group(group_id, tag_filter=None):
-            # Header
-            group = self.group_widgets.get(group_id)
-            if group: group['frame'].pack(fill='x')
-            
-            # Contatos do grupo
-            count = 0
-            # Ordena por nome
-            sorted_uids = sorted(self.contact_widgets.keys(), 
-                                key=lambda u: self.contact_widgets[u]['name_lbl'].cget('text').lower())
-            
-            for uid in sorted_uids:
-                w = self.contact_widgets[uid]
-                # Se for um contato normal e bater com o filtro de tag
-                if tag_filter and w['tag'] == tag_filter:
-                    name = w['name_lbl'].cget('text').lower()
-                    note = w['note_txt'].get('1.0', 'end').lower()
-                    if not query or query in name or query in note:
-                        w['frame'].pack(fill='x')
-                        count += 1
-                # Se for um grupo (IDs de grupo sao UUIDs) e estivermos no header 'Groups'
-                elif group_id == 'groups' and len(str(uid)) > 30:
-                    name = w['name_lbl'].cget('text').lower()
-                    if not query or query in name:
-                        w['frame'].pack(fill='x')
-                        count += 1
-            
-            if group:
-                group['count_lbl'].config(text=f'({count})' if group_id == 'offline' else '')
-                if group_id == 'offline':
-                    group['lbl'].config(text=f'Offline ({count})')
-
-        repack_group('general', 'online')
-        repack_group('away', 'away')
-        repack_group('busy', 'busy')
-        repack_group('groups')
-        repack_group('offline', 'offline')
-
-    # Marca contato no painel como offline.
+    # Marca peer como offline e move para seção Offline.
     def _remove_contact(self, uid):
-        if uid in self.contact_widgets:
-            w = self.contact_widgets[uid]
-            w['tag'] = 'offline'
+        if uid in self.peer_items:
             name = self.peer_info.get(uid, {}).get('display_name', 'Unknown')
             avatar = self._create_contact_avatar(uid, name, 'offline')
-            w['avatar_lbl'].config(image=avatar)
-            self._repack_all_contacts()
+            row_img = self._render_contact_display(uid, name, '', 'offline')
+            if row_img:
+                self.tree.item(self.peer_items[uid], text='', tags=('offline',), image=row_img)
+            else:
+                self.tree.item(self.peer_items[uid], text=f'  {name}', tags=('offline',), image=avatar)
+            if self.tree.parent(self.peer_items[uid]) != self.group_offline:
+                self.tree.move(self.peer_items[uid], self.group_offline, 'end')
+            self._sort_tree_children(self.group_offline)
             self._update_offline_count()
-
-    # Adiciona grupo ao painel de contatos.
-    def _add_group_to_tree(self, group_id, name, group_type='temp'):
-        if group_id in self.contact_widgets:
-            return  # ja existe
-            
-        suffix = '(Fixo)' if group_type == 'fixed' else '(Temporário)'
-        display_name = f'\U0001f4ac {name} {suffix}'
-        
-        # Cria como uma linha de contato mas sem nota (por enquanto)
-        # Usamos uma cor padrao de grupo para o avatar ou icone
-        icon_path = _get_icon_path()
-        avatar = None
-        if icon_path and HAS_PIL:
-             avatar = _make_circular_avatar(icon_path, 30)
-             
-        self._create_contact_row(group_id, display_name, '', 'group', avatar)
-        self.peer_info[group_id] = {'display_name': display_name, 'status': 'online'}
-        self._repack_all_contacts()
-
-    # Remove grupo do painel.
-    def _remove_group_from_tree(self, group_id):
-        if group_id in self.contact_widgets:
-            try:
-                self.contact_widgets[group_id]['frame'].destroy()
-            except Exception:
-                pass
-            del self.contact_widgets[group_id]
-            self._repack_all_contacts()
 
     # Atualiza texto do grupo Offline com contagem.
     def _update_offline_count(self):
-        count = sum(1 for w in self.contact_widgets.values() if w['tag'] == 'offline')
-        group = self.group_widgets.get('offline')
-        if group:
-            group['count_lbl'].config(text=f'({count})')
-            group['lbl'].config(text=f'Offline ({count})')
+        children = self.tree.get_children(self.group_offline)
+        self.tree.item(self.group_offline, text=f'Offline ({len(children)})')
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
@@ -5657,48 +5748,85 @@ class LanMessengerApp:
                 return True
         return False
 
-    # Marca contato no painel como nao lido.
+    # Marca contato no TreeView como nao lido: aplica tag bold e exibe contagem.
+    #
+    # Atualiza o avatar do item para refletir o status atual e adiciona
+    # o numero de mensagens nao lidas entre parenteses no nome.
     def _mark_unread(self, uid):
-        if uid in self.contact_widgets:
-            w = self.contact_widgets[uid]
-            name = self.peer_info.get(uid, {}).get('display_name', '')
+        if uid in self.peer_items:
+            item = self.peer_items[uid]
+            tags = list(self.tree.item(item, 'tags'))
+            if 'unread' not in tags:
+                tags.append('unread')
+                self.tree.item(item, tags=tuple(tags))
+            info = self.peer_info.get(uid, {})
+            name = info.get('display_name', '')
+            note = info.get('note', '')
             unread = self.messenger.get_unread_count(uid)
-            # Aplica negrito e contagem
-            w['name_lbl'].config(text=f'{name} ({unread})', font=('Segoe UI', 10, 'bold'))
+            status_tag = [t for t in tags if t in ('online','away','busy','offline')]
+            status = status_tag[0] if status_tag else 'online'
+            avatar = self._create_contact_avatar(uid, name, status)
+            row_img = self._render_contact_display(uid, name, note, status, bold=True, unread_count=unread)
+            if row_img:
+                self.tree.item(item, text='', image=row_img)
+            else:
+                self.tree.item(item, text=f'  {name} ({unread})', image=avatar)
 
-    # Remove a marcacao de nao lido do contato.
+    # Remove a marcacao de nao lido do contato no TreeView.
+    #
+    # Remove a tag 'unread' (negrito) e restaura o texto do item
+    # para apenas o nome, sem contagem de mensagens pendentes.
     def _clear_unread(self, uid):
-        if uid in self.contact_widgets:
-            w = self.contact_widgets[uid]
-            name = self.peer_info.get(uid, {}).get('display_name', '')
-            w['name_lbl'].config(text=name, font=('Segoe UI', 10))
+        if uid in self.peer_items:
+            item = self.peer_items[uid]
+            tags = [t for t in self.tree.item(item, 'tags') if t != 'unread']
+            self.tree.item(item, tags=tuple(tags) if tags else ())
+            info = self.peer_info.get(uid, {})
+            name = info.get('display_name', '')
+            note = info.get('note', '')
+            status = tags[0] if tags and tags[0] != 'group' else 'online'
+            avatar = self._create_contact_avatar(uid, name, status)
+            row_img = self._render_contact_display(uid, name, note, status)
+            if row_img:
+                self.tree.item(item, text='', image=row_img)
+            else:
+                self.tree.item(item, text=f'  {name}', image=avatar)
 
-    # Marca grupo no painel como unread (bold).
+    # Marca grupo no TreeView como unread (bold).
     def _mark_group_unread(self, group_id):
-        if group_id in self.contact_widgets:
-            w = self.contact_widgets[group_id]
-            pending = len(self._pending_group_msgs.get(group_id, []))
-            group_data = self.messenger._groups.get(group_id)
-            g_name = group_data.get('name', 'Grupo') if group_data else 'Grupo'
-            g_type = group_data.get('group_type', 'temp') if group_data else 'temp'
-            suffix = '(Fixo)' if g_type == 'fixed' else '(Temporário)'
-            
-            display = f'\U0001f4ac {g_name} {suffix}'
-            if pending > 0:
-                display += f' ({pending})'
-            
-            w['name_lbl'].config(text=display, font=('Segoe UI', 10, 'bold'))
+        if group_id in self._group_tree_items:
+            item = self._group_tree_items[group_id]
+            tags = list(self.tree.item(item, 'tags'))  # tags atuais
+            if 'unread' not in tags:         # ainda nao esta marcado?
+                tags.append('unread')        # adiciona tag para negrito
+                self.tree.item(item, tags=tuple(tags))
+            # Atualiza o texto com contagem de mensagens pendentes
+            pending = len(self._pending_group_msgs.get(group_id, []))  # qtd de msgs pendentes
+            group_data = self.messenger._groups.get(group_id)          # dados do grupo
+            g_name = group_data.get('name', 'Grupo') if group_data else 'Grupo'  # nome
+            g_type = group_data.get('group_type', 'temp') if group_data else 'temp'  # tipo
+            suffix = '(Fixo)' if g_type == 'fixed' else '(Temporário)'  # sufixo do tipo
+            if pending > 0:  # tem mensagens pendentes?
+                self.tree.item(item,
+                    text=f'  \U0001f4ac {g_name} {suffix} ({pending})')  # mostra contagem
+            # Garante que a secao Grupos esteja expandida para o usuario ver
+            try:
+                self.tree.item(self.group_groups, open=True)  # expande secao Grupos
+            except Exception:
+                pass
 
-    # Limpa unread do grupo.
+    # Limpa unread do grupo no TreeView.
     def _clear_group_unread(self, group_id):
-        if group_id in self.contact_widgets:
-            w = self.contact_widgets[group_id]
+        if group_id in self._group_tree_items:
+            item = self._group_tree_items[group_id]
+            tags = [t for t in self.tree.item(item, 'tags') if t != 'unread']
+            self.tree.item(item, tags=tuple(tags) if tags else ('group_item',))
             group_data = self.messenger._groups.get(group_id)
             g_name = group_data.get('name', 'Grupo') if group_data else 'Grupo'
             g_type = group_data.get('group_type', 'temp') if group_data else 'temp'
             suffix = '(Fixo)' if g_type == 'fixed' else '(Temporário)'
-            
-            w['name_lbl'].config(text=f'\U0001f4ac {g_name} {suffix}', font=('Segoe UI', 10))
+            self.tree.item(item,
+                text=f'  \U0001f4ac {g_name} {suffix}')
 
     # Mostra notificacao toast Windows para mensagem de grupo.
     #

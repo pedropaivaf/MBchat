@@ -9,7 +9,7 @@ Desenvolvido por **Pedro Paiva** para **MB Contabilidade**. Reescrito em Python 
 - Descoberta automatica de computadores na rede (UDP multicast + broadcast)
 - Mensagens instantaneas com indicador de digitacao
 - Emojis coloridos renderizados via PIL (seguiemj.ttf)
-- **Nota pessoal** visivel para todos em tempo real (persistida no banco local, sincronizada via UDP)
+- **Nota pessoal** visivel para todos em tempo real com suporte a emojis coloridos e renderização via tk.Text (persistida no banco local, sincronizada via UDP)
 - Historico ilimitado de mensagens (SQLite local) com pesquisa e filtro por data
 - Carregamento forcado automatico visual das ultimas 40 mensagens instantaneo, garantindo leitura solida ao originar de notificacoes do tray
 
@@ -36,7 +36,7 @@ Desenvolvido por **Pedro Paiva** para **MB Contabilidade**. Reescrito em Python 
 - Sistema de avatares (12 presets + foto personalizada)
 - Bolinhas de status: verde (online), amarela (away), vermelha (busy), cinza (offline)
 - Contatos offline persistidos (mostra PCs ja vistos como "offline")
-- Popups e todas as janelas ativas fecham com a tecla nativa Escape
+- Popups e todas as janelas ativas fecham com a tecla nativa Escape (chama limpeza de estado na memória)
 - Emoji pickers fecham ao clicar fora
 - Scroll dinamico global no listbox ignorando bloqueio nativo de widgets com fundo
 - Icones MDL2 (Segoe MDL2 Assets) para toolbar profissional
