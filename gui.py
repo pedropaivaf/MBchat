@@ -5612,7 +5612,7 @@ class LanMessengerApp:
     def _do_note_emoji_scan(self):
         try:
             _scan_entry_emojis(self.note_entry, self._note_emoji_cache,
-                               self._note_img_map, prefix='note_emoji', size=18)
+                               self._note_img_map, prefix='note_emoji', size=14)
         except Exception:
             pass
 
@@ -5621,7 +5621,7 @@ class LanMessengerApp:
         if emoji_char in self._note_emoji_cache:
             img = self._note_emoji_cache[emoji_char]
         else:
-            img = _render_color_emoji(emoji_char, 18)
+            img = _render_color_emoji(emoji_char, 14)
             if img:
                 self._note_emoji_cache[emoji_char] = img
         if img:
