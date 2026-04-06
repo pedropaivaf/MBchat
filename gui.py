@@ -5365,7 +5365,7 @@ class LanMessengerApp:
         # Segmentos da nota (texto e emoji separados)
         note_segments = []
         total_note_w = 0
-        emoji_render_size = emoji_size  # tamanho final do emoji na imagem composta
+        emoji_render_size = emoji_size + 4  # tamanho final do emoji na imagem composta (bate com canvas_sz)
         if note:
             sep = '  -  '
             sep_bbox = d.textbbox((0, 0), sep, font=note_font)
@@ -5420,19 +5420,17 @@ class LanMessengerApp:
             if seg_type == 'emoji' and emoji_font:
                 try:
                     clean_seg = seg_text.replace('\ufe0f', '')
-                    buf = emoji_size * 3
-                    em_img = Image.new('RGBA', (buf, buf), (255, 255, 255, 0))
+                    # Mesmo approach de _render_color_emoji: canvas do tamanho final, sem resize
+                    canvas_sz = emoji_render_size
+                    em_img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
                     em_draw = ImageDraw.Draw(em_img)
                     eb = em_draw.textbbox((0, 0), clean_seg, font=emoji_font)
                     ew, eh = eb[2] - eb[0], eb[3] - eb[1]
-                    ex = (buf - ew) // 2 - eb[0]
-                    ey_off = (buf - eh) // 2 - eb[1]
+                    ex = (canvas_sz - ew) // 2 - eb[0]
+                    ey_off = (canvas_sz - eh) // 2 - eb[1]
                     em_draw.text((ex, ey_off), clean_seg, font=emoji_font, embedded_color=True)
-                    # Recorta para o tamanho final
-                    em_final = em_img.resize((emoji_render_size, emoji_render_size), Image.LANCZOS)
-                    # Cola centralizado verticalmente na linha
-                    paste_y = (height - emoji_render_size) // 2
-                    img.paste(em_final, (int(x), paste_y), em_final)
+                    paste_y = (height - canvas_sz) // 2
+                    img.paste(em_img, (int(x), paste_y), em_img)
                 except Exception:
                     draw.text((x, text_y), seg_text, fill=note_color, font=note_font)
             else:
