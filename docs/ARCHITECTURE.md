@@ -65,8 +65,8 @@ Mecanismos importantes:
 - **Transmitir Mensagem**: Broadcast com emoji colorido no picker, input e header
 - **Bate Papo**: Dialog de selecao de contatos + GroupChatWindow com PanedWindow
 - **Icones MDL2**: _create_mdl2_icon_static() para icones profissionais (Segoe MDL2 Assets)
-- **Nota pessoal**: Entry no header navy, salva no DB local, sincroniza via UDP announce em tempo real
-- **Popups dismissaveis**: Todas as janelas popup fecham com Escape e emoji pickers fecham ao clicar fora
+- **Nota pessoal**: Text (height=1) no header navy, permite emojis coloridos (PIL render as image), salva no DB local, sincroniza via UDP announce em tempo real
+- **Popups dismissaveis**: Todas as janelas popup fecham com Escape chamando _on_close() (limpeza de estado), e emoji pickers fecham ao clicar fora
 
 ### messenger.py (~360 linhas) - Controller
 
