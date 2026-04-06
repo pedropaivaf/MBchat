@@ -2256,7 +2256,7 @@ class ChatWindow(tk.Toplevel):
         self.title(f'{peer_name} - {APP_NAME}')
         self.minsize(350, 350)
         _center_window(self, 420, 480)
-        self.bind('<Escape>', lambda e: self.destroy())
+        self.bind('<Escape>', lambda e: self._on_close())
         _apply_rounded_corners(self)
         self.configure(bg=t.get('bg_window', '#f5f7fa'))
         ico = _get_icon_path()
@@ -3544,7 +3544,6 @@ class GroupChatWindow(tk.Toplevel):
         self.minsize(480, 380)
         _center_window(self, 620, 480)
         _apply_rounded_corners(self)
-        self.bind('<Escape>', lambda e: self.destroy())
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
 
@@ -4427,10 +4426,12 @@ class LanMessengerApp:
         # Carregar nota salva do banco
         saved_note = self.messenger.note
         if saved_note:
-            self.note_entry.delete(0, 'end')
-            self.note_entry.insert(0, saved_note)
+            self.note_entry.delete('1.0', 'end')
+            self.note_entry.insert('1.0', saved_note)
             self.note_entry.config(fg='#ffffff')
             self._last_saved_note = saved_note
+            # Renderiza emojis coloridos na nota restaurada
+            self.root.after(50, self._do_note_emoji_scan)
 
         # Aplica idioma salvo
         saved_lang = self.messenger.db.get_setting('language', 'Português')
@@ -4528,10 +4529,11 @@ class LanMessengerApp:
         self.status_var.set(_t(rev.get(current, 'status_available')))
 
         # Update note placeholder
-        if not self.note_entry.get().strip() or \
-           self.note_entry.get() in ('Digite uma nota', 'Type a note'):
-            self.note_entry.delete(0, 'end')
-            self.note_entry.insert(0, _t('note_placeholder'))
+        note_text = self._note_get_text()
+        if not note_text.strip() or \
+           note_text in ('Digite uma nota', 'Type a note'):
+            self.note_entry.delete('1.0', 'end')
+            self.note_entry.insert('1.0', _t('note_placeholder'))
 
         # Update group label
         self.tree.item(self.group_general, text=_t('group_general'))
@@ -4818,10 +4820,13 @@ class LanMessengerApp:
         note_border = tk.Frame(note_row, bg='#1a3f7a', bd=0)
         note_border.pack(fill='x')
 
-        self.note_entry = tk.Entry(note_border, font=FONT, bg='#1a3f7a',
+        self.note_entry = tk.Text(note_border, font=FONT, bg='#1a3f7a',
                                    fg='#c8d6e5', relief='flat', bd=2,
-                                   insertbackground='#c8d6e5')
+                                   insertbackground='#c8d6e5',
+                                   height=1, wrap='none', undo=False)
         self.note_entry.pack(side='left', fill='x', expand=True, ipady=2)
+        self._note_emoji_cache = {}   # cache emoji_char -> PhotoImage
+        self._note_img_map = {}       # img_name -> emoji_char
 
         # Emoji button colorido para a nota
         self._note_emoji_btn_img = _render_color_emoji('\U0001f60a', 16)
@@ -4837,11 +4842,12 @@ class LanMessengerApp:
                                        command=self._show_note_emoji_picker)
         btn_note_emoji.pack(side='right', padx=2)
 
-        self.note_entry.insert(0, _t('note_placeholder'))
+        self.note_entry.insert('1.0', _t('note_placeholder'))
         self._last_saved_note = ''
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
         self.note_entry.bind('<Return>', self._note_save)
+        self.note_entry.bind('<<Modified>>', self._on_note_modified)
 
         # Separador
         tk.Frame(self.root, bg='#e2e8f0', height=1).pack(fill='x')
@@ -5273,11 +5279,58 @@ class LanMessengerApp:
                 self.tree.detach(iid)  # oculta temporariamente do TreeView
 
     # --- Note ---
+    # Lê o conteúdo do campo de nota reconstruindo emojis das imagens embutidas.
+    # Funciona como _get_entry_content() do ChatWindow.
+    def _note_get_text(self):
+        result = []
+        try:
+            for key, value, index in self.note_entry.dump('1.0', 'end', image=True, text=True):
+                if key == 'text':
+                    result.append(value)
+                elif key == 'image':
+                    emoji = self._note_img_map.get(value, '')
+                    result.append(emoji)
+        except Exception:
+            pass
+        return ''.join(result).strip()
+
+    # <<Modified>> handler — varre emojis unicode e substitui por imagens coloridas.
+    def _on_note_modified(self, event):
+        try:
+            self.note_entry.edit_modified(False)
+        except Exception:
+            pass
+        self.note_entry.after(30, self._do_note_emoji_scan)
+
+    # Executa o scan de emojis no campo de nota (reutiliza _scan_entry_emojis).
+    def _do_note_emoji_scan(self):
+        try:
+            _scan_entry_emojis(self.note_entry, self._note_emoji_cache,
+                               self._note_img_map, prefix='note_emoji', size=16)
+        except Exception:
+            pass
+
+    # Insere emoji como imagem colorida no campo de nota.
+    def _note_insert_emoji(self, emoji_char, pos='insert'):
+        if emoji_char in self._note_emoji_cache:
+            img = self._note_emoji_cache[emoji_char]
+        else:
+            img = _render_color_emoji(emoji_char, 16)
+            if img:
+                self._note_emoji_cache[emoji_char] = img
+        if img:
+            img_name = f'note_emoji_{len(self._note_img_map)}'
+            self._note_img_map[img_name] = emoji_char
+            self.note_entry.image_create(pos, image=img, name=img_name, padx=1)
+        else:
+            self.note_entry.insert(pos, emoji_char)
+
     # Remove o placeholder da nota pessoal quando o campo recebe foco.
     def _note_focus_in(self, e):
-        if self.note_entry.get() in ('Digite uma nota', 'Type a note',
+        text = self._note_get_text()
+        if text in ('Digite uma nota', 'Type a note',
                                         _t('note_placeholder')):  # e um placeholder?
-            self.note_entry.delete(0, 'end')      # limpa o placeholder
+            self.note_entry.delete('1.0', 'end')      # limpa o placeholder
             self.note_entry.config(fg='#ffffff')  # cor de texto real (branco)
 
     # Salva ou limpa nota pessoal quando o campo perde foco.
@@ -5285,9 +5338,9 @@ class LanMessengerApp:
     # Campo vazio: restaura placeholder e envia nota vazia via rede.
     # Texto mudou: persiste no banco local e propaga via UDP announce.
     def _note_focus_out(self, e):
-        text = self.note_entry.get().strip()  # texto atual sem espacos nas bordas
+        text = self._note_get_text()  # texto atual sem espacos nas bordas
         if not text:
-            self.note_entry.insert(0, _t('note_placeholder'))
+            self.note_entry.insert('1.0', _t('note_placeholder'))
             self.note_entry.config(fg='#c8d6e5')
             # Se tinha nota antes, agora limpou
             if self._last_saved_note:
@@ -5304,7 +5357,7 @@ class LanMessengerApp:
     # Ignora placeholders. Salva apenas se o texto mudou desde o ultimo save.
     # Remove foco do campo apos salvar.
     def _note_save(self, e=None):
-        text = self.note_entry.get().strip()  # texto atual sem espacos
+        text = self._note_get_text()  # texto atual sem espacos
         placeholders = ('Digite uma nota', 'Type a note', _t('note_placeholder'))
         note = '' if text in placeholders else text
         if note != self._last_saved_note:
@@ -5312,6 +5365,7 @@ class LanMessengerApp:
             self.messenger.change_note(note)
         # Tirar foco do entry
         self.root.focus_set()
+        return 'break'  # impede nova linha no tk.Text ao pressionar Enter
 
     def _show_note_emoji_picker(self):
         ep = tk.Toplevel(self.root)
@@ -5345,22 +5399,18 @@ class LanMessengerApp:
 
         fr = tk.Frame(ep, bg='#ffffff')
         fr.pack(fill='both', expand=True, padx=2, pady=(0, 2))
-        
-        if not hasattr(self, '_note_emoji_cache'):
-            self._note_emoji_cache = {}
 
         col, row = 0, 0
         for em in emojis:
             def ins(e=em):
-                if self.note_entry.get() in ('Digite uma nota', 'Type a note', _t('note_placeholder')):
-                    self.note_entry.delete(0, 'end')
+                # Limpa placeholder se necessário
+                cur_text = self._note_get_text()
+                if cur_text in ('Digite uma nota', 'Type a note', _t('note_placeholder')):
+                    self.note_entry.delete('1.0', 'end')
                     self.note_entry.config(fg='#ffffff')
                 
-                try:
-                    idx = self.note_entry.index('insert')
-                except Exception:
-                    idx = 'end'
-                self.note_entry.insert(idx, e)
+                # Insere emoji como imagem colorida
+                self._note_insert_emoji(e)
                 self.note_entry.focus_set()
             
             img = self._note_emoji_cache.get(em)
