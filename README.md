@@ -1,104 +1,128 @@
 # MB Chat
 
-Mensageiro de rede local (LAN) para comunicacao instantanea entre computadores na mesma rede.
-Desenvolvido por **Pedro Paiva** para **MB Contabilidade**. Reescrito em Python com interface tkinter.
+**Mensageiro de rede local (LAN) para comunicacao instantanea entre computadores.**
+Desenvolvido por **Pedro Paiva** para **MB Contabilidade**.
+
+Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel standalone que roda em 30+ maquinas Windows simultaneamente, sem servidor central.
+
+---
+
+## Destaques
+
+- **Zero configuracao** - Descoberta automatica de PCs via UDP multicast + broadcast + subnet broadcast
+- **Emojis coloridos em todo lugar** - Renderizados via PIL no chat, notas pessoais e lista de contatos
+- **Grupos mesh** - Chat em grupo sem servidor central (cada membro envia direto para os demais)
+- **Transferencia de arquivos** - Ponto-a-ponto e para grupos, com dialogo de progresso
+- **Executavel unico** - `MBChat.exe` funciona sem Python instalado
+
+---
 
 ## Funcionalidades
 
 ### Mensagens
-- Descoberta automatica de computadores na rede (UDP multicast + broadcast)
 - Mensagens instantaneas com indicador de digitacao
-- Emojis coloridos renderizados via PIL (seguiemj.ttf)
-- **Nota pessoal** visivel para todos em tempo real com suporte a emojis coloridos e renderização via tk.Text (persistida no banco local, sincronizada via UDP)
-- Historico ilimitado de mensagens (SQLite local) com pesquisa e filtro por data
-- Carregamento forcado automatico visual das ultimas 40 mensagens instantaneo, garantindo leitura solida ao originar de notificacoes do tray
+- Emojis coloridos renderizados via PIL (seguiemj.ttf) em todos os campos
+- **Nota pessoal** visivel para todos em tempo real com emojis coloridos
+- Historico ilimitado (SQLite local) com pesquisa e filtro por data
+- Carregamento automatico das ultimas 40 mensagens ao abrir chat
 
 ### Transmitir Mensagem (Broadcast)
-- Envio de mensagem para multiplos contatos selecionados
-- Suporte a emojis coloridos no input e no picker
+- Envio para multiplos contatos selecionados
+- Emojis coloridos no input e no picker
 - Seletor de fonte e tamanho
 
 ### Bate Papo em Grupo
-- Chat em grupo estilo LAN Messenger (topologia mesh TCP, sem servidor central)
-- Painel lateral de participantes com avatar, nome e nota pessoal (colapsavel)
-- Splitter arrastavel entre chat e painel de participantes
-- Emoji colorido, alteracao de fonte e envio de arquivo para o grupo
-- Adicionar participantes a grupos existentes
+- Dois tipos: **Temporario** e **Fixo**
+- Painel lateral de participantes com avatar, nome e nota (com emojis coloridos)
+- Splitter arrastavel, envio de arquivo para grupo
+- Notificacoes de entrada/saida de membros
 
 ### Transferencia de Arquivos
-- Envio ponto-a-ponto com dialogo de progresso estilo LAN Messenger
-- Envio de arquivo para grupo (envia individualmente para cada membro)
+- Ponto-a-ponto com dialogo de progresso (ate 100MB, chunks 256KB)
+- Envio para grupo (envia individualmente para cada membro)
 - Aceitar/recusar transferencias recebidas
 
 ### Interface
 - 3 temas visuais: Classico, Night Mode, MB Contabilidade
-- UI moderna com design flat, hover effects e bordas suaves
-- Sistema de avatares (12 presets + foto personalizada)
+- Design flat moderno com hover effects e bordas arredondadas (Windows 11+)
+- Avatares com 12 presets + foto personalizada sincronizada via rede
 - Bolinhas de status: verde (online), amarela (away), vermelha (busy), cinza (offline)
-- Contatos offline persistidos (mostra PCs ja vistos como "offline")
-- Popups e todas as janelas ativas fecham com a tecla nativa Escape (chama limpeza de estado na memória)
-- Emoji pickers fecham ao clicar fora
-- Scroll dinamico global no listbox ignorando bloqueio nativo de widgets com fundo
+- Lista de contatos com imagem composta PIL (avatar + nome + nota com emojis coloridos)
 - Icones MDL2 (Segoe MDL2 Assets) para toolbar profissional
+- Todas as janelas fecham com Escape
 
 ### Sistema
 - Notificacoes Windows 10/11 clicaveis (winotify) - abre direto no chat
-- Notificacoes sonoras
 - Instancia unica - clicar no exe restaura a janela existente
 - System tray com minimizar ao fechar
 - Preferencias completas com 9 categorias
 - Suporte a 30+ usuarios simultaneos
-- Auto-start com o sistema (Windows, Linux, macOS)
+- Auto-start com o sistema
 
-## Requisitos
-
-- Python 3.10+
-- Dependencias: ver `requirements.txt`
+---
 
 ## Instalacao
 
+### Executavel (recomendado)
+Basta copiar `dist/MBChat.exe` para a maquina. Nao precisa de Python.
+
+### Desenvolvimento
 ```bash
 cd MBchat
 pip install -r requirements.txt
+python gui.py
 ```
 
-## Execucao
-
-```
-Windows:   run.bat
-Linux:     ./run.sh
-Direto:    python gui.py
-Silencioso: python gui.py --silent
-```
-
-## Build (executavel standalone)
-
+### Build
 ```bash
 python build.py
+# Saida: dist/MBChat.exe
 ```
 
-Gera `dist/MBChat.exe` (PyInstaller --onefile --windowed). O .exe funciona sem Python instalado.
+---
 
 ## Estrutura do Projeto
 
 ```
 MBchat/
-  gui.py            # Interface grafica (tkinter) - janelas, temas, treeview, emojis
-  messenger.py      # Controller - conecta rede, banco e GUI (inclui grupos)
-  network.py        # Camada de rede - UDP discovery, TCP messaging, file transfer
-  database.py       # Persistencia - SQLite local com WAL mode
-  create_icon.py    # Gerador do icone a partir do PNG (multi-resolucao)
-  build.py          # Script de build PyInstaller
-  requirements.txt  # Dependencias Python
-  run.bat / run.sh  # Launchers
+  gui.py            # Interface (tkinter) - ~5400 linhas
+  messenger.py      # Controller - conecta rede, banco e GUI
+  network.py        # Rede - UDP discovery, TCP messaging, file transfer
+  database.py       # Persistencia - SQLite local (WAL mode)
+  build.py          # Build PyInstaller (--onefile --windowed)
+  create_icon.py    # Gera .ico multi-resolucao a partir do PNG
   assets/
-    mbchat_icon.png  # Logo principal 1024x1024
-    mbchat.ico       # Icone multi-resolucao (gerado por create_icon.py)
+    mbchat_icon.png  # Logo 1024x1024
+    mbchat.ico       # Icone multi-resolucao
     icon_*.png       # Icones de toolbar
   docs/
-    ARCHITECTURE.md  # Arquitetura detalhada do sistema
+    ARCHITECTURE.md  # Arquitetura detalhada (4 camadas)
     CODESTYLE.md     # Padroes de codigo e convencoes
 ```
+
+### Arquitetura (4 camadas)
+
+```
+gui.py  ->  messenger.py  ->  network.py
+                           ->  database.py
+```
+
+Cada camada so conhece a imediatamente abaixo. GUI nunca importa network diretamente.
+
+---
+
+## Portas de Rede
+
+| Porta | Protocolo | Uso |
+|-------|-----------|-----|
+| 50100 | UDP       | Descoberta (multicast 239.255.100.200 + broadcast + subnet) |
+| 50101 | TCP       | Mensagens, typing, status, ACK, file requests, grupos |
+| 50102 | TCP       | Transferencia de dados de arquivos |
+| 50199 | TCP       | Instancia unica (loopback only) |
+
+> Portas diferentes do LAN Messenger original (50000-50002) para evitar conflito.
+
+---
 
 ## Dados Locais
 
@@ -110,35 +134,27 @@ Linux:   ~/.mbchat/
   avatars/    - fotos de perfil
 ```
 
-## Portas de Rede
+---
 
-| Porta | Protocolo | Uso |
-|-------|-----------|-----|
-| 50100 | UDP       | Descoberta (multicast 239.255.100.200 + broadcast) |
-| 50101 | TCP       | Mensagens, typing, status, ACK, file requests, grupos |
-| 50102 | TCP       | Transferencia de dados de arquivos |
-| 50199 | TCP       | Instancia unica (loopback only) |
+## Troubleshooting
 
-> Portas diferentes do LAN Messenger original (50000-50002) para evitar conflito quando ambos rodam simultaneamente.
+### PC nao descobre outros na rede
 
-## Protocolo de Rede
+1. **Firewall Windows** - Verificar se MBChat tem regra de entrada. Rodar como admin uma vez ou adicionar manualmente:
+   ```
+   netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=UDP localport=50100,50101,50102 profile=any
+   netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=TCP localport=50100,50101,50102 profile=any
+   ```
 
-- **Descoberta**: JSON via UDP multicast/broadcast a cada 5s. Campos: app_id, user_id, display_name, ip, status, note, hostname, os.
-- **Mensagens TCP**: Frame = [4 bytes big-endian length][JSON payload UTF-8].
-- **Tipos de mensagem**: message, typing, status, ack, file_request, file_accept, file_decline, file_cancel, group_invite, group_message.
-- **Nota pessoal**: Campo `note` no pacote UDP announce. Atualiza em tempo real para todos os peers.
-- **Grupo**: Topologia mesh - cada membro envia diretamente para todos os outros. Convite inclui lista completa de membros. Suporta adicionar participantes a grupos existentes.
-- **Transferencia de arquivo**: Header JSON com file_id/filename/filesize, seguido de OKAY/DENY handshake, seguido de dados em chunks de 64KB. Suporta envio para grupo (envia individualmente para cada membro).
+2. **Antivirus** - Kaspersky, Norton, Avast, etc. podem bloquear o executavel. Adicionar MBChat.exe como excecao.
 
-## Firewall
+3. **Multiplas interfaces de rede** - VPN, Hyper-V, Docker criam NICs virtuais que podem confundir a deteccao de IP. Desativar NICs virtuais desnecessarias resolve.
 
-O app tenta adicionar regras automaticamente no Windows Firewall na primeira execucao.
-Se falhar, adicione manualmente:
+4. **Subnet diferente** - O PC deve estar na mesma subnet dos demais (ex: todos em 192.168.0.x). VLANs separadas nao se comunicam por broadcast.
 
-```
-netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=UDP localport=50100,50101,50102 profile=any
-netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=TCP localport=50100,50101,50102 profile=any
-```
+5. **Porta ocupada** - Verificar com `netstat -an | findstr 50100`. Se outra aplicacao usa a porta, o app faz fallback para porta aleatoria e perde a capacidade de receber broadcasts.
+
+---
 
 ## Autor
 
