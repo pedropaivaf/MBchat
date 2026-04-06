@@ -37,7 +37,7 @@ Principio: cada camada so conhece a imediatamente abaixo. GUI nao importa networ
 
 Classes principais:
 - **LanMessengerApp**: Janela principal (menu, contatos treeview, toolbar, status bar, temas)
-- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico com busca em tempo real e filtro por data, emojis coloridos)
+- **ChatWindow**: Conversa individual com peer (envio de msg/arquivo, historico com busca em tempo real e filtro por data, emojis coloridos). Chat abre limpo; historico via botao History
 - **GroupChatWindow**: Chat em grupo estilo LAN Messenger (PanedWindow com splitter arrastavel, painel lateral de participantes com avatar/nome/nota colapsavel, emoji colorido, fonte, envio de arquivo para grupo, adicionar participantes, layout bottom-first para input)
 - **FileTransferDialog**: Dialogo de progresso de transferencia (estilo LAN Messenger)
 - **PreferencesWindow**: 9 abas de configuracao (sidebar moderna com hover)
@@ -68,6 +68,7 @@ Mecanismos importantes:
 - **Nota pessoal**: Text (height=1) no header navy, permite emojis coloridos (PIL render as image), salva no DB local, sincroniza via UDP announce em tempo real
 - **Popups dismissaveis**: Todas as janelas popup fecham com Escape chamando _on_close() (limpeza de estado), e emoji pickers fecham ao clicar fora
 - **Filtro de contatos thread-safe**: _add_contact() (chamado pelo UDP announce a cada 5s) verifica se há busca ativa e re-detacha contatos que não batem com o filtro
+- **Histórico com busca em tempo real**: _show_history() (chat) e _show_all_history() (global) filtram e destacam matches ao digitar (debounce 150ms), com filtro De/Até por data e contagem de ocorrências
 
 ### messenger.py (~360 linhas) - Controller
 
