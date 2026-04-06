@@ -5164,13 +5164,14 @@ class LanMessengerApp:
         if not HAS_PIL:
             return None
         from PIL import ImageDraw, ImageFont
+        emoji_size = 20  # tamanho do emoji na lista de contatos
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
             name_font = ImageFont.truetype(font_name, 14)
             note_font = ImageFont.truetype('segoeui.ttf', 12)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
-            emoji_font = ImageFont.truetype(emoji_font_path, 14) if has_emoji_font else None
+            emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
         except Exception:
             return None
 
@@ -5197,6 +5198,7 @@ class LanMessengerApp:
         # Segmentos da nota (texto e emoji separados)
         note_segments = []
         total_note_w = 0
+        emoji_render_size = emoji_size + 6  # canvas para renderizar cada emoji
         if note:
             sep = '  -  '
             sep_bbox = d.textbbox((0, 0), sep, font=note_font)
@@ -5213,9 +5215,8 @@ class LanMessengerApp:
                     note_segments.append(('text', part, w))
                     total_note_w += w
                 emoji_char = m.group()
-                ew = 16  # largura padrão do emoji
-                note_segments.append(('emoji', emoji_char, ew))
-                total_note_w += ew
+                note_segments.append(('emoji', emoji_char, emoji_render_size))
+                total_note_w += emoji_render_size
                 last_end = m.end()
             if last_end < len(note):
                 part = note[last_end:]
@@ -5228,7 +5229,7 @@ class LanMessengerApp:
         av_size = 36
         gap = 10
         total_w = av_size + gap + name_w + total_note_w + 10
-        height = 40
+        height = 42
 
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
 
@@ -5250,13 +5251,22 @@ class LanMessengerApp:
         # Nota com emojis coloridos
         for seg_type, seg_text, seg_w in note_segments:
             if seg_type == 'emoji' and emoji_font:
-                # Renderiza emoji colorido como sub-imagem e cola
                 try:
-                    em_img = Image.new('RGBA', (seg_w + 4, seg_w + 4), (255, 255, 255, 0))
+                    # Canvas maior para capturar o glyph inteiro
+                    buf = emoji_size + 12
+                    em_img = Image.new('RGBA', (buf, buf), (255, 255, 255, 0))
                     em_draw = ImageDraw.Draw(em_img)
-                    em_draw.text((0, 0), seg_text, font=emoji_font, embedded_color=True)
-                    ey = text_y - 1
-                    img.paste(em_img, (int(x), ey), em_img)
+                    # Mede o glyph para centralizar
+                    eb = em_draw.textbbox((0, 0), seg_text, font=emoji_font)
+                    ew, eh = eb[2] - eb[0], eb[3] - eb[1]
+                    ex = (buf - ew) // 2 - eb[0]
+                    ey_off = (buf - eh) // 2 - eb[1]
+                    em_draw.text((ex, ey_off), seg_text, font=emoji_font, embedded_color=True)
+                    # Recorta para o tamanho final
+                    em_final = em_img.resize((emoji_render_size, emoji_render_size), Image.LANCZOS)
+                    # Cola centralizado verticalmente na linha
+                    paste_y = (height - emoji_render_size) // 2
+                    img.paste(em_final, (int(x), paste_y), em_final)
                 except Exception:
                     draw.text((x, text_y), seg_text, fill=note_color, font=note_font)
             else:
