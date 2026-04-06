@@ -568,6 +568,15 @@ def _render_color_emoji(emoji_char, size=28):
         return None
 
 
+# Utilitário: vincula o evento MouseWheel em um widget e em todos os seus filhos recursivamente.
+# Permite que o scroll do mouse funcione mesmo quando o ponteiro está sobre sub-widgets.
+# Handler: função de callback que recebe o evento do mouse.
+def _bind_wheel_recursive(widget, handler):
+    widget.bind('<MouseWheel>', handler)
+    for child in widget.winfo_children():
+        _bind_wheel_recursive(child, handler)
+
+
 # Função utilitária: varre um widget tk.Text e substitui TODOS os emojis Unicode
 # por imagens coloridas renderizadas via PIL. Usada em todas as janelas de entrada
 # (ChatWindow, GroupChatWindow, Broadcast) para garantir que emojis digitados,
@@ -3415,11 +3424,6 @@ class ChatWindow(tk.Toplevel):
         def _emoji_scroll(e):
             canvas.yview_scroll(-1 * (e.delta // 60), 'units')
 
-        def _bind_wheel_recursive(widget):
-            widget.bind('<MouseWheel>', _emoji_scroll)
-            for child in widget.winfo_children():
-                _bind_wheel_recursive(child)
-
         def _populate_grid(emojis):
             for w in inner.winfo_children():
                 w.destroy()
@@ -3447,7 +3451,7 @@ class ChatWindow(tk.Toplevel):
             inner.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox('all'))
             canvas.yview_moveto(0)
-            _bind_wheel_recursive(inner)
+            _bind_wheel_recursive(inner, _emoji_scroll)
 
         def show_category(cat_key):
             _populate_grid(categories[cat_key])
@@ -3497,7 +3501,9 @@ class ChatWindow(tk.Toplevel):
         inner.bind('<MouseWheel>', _emoji_scroll)
 
         show_category(cat_keys[0])
-        _bind_wheel_recursive(inner)
+        def _popup_scroll(e):
+            canvas.yview_scroll(-1 * (e.delta // 60), 'units')
+        _bind_wheel_recursive(inner, _popup_scroll)
         popup.bind('<Escape>', lambda e: popup.destroy())
 
         # Fechar ao clicar fora do popup
@@ -4934,7 +4940,9 @@ class LanMessengerApp:
         self._contact_list_inner.bind('<Configure>', _on_inner_configure)
 
         # Suporte a mouse wheel
-        _bind_wheel_recursive(self._contact_canvas)
+        def _contact_scroll(e):
+            self._contact_canvas.yview_scroll(-1 * (e.delta // 60), 'units')
+        _bind_wheel_recursive(self._contact_canvas, _contact_scroll)
 
         # Custom thin scrollbar
         self._scroll_canvas = tk.Canvas(tree_frame, width=6, highlightthickness=0, bd=0, bg=BG_WHITE)
