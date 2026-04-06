@@ -77,7 +77,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Transferencia de arquivos ponto-a-ponto e para grupos (ate 100MB, chunks 256KB, temp file)
   - Dialogo de transferencia com progresso em MB, velocidade, estado visual
   - Quem envia ve "Envio concluido"; quem recebe ve "Abrir Pasta" + "Fechar"
-- Historico com busca e filtro por data
+- Historico com busca em tempo real (tipo Ctrl+F, highlight amarelo) e filtro por data De/Até (dd/mm/aaaa)
 - Dois estilos de mensagem (Preferencias): linear (padrao LAN Messenger) e bolhas (estilo WhatsApp)
   - Funciona tanto em chat individual quanto em grupo
   - Bolhas proprias alinhadas a direita (azul claro), peer a esquerda (cinza)
