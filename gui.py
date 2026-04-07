@@ -5453,9 +5453,34 @@ class LanMessengerApp:
     # Tambem inicializa peer_info com dados do banco.
     def _load_saved_contacts(self):
         contacts = self.messenger.db.get_contacts(online_only=False)  # busca todos do banco
+
+        # Deduplica por display_name: mantém apenas o registro mais recente (last_seen)
+        seen_names = {}   # display_name -> (uid, last_seen)
+        stale_uids = set()
+        for c in contacts:
+            uid = c['user_id']
+            if uid == self.messenger.user_id:
+                continue
+            name = c.get('display_name', 'Unknown')
+            last_seen = c.get('last_seen', 0) or 0
+            if name in seen_names:
+                prev_uid, prev_ls = seen_names[name]
+                if last_seen > prev_ls:
+                    stale_uids.add(prev_uid)
+                    seen_names[name] = (uid, last_seen)
+                else:
+                    stale_uids.add(uid)
+            else:
+                seen_names[name] = (uid, last_seen)
+        # Remove registros obsoletos do banco
+        for stale_uid in stale_uids:
+            self.messenger.db.delete_contact(stale_uid)
+
         for c in contacts:
             uid = c['user_id']
             if uid == self.messenger.user_id:  # pula o proprio usuario
+                continue
+            if uid in stale_uids:  # registro obsoleto (duplicata antiga)
                 continue
             if uid in self.peer_items:  # ja esta no TreeView (peer ativo)? pula
                 continue
@@ -5679,85 +5704,419 @@ class LanMessengerApp:
         return 'break'  # impede nova linha no tk.Text ao pressionar Enter
 
     def _show_note_emoji_picker(self):
-        ep = tk.Toplevel(self.root)
-        ep.title('')
-        ep.overrideredirect(True)
-        ep.configure(bg='#e2e8f0', highlightbackground='#cbd5e0', highlightthickness=1)
-        
-        # Posicionar exatamente acima do campo de nota
+        popup = tk.Toplevel(self.root)
+        popup.title('Emoticons')
+        popup.resizable(False, False)
+        popup.configure(bg='#f0f0f0')
+        popup.transient(self.root)
+
+        # Posicionar acima do campo de nota
         x = self.note_entry.winfo_rootx()
-        y = self.note_entry.winfo_rooty() - 170
-        ep.geometry(f'+{x}+{y}')
+        y = self.note_entry.winfo_rooty() - 240
+        popup.geometry(f'280x230+{x}+{y}')
 
-        emojis = ['\U0001f600', '\U0001f601', '\U0001f602', '\U0001f603',
-                  '\U0001f604', '\U0001f605', '\U0001f606', '\U0001f607',
-                  '\U0001f608', '\U0001f609', '\U0001f60a', '\U0001f60b',
-                  '\U0001f60d', '\U0001f60e', '\U0001f60f', '\U0001f610',
-                  '\U0001f611', '\U0001f612', '\U0001f613', '\U0001f614',
-                  '\U0001f615', '\U0001f616', '\U0001f617', '\U0001f618',
-                  '\U0001f619', '\U0001f61a', '\U0001f61b', '\U0001f61c',
-                  '\U0001f61d', '\U0001f61e', '\U0001f61f', '\U0001f620',
-                  '\U0001f621', '\U0001f622', '\U0001f923', '\U0001f924',
-                  '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
-                  '\u2601', '\u26c5', '\U0001f37a', '\U0001f37b']
-        
-        header = tk.Frame(ep, bg='#f5f7fa')
-        header.pack(fill='x')
-        close_btn = tk.Button(header, text='✕', font=('Segoe UI', 8, 'bold'),
-                              relief='flat', bd=0, cursor='hand2',
-                              bg='#f5f7fa', fg='#a0aec0', activebackground='#e2e8f0',
-                              activeforeground='#f56565', command=ep.destroy)
-        close_btn.pack(side='right', padx=4, pady=2)
+        popup._emoji_images = {}
 
-        fr = tk.Frame(ep, bg='#ffffff')
-        fr.pack(fill='both', expand=True, padx=2, pady=(0, 2))
+        # Mesmos nomes de busca do chat
+        _emoji_names = {
+            '\U0001f600': 'sorriso feliz', '\U0001f603': 'sorriso olhos abertos',
+            '\U0001f604': 'sorriso olhos sorrindo', '\U0001f601': 'sorriso radiante',
+            '\U0001f606': 'rindo', '\U0001f605': 'rindo suando',
+            '\U0001f602': 'chorando de rir lagrimas', '\U0001f923': 'rolando de rir',
+            '\U0001f60a': 'sorrindo corado', '\U0001f607': 'anjo aureola',
+            '\U0001f609': 'piscando piscadela', '\U0001f60d': 'olhos de coracao apaixonado',
+            '\U0001f929': 'estrelas nos olhos', '\U0001f60e': 'oculos escuros legal cool',
+            '\U0001f618': 'mandando beijo beijinho', '\U0001f617': 'beijando',
+            '\U0001f61a': 'beijo olhos fechados',
+            '\U0001f60b': 'delicioso gostoso lingua', '\U0001f61b': 'lingua pra fora',
+            '\U0001f61c': 'lingua piscando', '\U0001f92a': 'maluco doido louco',
+            '\U0001f61d': 'nojo lingua olhos fechados',
+            '\U0001f911': 'dinheiro cifrao rico', '\U0001f917': 'abraco',
+            '\U0001f914': 'pensando pensativo hmm', '\U0001f910': 'boca fechada ziper',
+            '\U0001f928': 'sobrancelha levantada desconfiado',
+            '\U0001f610': 'neutro sem expressao', '\U0001f611': 'inexpressivo',
+            '\U0001f636': 'sem boca', '\U0001f60f': 'sorriso de lado debochado',
+            '\U0001f612': 'descontente chateado', '\U0001f644': 'revirando olhos',
+            '\U0001f62c': 'cara de grimace', '\U0001f925': 'mentiroso pinoquio',
+            '\U0001f60c': 'aliviado', '\U0001f614': 'pensativo triste',
+            '\U0001f62a': 'sonolento sono', '\U0001f924': 'babando baba',
+            '\U0001f634': 'dormindo zzz', '\U0001f637': 'mascara doente',
+            '\U0001f912': 'termometro febre', '\U0001f915': 'machucado bandagem',
+            '\U0001f922': 'enjoado nausea', '\U0001f92e': 'vomitando',
+            '\U0001f927': 'espirrando espirro gripe', '\U0001f975': 'quente calor',
+            '\U0001f976': 'frio congelando gelado', '\U0001f974': 'tonto zonzo',
+            '\U0001f620': 'bravo irritado', '\U0001f621': 'raiva furioso vermelho',
+            '\U0001f624': 'triunfante bufando', '\U0001f622': 'chorando triste',
+            '\U0001f62d': 'chorando muito', '\U0001f616': 'confuso',
+            '\U0001f623': 'cansado perseverante', '\U0001f625': 'desapontado aliviado',
+            '\U0001f628': 'assustado medo', '\U0001f631': 'gritando horror',
+            '\U0001f630': 'ansioso suando', '\U0001f629': 'exausto cansado',
+            '\U0001f62b': 'cansado exausto', '\U0001f633': 'corado envergonhado',
+            '\U0001f632': 'surpreso espantado', '\U0001f61e': 'desapontado',
+            '\U0001f613': 'suando frio', '\U0001f635': 'tonto x olhos',
+            '\U0001f608': 'sorriso diabo', '\U0001f47f': 'diabo bravo demonio',
+            '\U0001f4a9': 'coco cocô', '\U0001f921': 'palhaco',
+            '\U0001f47b': 'fantasma', '\U0001f480': 'caveira cranio',
+            '\U0001f44d': 'positivo joinha legal like', '\U0001f44e': 'negativo ruim dislike',
+            '\U0001f44a': 'soco punho', '\u270a': 'punho levantado',
+            '\U0001f91b': 'punho esquerdo', '\U0001f91c': 'punho direito',
+            '\U0001f44f': 'palmas aplausos parabens', '\U0001f64c': 'maos levantadas celebrar',
+            '\U0001f450': 'maos abertas', '\U0001f932': 'palmas para cima',
+            '\U0001f91d': 'aperto de mao', '\U0001f64f': 'orar rezar por favor',
+            '\U0001f4aa': 'forca musculo braco forte', '\U0001f44b': 'acenando tchau oi',
+            '\U0001f91a': 'mao levantada', '\u270b': 'mao aberta pare',
+            '\U0001f596': 'vulcano spock', '\U0001f44c': 'ok perfeito',
+            '\U0001f91e': 'dedos cruzados sorte', '\U0001f91f': 'te amo amor',
+            '\U0001f918': 'rock chifres metal', '\U0001f448': 'apontando esquerda',
+            '\U0001f449': 'apontando direita', '\U0001f446': 'apontando cima',
+            '\U0001f447': 'apontando baixo', '\U0001f485': 'unha pintando esmalte',
+            '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
+            '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
+            '\U0001f919': 'me liga telefone hang loose',
+            '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
+            '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
+            '\U0001f350': 'pera', '\U0001f34a': 'tangerina laranja',
+            '\U0001f34b': 'limao', '\U0001f34c': 'banana',
+            '\U0001f349': 'melancia', '\U0001f347': 'uva',
+            '\U0001f353': 'morango', '\U0001f348': 'melao',
+            '\U0001f352': 'cereja', '\U0001f351': 'pessego',
+            '\U0001f95d': 'kiwi', '\U0001f345': 'tomate',
+            '\U0001f346': 'berinjela', '\U0001f955': 'cenoura',
+            '\U0001f33d': 'milho espiga', '\U0001f336\ufe0f': 'pimenta',
+            '\U0001f954': 'batata', '\U0001f360': 'batata doce',
+            '\U0001f950': 'croissant', '\U0001f35e': 'pao',
+            '\U0001f956': 'baguete pao frances', '\U0001f9c0': 'queijo',
+            '\U0001f356': 'carne osso', '\U0001f357': 'coxa frango',
+            '\U0001f354': 'hamburguer', '\U0001f35f': 'batata frita',
+            '\U0001f355': 'pizza', '\U0001f32d': 'cachorro quente hot dog',
+            '\U0001f32e': 'taco', '\U0001f32f': 'burrito',
+            '\U0001f373': 'ovo frigideira', '\U0001f958': 'panela',
+            '\U0001f372': 'sopa', '\U0001f35c': 'ramen macarrao',
+            '\U0001f363': 'sushi', '\U0001f371': 'bento',
+            '\U0001f35b': 'curry arroz', '\U0001f35a': 'arroz',
+            '\U0001f359': 'onigiri', '\U0001f370': 'bolo fatia',
+            '\U0001f382': 'aniversario bolo vela', '\U0001f36e': 'pudim',
+            '\U0001f36d': 'pirulito', '\U0001f36c': 'bala doce',
+            '\U0001f36b': 'chocolate', '\U0001f369': 'donut rosquinha',
+            '\U0001f368': 'sorvete', '\U0001f366': 'sorvete cone casquinha',
+            '\U0001f367': 'raspadinha gelo',
+            '\u2615': 'cafe xicara cha', '\U0001f375': 'cha verde',
+            '\U0001f376': 'sake', '\U0001f37a': 'cerveja chope chopp beer',
+            '\U0001f37b': 'brinde cervejas chope chopp', '\U0001f377': 'vinho taca',
+            '\U0001f378': 'coquetel martini drink', '\U0001f379': 'drink tropical',
+            '\U0001f37e': 'champagne garrafa', '\U0001f944': 'colher',
+            '\U0001f95b': 'leite copo',
+            '\u2764\ufe0f': 'coracao vermelho amor', '\U0001f9e1': 'coracao laranja',
+            '\U0001f49b': 'coracao amarelo', '\U0001f49a': 'coracao verde',
+            '\U0001f499': 'coracao azul', '\U0001f49c': 'coracao roxo',
+            '\U0001f5a4': 'coracao preto', '\U0001f90e': 'coracao marrom',
+            '\U0001f90d': 'coracao branco', '\U0001f494': 'coracao partido',
+            '\U0001f495': 'dois coracoes', '\U0001f49e': 'coracoes girando',
+            '\U0001f493': 'coracao batendo', '\U0001f497': 'coracao crescendo',
+            '\U0001f496': 'coracao brilhando', '\U0001f498': 'coracao flechado cupido',
+            '\U0001f48c': 'carta amor', '\U0001f48b': 'beijo marca batom',
+            '\U0001f48d': 'anel alianca', '\U0001f48e': 'diamante joia',
+            '\U0001f4ab': 'tontura estrela', '\U0001f4a5': 'explosao boom',
+            '\U0001f4a2': 'raiva simbolo', '\U0001f4a6': 'gotas suor',
+            '\U0001f4a8': 'vento sopro', '\U0001f573\ufe0f': 'buraco',
+            '\U0001f4a3': 'bomba', '\U0001f4ac': 'balao fala', '\U0001f4ad': 'balao pensamento',
+            '\U0001f5e8\ufe0f': 'balao comentario',
+            '\U0001f697': 'carro automovel', '\U0001f695': 'taxi',
+            '\U0001f68c': 'onibus', '\U0001f691': 'ambulancia',
+            '\U0001f692': 'bombeiro caminhao', '\U0001f693': 'policia viatura',
+            '\U0001f3ce\ufe0f': 'carro corrida formula',
+            '\u2708\ufe0f': 'aviao', '\U0001f680': 'foguete',
+            '\U0001f6f8': 'disco voador ufo', '\U0001f6a2': 'navio',
+            '\U0001f3e0': 'casa', '\U0001f3e2': 'escritorio predio',
+            '\U0001f3eb': 'escola', '\U0001f3e5': 'hospital',
+            '\U0001f3ed': 'fabrica', '\u26ea': 'igreja',
+            '\U0001f5fc': 'torre tokyo', '\U0001f4f1': 'celular telefone',
+            '\U0001f4bb': 'computador notebook laptop', '\U0001f4f7': 'camera foto',
+            '\U0001f4f9': 'camera video filmadora', '\U0001f4fa': 'televisao tv',
+            '\U0001f4fb': 'radio', '\u23f0': 'despertador alarme',
+            '\u231a': 'relogio', '\U0001f4a1': 'lampada ideia',
+            '\U0001f526': 'lanterna', '\U0001f4b0': 'dinheiro saco',
+            '\U0001f4b5': 'dinheiro nota dolar', '\U0001f4b3': 'cartao credito',
+            '\U0001f4e7': 'email', '\U0001f4e8': 'email recebido',
+            '\U0001f4e9': 'email enviado', '\U0001f4ce': 'clipe anexo',
+            '\U0001f4c1': 'pasta', '\U0001f4c2': 'pasta aberta',
+            '\U0001f4c4': 'documento pagina', '\U0001f4c5': 'calendario',
+            '\U0001f4ca': 'grafico barras', '\U0001f4cb': 'prancheta',
+            '\U0001f4cc': 'tachinha', '\U0001f4dd': 'memo nota escrita',
+            '\u270f\ufe0f': 'lapis', '\U0001f512': 'cadeado fechado',
+            '\U0001f513': 'cadeado aberto', '\U0001f527': 'chave inglesa ferramenta',
+            '\U0001f528': 'martelo', '\U0001f6e0\ufe0f': 'ferramentas',
+            '\u2601': 'nuvem cloud', '\U0001f327': 'nuvem chuva',
+            '\U0001f328': 'nuvem neve', '\u26c5': 'sol nuvem parcialmente nublado',
+            '\U0001f324': 'sol nuvem pequena', '\U0001f325': 'sol nuvem grande',
+            '\U0001f3c6': 'trofeu copa', '\U0001f3c5': 'medalha esporte',
+            '\U0001f947': 'medalha ouro primeiro', '\U0001f948': 'medalha prata segundo',
+            '\U0001f949': 'medalha bronze terceiro', '\u26bd': 'futebol bola',
+            '\U0001f3c0': 'basquete', '\U0001f3c8': 'futebol americano',
+            '\U0001f3be': 'tenis', '\U0001f3d0': 'volei',
+            '\U0001f3b1': 'sinuca bilhar', '\U0001f3b3': 'boliche',
+            '\U0001f3af': 'alvo dardo', '\U0001f3ae': 'videogame joystick',
+            '\U0001f3b2': 'dado', '\U0001f3b0': 'caca niquel slot',
+            '\U0001f3b5': 'nota musical', '\U0001f3b6': 'notas musicais musica',
+            '\U0001f3a4': 'microfone karaoke', '\U0001f3a7': 'fone ouvido',
+            '\U0001f3b8': 'guitarra', '\U0001f3b9': 'teclado piano',
+            '\U0001f3ba': 'trompete', '\U0001f3bb': 'violino',
+            '\U0001f525': 'fogo chama quente', '\U0001f4af': 'cem pontos perfeito',
+            '\U0001f389': 'festa confete', '\U0001f388': 'balao festa',
+            '\U0001f381': 'presente', '\U0001f380': 'laco fita',
+            '\U0001f3c1': 'bandeira chegada', '\u2705': 'check verde ok',
+            '\u274c': 'x vermelho errado nao', '\u26a0\ufe0f': 'aviso alerta',
+            '\U0001f6ab': 'proibido', '\u2753': 'interrogacao pergunta',
+            '\u2757': 'exclamacao',
+            '\U0001f6a9': 'bandeira triangular',
+            '\U0001f3f3\ufe0f': 'bandeira branca', '\U0001f3f4': 'bandeira preta',
+        }
 
-        col, row = 0, 0
-        for em in emojis:
-            def ins(e=em):
-                # Limpa placeholder se necessário
-                cur_text = self._note_get_text()
-                if cur_text in ('Digite uma nota', 'Type a note', _t('note_placeholder')):
-                    self.note_entry.delete('1.0', 'end')
-                    self.note_entry.config(fg='#ffffff')
-                
-                # Insere emoji como imagem colorida
-                self._note_insert_emoji(e)
-                self.note_entry.focus_set()
-            
-            img = self._note_emoji_cache.get(em)
-            if img is None:
-                img = _render_color_emoji(em, 20)
+        # Mesmas categorias do chat
+        categories = {
+            '\U0001f600': [
+                '\U0001f600', '\U0001f603', '\U0001f604', '\U0001f601',
+                '\U0001f606', '\U0001f605', '\U0001f602', '\U0001f923',
+                '\U0001f60a', '\U0001f607', '\U0001f609', '\U0001f60d',
+                '\U0001f929', '\U0001f60e', '\U0001f618', '\U0001f617', '\U0001f61a',
+                '\U0001f60b', '\U0001f61b', '\U0001f61c', '\U0001f92a',
+                '\U0001f61d', '\U0001f911', '\U0001f917', '\U0001f914',
+                '\U0001f910', '\U0001f928', '\U0001f610', '\U0001f611',
+                '\U0001f636', '\U0001f60f', '\U0001f612', '\U0001f644',
+                '\U0001f62c', '\U0001f925', '\U0001f60c', '\U0001f614',
+                '\U0001f62a', '\U0001f924', '\U0001f634', '\U0001f637',
+                '\U0001f912', '\U0001f915', '\U0001f922', '\U0001f92e',
+                '\U0001f927', '\U0001f975', '\U0001f976', '\U0001f974',
+                '\U0001f620', '\U0001f621', '\U0001f624', '\U0001f622',
+                '\U0001f62d', '\U0001f616', '\U0001f623', '\U0001f625',
+                '\U0001f628', '\U0001f631', '\U0001f630', '\U0001f629',
+                '\U0001f62b', '\U0001f633', '\U0001f632', '\U0001f61e',
+                '\U0001f613', '\U0001f635', '\U0001f608', '\U0001f47f',
+                '\U0001f4a9', '\U0001f921', '\U0001f47b', '\U0001f480',
+            ],
+            '\U0001f44d': [
+                '\U0001f44d', '\U0001f44e', '\U0001f44a', '\u270a',
+                '\U0001f91b', '\U0001f91c', '\U0001f44f', '\U0001f64c',
+                '\U0001f450', '\U0001f932', '\U0001f91d', '\U0001f64f',
+                '\U0001f4aa', '\U0001f44b', '\U0001f91a', '\u270b',
+                '\U0001f596', '\U0001f44c', '\U0001f91e', '\U0001f91f',
+                '\U0001f918', '\U0001f448', '\U0001f449', '\U0001f446',
+                '\U0001f447', '\U0001f485', '\U0001f933', '\u270c\ufe0f',
+                '\U0001f590\ufe0f', '\u261d\ufe0f', '\U0001f919',
+                '\U0001f9b5', '\U0001f9b6',
+            ],
+            '\U0001f354': [
+                '\U0001f34e', '\U0001f34f', '\U0001f350', '\U0001f34a',
+                '\U0001f34b', '\U0001f34c', '\U0001f349', '\U0001f347',
+                '\U0001f353', '\U0001f348', '\U0001f352', '\U0001f351',
+                '\U0001f95d', '\U0001f345', '\U0001f346', '\U0001f955',
+                '\U0001f33d', '\U0001f336\ufe0f', '\U0001f954', '\U0001f360',
+                '\U0001f950', '\U0001f35e', '\U0001f956', '\U0001f9c0',
+                '\U0001f356', '\U0001f357', '\U0001f354', '\U0001f35f',
+                '\U0001f355', '\U0001f32d', '\U0001f32e', '\U0001f32f',
+                '\U0001f373', '\U0001f958', '\U0001f372', '\U0001f35c',
+                '\U0001f363', '\U0001f371', '\U0001f35b', '\U0001f35a',
+                '\U0001f359', '\U0001f370', '\U0001f382', '\U0001f36e',
+                '\U0001f36d', '\U0001f36c', '\U0001f36b', '\U0001f369',
+                '\U0001f368', '\U0001f366', '\U0001f367',
+                '\u2615', '\U0001f375', '\U0001f376', '\U0001f37a',
+                '\U0001f37b', '\U0001f377', '\U0001f378', '\U0001f379',
+                '\U0001f37e', '\U0001f944', '\U0001f95b',
+            ],
+            '\u2764\ufe0f': [
+                '\u2764\ufe0f', '\U0001f9e1', '\U0001f49b', '\U0001f49a',
+                '\U0001f499', '\U0001f49c', '\U0001f5a4', '\U0001f90e',
+                '\U0001f90d', '\U0001f494', '\U0001f495', '\U0001f49e',
+                '\U0001f493', '\U0001f497', '\U0001f496', '\U0001f498',
+                '\U0001f48c', '\U0001f48b', '\U0001f48d', '\U0001f48e',
+                '\U0001f4ab', '\U0001f4a5', '\U0001f4a2', '\U0001f4a6',
+                '\U0001f4a8', '\U0001f573\ufe0f', '\U0001f4a3',
+                '\U0001f4ac', '\U0001f4ad', '\U0001f5e8\ufe0f',
+            ],
+            '\U0001f3e0': [
+                '\U0001f697', '\U0001f695', '\U0001f68c', '\U0001f691',
+                '\U0001f692', '\U0001f693', '\U0001f3ce\ufe0f',
+                '\u2708\ufe0f', '\U0001f680', '\U0001f6f8',
+                '\U0001f6a2',
+                '\u2601', '\U0001f327', '\U0001f328',
+                '\u26c5', '\U0001f324', '\U0001f325',
+                '\U0001f3e0', '\U0001f3e2', '\U0001f3eb',
+                '\U0001f3e5', '\U0001f3ed', '\u26ea', '\U0001f5fc',
+                '\U0001f4f1', '\U0001f4bb', '\U0001f4f7', '\U0001f4f9',
+                '\U0001f4fa', '\U0001f4fb', '\u23f0', '\u231a',
+                '\U0001f4a1', '\U0001f526', '\U0001f4b0', '\U0001f4b5',
+                '\U0001f4b3', '\U0001f4e7', '\U0001f4e8', '\U0001f4e9',
+                '\U0001f4ce', '\U0001f4c1', '\U0001f4c2', '\U0001f4c4',
+                '\U0001f4c5', '\U0001f4ca', '\U0001f4cb', '\U0001f4cc',
+                '\U0001f4dd', '\u270f\ufe0f', '\U0001f512', '\U0001f513',
+                '\U0001f527', '\U0001f528', '\U0001f6e0\ufe0f',
+            ],
+            '\U0001f3c6': [
+                '\U0001f3c6', '\U0001f3c5', '\U0001f947', '\U0001f948',
+                '\U0001f949', '\u26bd', '\U0001f3c0', '\U0001f3c8',
+                '\U0001f3be', '\U0001f3d0', '\U0001f3b1', '\U0001f3b3',
+                '\U0001f3af', '\U0001f3ae', '\U0001f3b2', '\U0001f3b0',
+                '\U0001f3b5', '\U0001f3b6', '\U0001f3a4', '\U0001f3a7',
+                '\U0001f3b8', '\U0001f3b9', '\U0001f3ba', '\U0001f3bb',
+                '\U0001f525', '\U0001f4af', '\U0001f389', '\U0001f388',
+                '\U0001f381', '\U0001f380', '\U0001f3c1',
+                '\u2705', '\u274c', '\u26a0\ufe0f', '\U0001f6ab',
+                '\u2753', '\u2757', '\U0001f4ac', '\U0001f4ad',
+                '\U0001f6a9', '\U0001f3f3\ufe0f', '\U0001f3f4',
+            ],
+        }
+
+        # Barra de busca
+        search_frame = tk.Frame(popup, bg='#ffffff')
+        search_frame.pack(fill='x', padx=4, pady=(4, 2))
+
+        search_icon = _create_mdl2_icon_static('\uE721', size=12, color='#a0aec0')
+        if search_icon:
+            popup._emoji_images['_search'] = search_icon
+            tk.Label(search_frame, image=search_icon,
+                     bg='#ffffff').pack(side='left', padx=(4, 2))
+
+        emoji_search_var = tk.StringVar()
+        emoji_search_entry = tk.Entry(search_frame, textvariable=emoji_search_var,
+                                       font=('Segoe UI', 8), bg='#ffffff',
+                                       fg='#1a202c', relief='flat', bd=0,
+                                       insertbackground='#1a202c')
+        emoji_search_entry.pack(side='left', fill='x', expand=True, ipady=2, padx=2)
+        emoji_search_entry.insert(0, 'Buscar emoji...')
+        emoji_search_entry.config(fg='#a0aec0')
+
+        def _emoji_search_focus_in(e):
+            if emoji_search_entry.get() == 'Buscar emoji...':
+                emoji_search_entry.delete(0, 'end')
+                emoji_search_entry.config(fg='#1a202c')
+        def _emoji_search_focus_out(e):
+            if not emoji_search_entry.get().strip():
+                emoji_search_entry.insert(0, 'Buscar emoji...')
+                emoji_search_entry.config(fg='#a0aec0')
+        emoji_search_entry.bind('<FocusIn>', _emoji_search_focus_in)
+        emoji_search_entry.bind('<FocusOut>', _emoji_search_focus_out)
+
+        tk.Frame(popup, bg='#e2e8f0', height=1).pack(fill='x', padx=6)
+
+        # Abas de categorias
+        tab_frame = tk.Frame(popup, bg='#e8e8e8', bd=0, relief='flat')
+        tab_frame.pack(fill='x')
+
+        # Grid scrollavel
+        grid_frame = tk.Frame(popup, bg='#ffffff')
+        grid_frame.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(grid_frame, bg='#ffffff', highlightthickness=0)
+        inner = tk.Frame(canvas, bg='#ffffff')
+        canvas.pack(fill='both', expand=True)
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def insert_emoji(emoji):
+            # Limpa placeholder se necessario
+            cur_text = self._note_get_text()
+            if cur_text in ('Digite uma nota', 'Type a note', _t('note_placeholder')):
+                self.note_entry.delete('1.0', 'end')
+                self.note_entry.config(fg='#ffffff')
+            self._note_insert_emoji(emoji)
+            self.note_entry.focus_set()
+
+        cat_keys = list(categories.keys())
+
+        def _emoji_scroll(e):
+            canvas.yview_scroll(-1 * (e.delta // 60), 'units')
+
+        def _bind_wheel_recursive(widget):
+            widget.bind('<MouseWheel>', _emoji_scroll)
+            for child in widget.winfo_children():
+                _bind_wheel_recursive(child)
+
+        def _populate_grid(emojis):
+            for w in inner.winfo_children():
+                w.destroy()
+            cols = 8
+            for i, em in enumerate(emojis):
+                r, c = divmod(i, cols)
+                img = self._note_emoji_cache.get(em)
+                if img is None:
+                    img = _render_color_emoji(em, 20)
+                    if img:
+                        self._note_emoji_cache[em] = img
                 if img:
-                    self._note_emoji_cache[em] = img
-                    
-            if img:
-                b = tk.Button(fr, image=img, relief='flat', bd=0,
-                              cursor='hand2', command=ins,
-                              bg='#ffffff', activebackground='#f0f5ff',
-                              width=24, height=24)
-            else:
-                b = tk.Button(fr, text=em, font=('Segoe UI', 12),
-                              relief='flat', bd=0, cursor='hand2',
-                              command=ins, bg='#ffffff',
-                              activebackground='#f0f5ff')
-            b.grid(row=row, column=col, padx=1, pady=1)
-            col += 1
-            if col >= 8:
-                col = 0
-                row += 1
+                    popup._emoji_images[em] = img
+                    btn = tk.Label(inner, image=img,
+                                   bg='#ffffff', cursor='hand2',
+                                   padx=2, pady=2)
+                else:
+                    btn = tk.Label(inner, text=em,
+                                   font=('Segoe UI Emoji', 16),
+                                   bg='#ffffff', cursor='hand2',
+                                   padx=2, pady=2)
+                btn.grid(row=r, column=c, padx=0, pady=0)
+                btn.bind('<Button-1>',
+                         lambda e, emoji=em: insert_emoji(emoji))
+                btn.bind('<Enter>',
+                         lambda e, b=btn: b.configure(bg='#e8f0fe'))
+                btn.bind('<Leave>',
+                         lambda e, b=btn: b.configure(bg='#ffffff'))
+            inner.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox('all'))
+            canvas.yview_moveto(0)
+            _bind_wheel_recursive(inner)
 
-        ep.bind('<Escape>', lambda e: ep.destroy())
-        def _check_ep_focus():
-            if not ep.winfo_exists():
+        def show_category(cat_key):
+            _populate_grid(categories[cat_key])
+            for b in tab_buttons:
+                b.configure(bg='#e8e8e8', relief='flat')
+            idx = cat_keys.index(cat_key)
+            tab_buttons[idx].configure(bg='#ffffff', relief='sunken')
+
+        def _on_emoji_search(*args):
+            query = emoji_search_var.get().strip().lower()
+            if query == 'buscar emoji...' or not query:
+                show_category(cat_keys[0])
+                return
+            for b in tab_buttons:
+                b.configure(bg='#e8e8e8', relief='flat')
+            results = [em for em, name in _emoji_names.items() if query in name]
+            _populate_grid(results)
+
+        emoji_search_var.trace_add('write', _on_emoji_search)
+
+        tab_buttons = []
+        for cat_key in cat_keys:
+            tab_img = _render_color_emoji(cat_key, 20)
+            if tab_img:
+                popup._emoji_images[f'tab_{cat_key}'] = tab_img
+                btn = tk.Label(tab_frame, image=tab_img,
+                               bg='#e8e8e8', cursor='hand2',
+                               padx=8, pady=3, relief='flat')
+            else:
+                btn = tk.Label(tab_frame, text=cat_key,
+                               font=('Segoe UI Emoji', 12),
+                               bg='#e8e8e8', cursor='hand2',
+                               padx=8, pady=2, relief='flat')
+            btn.pack(side='left', padx=1)
+            btn.bind('<Button-1>', lambda e, k=cat_key: show_category(k))
+            tab_buttons.append(btn)
+
+        canvas.bind('<MouseWheel>', _emoji_scroll)
+        inner.bind('<MouseWheel>', _emoji_scroll)
+
+        show_category(cat_keys[0])
+        _bind_wheel_recursive(inner)
+        popup.bind('<Escape>', lambda e: popup.destroy())
+
+        def _check_focus():
+            if not popup.winfo_exists():
                 return
             try:
-                focused = ep.focus_get()
-                if focused is None or not str(focused).startswith(str(ep)):
-                    ep.destroy()
+                focused = popup.focus_get()
+                if focused is None or not str(focused).startswith(str(popup)):
+                    popup.destroy()
             except Exception:
-                ep.destroy()
-        ep.bind('<FocusOut>', lambda e: ep.after(100, _check_ep_focus))
+                popup.destroy()
+        popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
+        popup.focus_set()
         ep.focus_set()
 
     # Callback do combobox de status: traduz label para codigo e propaga via UDP.

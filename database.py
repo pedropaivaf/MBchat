@@ -226,6 +226,11 @@ class Database:
             "SELECT note FROM contacts WHERE user_id=?", (user_id,)).fetchone()
         return row['note'] if row and row['note'] else ''
 
+    # Remove contato do banco (usado para limpar registros obsoletos/duplicados)
+    def delete_contact(self, user_id):
+        self.conn.execute("DELETE FROM contacts WHERE user_id=?", (user_id,))
+        self.conn.commit()
+
     # Marca contato como offline (peer perdido/desconectou)
     def set_contact_offline(self, user_id):
         self.conn.execute(
