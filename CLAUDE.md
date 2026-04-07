@@ -17,7 +17,7 @@ python gui.py
 python build.py
 
 # Build direto via CLI
-python build.py --version 1.2.0 --deploy "V:\Publico\mbchat-update"
+python build.py --version 1.2.0 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
 
 # Regenerar icone
 python create_icon.py
@@ -108,7 +108,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
-- Auto-update via pasta compartilhada na rede (`V:\Publico\mbchat-update`)
+- Auto-update via pasta compartilhada na rede (`\\192.168.0.9\Works2026\Publico\mbchat-update`)
   - App checa `version.txt` no share no startup (2s delay), compara com APP_VERSION local
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
   - Clique copia exe do share (~1s LAN), batch script troca o exe, `powershell Start-Process` reabre o app
@@ -116,7 +116,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
   - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o batch e o move falha porque o exe fica travado
   - Menu Ferramentas > "Verificar atualizacoes" para check manual
   - Configuravel em Preferencias > Rede > "Pasta de atualizacao (UNC)"
-  - Default: `V:\Publico\mbchat-update` (definido em updater.DEFAULT_SHARE_PATH)
+  - Default: `\\192.168.0.9\Works2026\Publico\mbchat-update` (definido em updater.DEFAULT_SHARE_PATH)
   - Build usa `--noupx` para evitar compressao que corrompe DLLs do VC runtime
 
 ## Convencoes importantes

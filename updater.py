@@ -13,7 +13,7 @@ from version import APP_VERSION
 log = logging.getLogger('mbchat')
 
 # Caminho padrao do share de atualizacao
-DEFAULT_SHARE_PATH = r'V:\Publico\mbchat-update'
+DEFAULT_SHARE_PATH = r'\\192.168.0.9\Works2026\Publico\mbchat-update'
 
 # Pasta local para arquivos temporarios de update
 _UPDATE_DIR = os.path.join(
@@ -83,24 +83,34 @@ def apply_update(new_exe_path):
     # Chamador deve fechar o app logo depois (os._exit ou sys.exit).
     target = sys.executable  # caminho do exe em execucao
     bat_path = os.path.join(_UPDATE_DIR, 'update.bat')
-
-    # Limpa pastas _MEI* antigas do PyInstaller no %TEMP% antes de reiniciar
-    # para evitar "Failed to load Python DLL" por conflito com extracao anterior
-    temp_dir = os.environ.get('TEMP', os.environ.get('TMP', ''))
+    log_path = os.path.join(_UPDATE_DIR, 'update.log')
 
     bat_content = f'''@echo off
+set LOG="{log_path}"
+echo [%date% %time%] Update iniciado >> %LOG%
+echo Target: "{target}" >> %LOG%
+echo Source: "{new_exe_path}" >> %LOG%
+
+taskkill /f /im MBChat.exe >nul 2>&1
 timeout /t 3 /noretry >nul
+
 set RETRIES=10
 :retry
+echo [%date% %time%] Tentando move (retry %RETRIES%) >> %LOG%
 move /Y "{new_exe_path}" "{target}"
 if not errorlevel 1 goto done
+echo [%date% %time%] Move falhou, aguardando... >> %LOG%
 timeout /t 2 /noretry >nul
 set /a RETRIES-=1
 if %RETRIES% gtr 0 goto retry
+echo [%date% %time%] ERRO: todas as tentativas falharam >> %LOG%
 exit /b 1
 :done
+echo [%date% %time%] Move OK >> %LOG%
 timeout /t 1 /noretry >nul
-powershell -Command "Start-Process '{target}'"
+echo [%date% %time%] Iniciando app... >> %LOG%
+powershell -Command "Start-Process -FilePath '{target}'"
+echo [%date% %time%] Start-Process executado >> %LOG%
 del "%~f0"
 '''
     with open(bat_path, 'w', encoding='ascii') as f:
