@@ -61,7 +61,8 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 ## Funcionalidades principais
 
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
-- Nota pessoal visivel para todos em tempo real (agora com suporte a emojis coloridos via tk.Text, persistida no banco local, sincronizada via UDP)
+- Nota pessoal visivel para todos em tempo real (emojis coloridos via tk.Text, persistida no banco local, sincronizada via UDP)
+  - Emoji picker completo com 6 categorias, busca por nome em PT e scroll (mesmo do chat)
 - Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos
 - Criar Grupo com 2 tipos: Temporario e Fixo, ambos aparecem na secao Grupos do TreeView
   - Temporario: fechar janela pergunta se quer sair; "Nao" esconde janela mas permanece no grupo
@@ -74,6 +75,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
   - Recorte circular com antialias 2x (PIL mask), sem borda
   - Fotos quadradas recortadas automaticamente para circulo
 - Contatos online em "Geral", offline em secao "Offline" recolhida (sem interacao)
+  - Deduplicacao automatica: se mesmo display_name existe com UUIDs diferentes (reinstalacao), mantém apenas o mais recente
 - Transferencia de arquivos ponto-a-ponto e para grupos (ate 100MB, chunks 256KB, temp file)
   - Dialogo de transferencia com progresso em MB, velocidade, estado visual
   - Quem envia ve "Envio concluido"; quem recebe ve "Abrir Pasta" + "Fechar"
@@ -86,13 +88,13 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - 3 temas visuais + UI modernizada (flat design, hover effects)
 - Bordas arredondadas DWM em todas as janelas (Windows 11+)
 - Notificacoes Windows clicaveis (winotify) para chats individuais e grupos
-  - Chat individual: `mbchat://open/{peer_id}` — abre chat
+  - Chat individual: `mbchat://open/{peer_id}` — abre chat com mensagens nao lidas do banco
   - Grupo: `mbchat://group/{group_id}` — abre grupo com msgs pendentes
 - System tray, instancia unica, auto-start
 - Popups e todas as janelas de Chat/Grupos fecham com a tecla Escape chamando logicamente _on_close() para limpeza de estado
 - Emoji pickers fecham ao clicar fora
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
-- Chat individual abre limpo (sem mensagens). Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
+- Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
 
 ## Convencoes importantes
@@ -101,15 +103,15 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Dependencias opcionais: sempre try/except com HAS_* flag (PIL, pystray, winotify).
 - Banco: threading.local() para conexao por thread, parametros ? em SQL.
 - Temas: dicts em THEMES com chaves padronizadas de cor.
-- Chat abre limpo (sem historico). Historico acessivel via botao History.
-- Contatos offline vao para secao "Offline" do TreeView (group_offline). Bloqueia chat/menu.
-- Grupos: tabelas `groups` e `group_members` no DB, carregados no startup. Todos (temp e fixo) no TreeView com sufixo "(Temporário)" ou "(Fixo)".
+- Chat abre limpo (sem historico), mas _open_chat() carrega mensagens nao lidas do banco (get_unread_messages) para exibir ao abrir via notificacao. Historico completo acessivel via botao History.
+- Contatos offline vao para secao "Offline" do TreeView (group_offline). Bloqueia chat/menu. Deduplicados por display_name no startup (delete_contact remove UIDs obsoletos).
+- Grupos: tabelas `groups` e `group_members` no DB, carregados no startup. Todos (temp e fixo) no TreeView com sufixo "(Temporário)" ou "(Fixo)". Sair do grupo roda leave_group() em thread background para nao travar a UI.
 - Avatares: `_make_circular_avatar()` (module-level) recorta foto para circulo com antialias 2x. `_create_contact_avatar()` usa avatar_data do peer via rede.
 - Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow). Sempre strip `\ufe0f` (variation selector) antes de medir bbox — PIL dobra a largura com ele.
   - Tamanhos: lista de contatos 20px, nota pessoal 14px (limite do tk.Text height=1), chat 20px, input 18px.
 - Lista de contatos: `_render_contact_display()` gera imagem PIL composta (avatar + nome + nota com emojis coloridos) para cada item do TreeView. Fallback para texto plano se PIL indisponivel.
 - Icones MDL2: usar `_create_mdl2_icon_static()` (module-level) para icones Segoe MDL2 Assets.
-- Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce. Usa tk.Text(height=1) para permitir suporte a imagens de emojis coloridos inline.
+- Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce. Usa tk.Text(height=1) para permitir suporte a imagens de emojis coloridos inline. Emoji picker completo com categorias/busca/scroll (mesmo do ChatWindow).
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
