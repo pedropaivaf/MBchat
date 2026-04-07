@@ -4526,18 +4526,23 @@ class GroupChatWindow(tk.Toplevel):
                 self.withdraw()
 
     # Sai do grupo e destrói a janela.
+    # Envia notificações de saída em thread background para não travar a UI.
     def _leave_group(self):
-        self.app.messenger.leave_group(self.group_id)
-        if self.group_id in self.app.group_windows:
-            del self.app.group_windows[self.group_id]
-        # Remover do treeview se existir
-        if self.group_id in self.app._group_tree_items:
+        gid = self.group_id
+        app = self.app
+        # Remove da UI imediatamente (responsivo)
+        if gid in app.group_windows:
+            del app.group_windows[gid]
+        if gid in app._group_tree_items:
             try:
-                self.app.tree.delete(self.app._group_tree_items[self.group_id])
+                app.tree.delete(app._group_tree_items[gid])
             except Exception:
                 pass
-            del self.app._group_tree_items[self.group_id]
+            del app._group_tree_items[gid]
         self.destroy()
+        # Envia notificações TCP + deleta do banco em background
+        threading.Thread(target=app.messenger.leave_group,
+                         args=(gid,), daemon=True).start()
 
 
 # =============================================================
@@ -6143,6 +6148,14 @@ class LanMessengerApp:
         self.chat_windows[peer_id] = cw       # registra no dicionario
         if hasattr(self, '_theme'):            # tema configurado?
             self._apply_theme_to_chat(cw, self._theme)  # aplica tema atual
+        # Carrega mensagens nao lidas do banco e exibe na janela recem-aberta
+        try:
+            unread = self.messenger.db.get_unread_messages(
+                self.messenger.user_id, peer_id)
+            for msg in unread:
+                cw.receive_message(msg['content'], msg['timestamp'])
+        except Exception:
+            pass
         self._clear_unread(peer_id)           # remove marcacao de nao lido
 
     # --- Menu commands ---
