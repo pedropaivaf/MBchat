@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ICON = os.path.join(HERE, 'assets', 'mbchat.ico')
 MAIN = os.path.join(HERE, 'gui.py')
 VERSION_FILE = os.path.join(HERE, 'version.py')
-DEFAULT_DEPLOY = r'V:\Publico\mbchat-update'
+DEFAULT_DEPLOY = r'\\192.168.0.9\Works2026\Publico\mbchat-update'
 PYTHON_DIR = os.path.dirname(sys.executable)
 
 
@@ -43,10 +43,33 @@ def _deploy(deploy_path, version):
     os.makedirs(deploy_path, exist_ok=True)
 
     exe_dst = os.path.join(deploy_path, 'MBChat.exe')
+    exe_tmp = os.path.join(deploy_path, 'MBChat_new.exe')
     ver_dst = os.path.join(deploy_path, 'version.txt')
 
-    print(f'Copiando exe para {exe_dst}...')
-    shutil.copy2(exe_src, exe_dst)
+    # Copia para arquivo temporario primeiro (nunca esta travado)
+    print(f'Copiando exe para {exe_tmp}...')
+    shutil.copy2(exe_src, exe_tmp)
+
+    # Tenta substituir o exe principal; se travado, remove o antigo e renomeia
+    print(f'Substituindo {exe_dst}...')
+    try:
+        os.replace(exe_tmp, exe_dst)
+    except PermissionError:
+        print('Exe travado, tentando forcar...')
+        subprocess.run(['taskkill', '/f', '/im', 'MBChat.exe'],
+                        capture_output=True)
+        import time
+        time.sleep(2)
+        try:
+            os.replace(exe_tmp, exe_dst)
+        except PermissionError:
+            # Ultima tentativa: deleta o antigo e renomeia
+            try:
+                os.remove(exe_dst)
+            except PermissionError:
+                print(f'ERRO: {exe_dst} continua travado. Feche o app em todas as maquinas.')
+                return False
+            os.rename(exe_tmp, exe_dst)
 
     print(f'Escrevendo version.txt ({version})...')
     with open(ver_dst, 'w', encoding='utf-8') as f:
