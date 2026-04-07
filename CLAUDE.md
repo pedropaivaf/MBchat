@@ -13,13 +13,23 @@ simultaneamente sem servidor central.
 pip install -r requirements.txt
 python gui.py
 
-# Build do executavel
+# Build interativo (menu com opcoes)
 python build.py
-# Saida: dist/MBChat.exe
+
+# Build direto via CLI
+python build.py --version 1.2.0 --deploy "V:\Publico\mbchat-update"
 
 # Regenerar icone
 python create_icon.py
 ```
+
+### Workflow de build (menu interativo)
+
+Ao rodar `python build.py` sem argumentos, aparece menu:
+1. **Build normal** - builda sem mudar versao, sem deploy
+2. **Build + versao + deploy** - pede nova versao, builda e copia para o share
+3. **Somente deploy** - envia exe existente para o share (sem rebuildar)
+4. **Sair**
 
 ## Arquitetura (4 camadas)
 
@@ -29,6 +39,8 @@ python create_icon.py
 - **database.py** - SQLite local (mensagens, contatos, configuracoes, WAL mode)
 
 gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
+- **version.py** - Constante APP_VERSION (fonte unica de verdade para versao)
+- **updater.py** - Auto-update via pasta compartilhada (check, download, apply via batch script)
 
 ## Portas de rede
 
@@ -96,6 +108,16 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
+- Auto-update via pasta compartilhada na rede (`V:\Publico\mbchat-update`)
+  - App checa `version.txt` no share no startup (2s delay), compara com APP_VERSION local
+  - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
+  - Clique copia exe do share (~1s LAN), batch script troca o exe, `powershell Start-Process` reabre o app
+  - IMPORTANTE: batch usa `powershell Start-Process` (nao `start` nem `explorer.exe`) para reabrir — cria processo novo com ambiente do usuario, evita "Failed to load Python DLL" causado por caminhos 8.3 no %TEMP% (ex: PEDRO~1.PAI)
+  - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o batch e o move falha porque o exe fica travado
+  - Menu Ferramentas > "Verificar atualizacoes" para check manual
+  - Configuravel em Preferencias > Rede > "Pasta de atualizacao (UNC)"
+  - Default: `V:\Publico\mbchat-update` (definido em updater.DEFAULT_SHARE_PATH)
+  - Build usa `--noupx` para evitar compressao que corrompe DLLs do VC runtime
 
 ## Convencoes importantes
 
@@ -117,6 +139,8 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
 - Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
 - Comentarios no codigo: usar apenas `#` (inline comments), NUNCA `"""docstrings"""`. Docstrings poluem o sistema (help(), __doc__, error traces).
+- Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os). Share path default em `updater.DEFAULT_SHARE_PATH`. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Batch script com retry loop troca o exe e reabre via `powershell Start-Process` (NUNCA usar `start` ou `explorer.exe` — causa "Failed to load Python DLL" em maquinas com caminho 8.3). NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o batch roda em paralelo e falha se o exe estiver travado.
+- Versionamento: `version.py` contem `APP_VERSION = "X.Y.Z"`. `build.py` atualiza via `--version` flag ou menu interativo. Versao exibida no titulo da janela e no "Sobre".
 
 ## Tipos de mensagem de rede
 
@@ -143,6 +167,8 @@ Sem suite de testes automatizados. Testar manualmente:
 10. Avatares: foto personalizada visivel em todas as maquinas, recorte circular
 11. Grupos: temp fecha/permanece, fixo esconde, notificacoes entrada/saida
 12. Transferencia: dialogo diferente para quem envia vs quem recebe
+13. Auto-update: build com versao nova, verificar barra amarela, clicar Atualizar, confirmar restart
+14. Build interativo: `python build.py` → testar opcoes 1, 2 e 3
 
 ## Workflow obrigatorio para TODA alteracao
 
