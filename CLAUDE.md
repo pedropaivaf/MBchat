@@ -111,9 +111,10 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Auto-update via pasta compartilhada na rede (`\\192.168.0.9\Works2026\Publico\mbchat-update`)
   - App checa `version.txt` no share no startup (2s delay), compara com APP_VERSION local
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
-  - Clique copia exe do share (~1s LAN), batch script troca o exe, `powershell Start-Process` reabre o app
-  - IMPORTANTE: batch usa `powershell Start-Process` (nao `start` nem `explorer.exe`) para reabrir — cria processo novo com ambiente do usuario, evita "Failed to load Python DLL" causado por caminhos 8.3 no %TEMP% (ex: PEDRO~1.PAI)
-  - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o batch e o move falha porque o exe fica travado
+  - Clique copia exe do GitHub (ou share como fallback), script PowerShell troca o exe e reabre o app
+  - IMPORTANTE: script PowerShell usa `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess) para reabrir — processo filho HERDA env vars do pai (TEMP longo). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env do pai e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI)
+  - `setx TEMP` no script fixa o registro permanentemente (REG_SZ com path longo)
+  - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado
   - Menu Ferramentas > "Verificar atualizacoes" para check manual
   - Configuravel em Preferencias > Rede > "Pasta de atualizacao (UNC)"
   - Default: `\\192.168.0.9\Works2026\Publico\mbchat-update` (definido em updater.DEFAULT_SHARE_PATH)
@@ -139,7 +140,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
 - Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
 - Comentarios no codigo: usar apenas `#` (inline comments), NUNCA `"""docstrings"""`. Docstrings poluem o sistema (help(), __doc__, error traces).
-- Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os). Share path default em `updater.DEFAULT_SHARE_PATH`. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Batch script com retry loop troca o exe e reabre via `powershell Start-Process` (NUNCA usar `start` ou `explorer.exe` — causa "Failed to load Python DLL" em maquinas com caminho 8.3). NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o batch roda em paralelo e falha se o exe estiver travado.
+- Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os). Share path default em `updater.DEFAULT_SHARE_PATH`. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Script PowerShell com retry loop troca o exe, fixa TEMP via setx e reabre via `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3. NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o script roda em paralelo e falha se o exe estiver travado.
 - Versionamento: `version.py` contem `APP_VERSION = "X.Y.Z"`. `build.py` atualiza via `--version` flag ou menu interativo. Versao exibida no titulo da janela e no "Sobre".
 
 ## Tipos de mensagem de rede
@@ -199,3 +200,4 @@ SEMPRE que eu pedir qualquer mudanca, seguir estes passos automaticamente:
 - Respostas curtas e diretas, sem enrolacao
 - Se eu mandar screenshot de erro, corrigir direto sem pedir mais contexto
 - Commits so quando eu pedir explicitamente
+- NUNCA adicionar "Co-Authored-By" ou qualquer referencia a Claude/AI nos commits, PRs, releases ou qualquer parte do projeto. Autoria e exclusivamente de Pedro Paiva (pedropaivaf). Nenhuma menção a assistente de IA em nenhum lugar.
