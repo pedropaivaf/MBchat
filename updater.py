@@ -14,6 +14,23 @@ from version import APP_VERSION
 
 log = logging.getLogger('mbchat')
 
+
+def _get_long_path(path):
+    # Resolve caminho 8.3 (ex: PEDRO~1.PAI) para long path via Win32 API.
+    # Retorna path original se falhar.
+    if os.name != 'nt':
+        return path
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(32768)
+        result = ctypes.windll.kernel32.GetLongPathNameW(path, buf, len(buf))
+        if result > 0:
+            return buf.value
+    except Exception:
+        pass
+    return path
+
+
 # GitHub repo para checar releases
 GITHUB_REPO = 'pedropaivaf/MBchat'
 GITHUB_API_URL = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
@@ -22,9 +39,9 @@ GITHUB_API_URL = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
 DEFAULT_SHARE_PATH = r'\\192.168.0.9\Works2026\Publico\mbchat-update'
 
 # Pasta local para arquivos temporarios de update
-_UPDATE_DIR = os.path.join(
+_UPDATE_DIR = _get_long_path(os.path.join(
     os.environ.get('APPDATA', os.path.expanduser('~')),
-    'MBChat')
+    'MBChat'))
 
 
 def _parse_version(v):
@@ -152,7 +169,8 @@ def _download_from_share(share_path, dst, progress_cb=None):
 def apply_update(new_exe_path):
     # Escreve batch script que troca o exe e reinicia o app.
     # Chamador deve fechar o app logo depois (os._exit ou sys.exit).
-    target = sys.executable  # caminho do exe em execucao
+    target = _get_long_path(sys.executable)
+    new_exe_path = _get_long_path(new_exe_path)
     bat_path = os.path.join(_UPDATE_DIR, 'update.bat')
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
 
@@ -180,7 +198,12 @@ exit /b 1
 echo [%date% %time%] Move OK >> %LOG%
 timeout /t 1 /noretry >nul
 echo [%date% %time%] Iniciando app... >> %LOG%
-powershell -Command "Start-Process -FilePath '{target}'"
+echo [%date% %time%] TEMP antes: %TEMP% >> %LOG%
+REM Resolve TEMP/TMP para caminho longo (evita 8.3 como PEDRO~1.PAI)
+for /f "delims=" %%i in ('powershell -NoProfile -Command "(Get-Item $env:TEMP).FullName"') do set "TEMP=%%i"
+set "TMP=%TEMP%"
+echo [%date% %time%] TEMP depois: %TEMP% >> %LOG%
+powershell -NoProfile -Command "$t=(Get-Item $env:TEMP).FullName; $env:TEMP=$t; $env:TMP=$t; Start-Process -FilePath '{target}'"
 echo [%date% %time%] Start-Process executado >> %LOG%
 del "%~f0"
 '''
