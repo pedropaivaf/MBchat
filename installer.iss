@@ -47,43 +47,47 @@ Filename: "taskkill"; Parameters: "/f /im MBChat.exe"; Flags: runhidden; RunOnce
 Type: files; Name: "{app}\MBChat.exe"
 Type: files; Name: "{app}\update.bat"
 Type: files; Name: "{app}\update.log"
+Type: files; Name: "{app}\mbchat.log"
+Type: files; Name: "{userstartup}\MB Chat.lnk"
 Type: dirifempty; Name: "{app}"
 
 [Code]
-var
-  KeepHistoryPage: TInputOptionWizardPage;
-
-procedure InitializeUninstallProgressForm();
-begin
-  // Mata o processo antes de desinstalar
-end;
-
-function InitializeSetup(): Boolean;
-begin
-  Result := True;
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   AppDataPath: string;
-  ResultCode: Integer;
+  Choice: Integer;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
+    // Remove entrada do registro (autostart)
+    RegDeleteValue(HKEY_CURRENT_USER,
+      'Software\Microsoft\Windows\CurrentVersion\Run', 'MBChat');
+
+    // Remove atalho do startup se existir
+    DeleteFile(ExpandConstant('{userstartup}\MB Chat.lnk'));
+
     AppDataPath := ExpandConstant('{userappdata}\MBChat');
     if DirExists(AppDataPath) then
     begin
-      if MsgBox('Deseja manter o historico de mensagens e configuracoes?' + #13#10 + #13#10 +
-                'Pasta: ' + AppDataPath, mbConfirmation, MB_YESNO) = IDNO then
+      Choice := MsgBox(
+        'O que deseja fazer com seus dados?' + #13#10 + #13#10 +
+        'SIM = Manter historico de mensagens (remove apenas arquivos temporarios)' + #13#10 +
+        'NAO = Remover TUDO (historico, configuracoes, banco de dados)' + #13#10 + #13#10 +
+        'Pasta: ' + AppDataPath,
+        mbConfirmation, MB_YESNO);
+
+      if Choice = IDNO then
       begin
+        // Desinstalacao COMPLETA - remove tudo
         DelTree(AppDataPath, True, True, True);
       end
       else
       begin
-        // Remove apenas arquivos temporarios, mantém o banco
+        // Manter historico - remove apenas temporarios
         DeleteFile(AppDataPath + '\MBChat_new.exe');
         DeleteFile(AppDataPath + '\update.bat');
         DeleteFile(AppDataPath + '\update.log');
+        DeleteFile(AppDataPath + '\mbchat.log');
       end;
     end;
   end;
