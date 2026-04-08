@@ -1,5 +1,5 @@
-# Auto-update via pasta compartilhada na rede (SMB/UNC).
-# Verifica version.txt no share, compara com versao local,
+# Auto-update via GitHub Releases (primario) ou pasta compartilhada (fallback).
+# Verifica latest release no GitHub, compara com versao local,
 # baixa o exe novo e aplica via batch script com restart.
 import os
 import sys
@@ -7,12 +7,18 @@ import shutil
 import subprocess
 import logging
 import threading
+import json
+from urllib import request, error
 
 from version import APP_VERSION
 
 log = logging.getLogger('mbchat')
 
-# Caminho padrao do share de atualizacao
+# GitHub repo para checar releases
+GITHUB_REPO = 'pedropaivaf/MBchat'
+GITHUB_API_URL = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
+
+# Caminho padrao do share de atualizacao (fallback)
 DEFAULT_SHARE_PATH = r'\\192.168.0.9\Works2026\Publico\mbchat-update'
 
 # Pasta local para arquivos temporarios de update
@@ -22,16 +28,48 @@ _UPDATE_DIR = os.path.join(
 
 
 def _parse_version(v):
-    # "1.2.3" -> (1, 2, 3)
+    # "1.2.3" ou "v1.2.3" -> (1, 2, 3)
     try:
-        return tuple(int(x) for x in v.strip().split('.'))
+        v = v.strip().lstrip('v')
+        return tuple(int(x) for x in v.split('.'))
     except Exception:
         return (0, 0, 0)
 
 
+def check_update_github():
+    # Checa GitHub Releases. Retorna (has_update, version_str, download_url).
+    try:
+        req = request.Request(GITHUB_API_URL, headers={
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'MBChat-Updater'
+        })
+        with request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        tag = data.get('tag_name', '')
+        remote_ver = tag.lstrip('v')
+        if _parse_version(remote_ver) > _parse_version(APP_VERSION):
+            # Procura MBChat.exe nos assets
+            download_url = ''
+            for asset in data.get('assets', []):
+                if asset['name'] == 'MBChat.exe':
+                    download_url = asset['browser_download_url']
+                    break
+            return True, remote_ver, download_url
+        return False, remote_ver, ''
+    except Exception as e:
+        log.warning(f'GitHub update check falhou: {e}')
+        return False, '', ''
+
+
 def check_update(share_path):
     # Retorna (has_update, remote_version_str) ou (False, '') se falhar.
-    # share_path: caminho UNC tipo \\servidor\apps\MBChat
+    # Tenta GitHub primeiro, depois share como fallback.
+    has_update, ver, url = check_update_github()
+    if has_update:
+        return True, ver
+    if ver:
+        return False, ver
+    # Fallback: share de rede
     try:
         ver_file = os.path.join(share_path, 'version.txt')
         with open(ver_file, 'r', encoding='utf-8') as f:
@@ -40,27 +78,61 @@ def check_update(share_path):
             return True, remote_ver
         return False, remote_ver
     except Exception as e:
-        log.warning(f'Update check falhou: {e}')
+        log.warning(f'Share update check falhou: {e}')
         return False, ''
 
 
 def download_update(share_path, progress_cb=None):
-    # Copia MBChat.exe do share para local temp.
-    # progress_cb(bytes_copiados, total) opcional.
+    # Tenta baixar do GitHub primeiro, depois do share.
     # Retorna caminho do exe baixado ou None se falhar.
+    os.makedirs(_UPDATE_DIR, exist_ok=True)
+    dst = os.path.join(_UPDATE_DIR, 'MBChat_new.exe')
+
+    # Tenta GitHub
+    path = _download_from_github(dst, progress_cb)
+    if path:
+        return path
+
+    # Fallback: share
+    return _download_from_share(share_path, dst, progress_cb)
+
+
+def _download_from_github(dst, progress_cb=None):
+    try:
+        has_update, ver, url = check_update_github()
+        if not url:
+            return None
+        log.info(f'Baixando update v{ver} do GitHub...')
+        req = request.Request(url, headers={'User-Agent': 'MBChat-Updater'})
+        with request.urlopen(req, timeout=60) as resp:
+            total = int(resp.headers.get('Content-Length', 0))
+            copied = 0
+            chunk = 256 * 1024
+            with open(dst, 'wb') as fout:
+                while True:
+                    buf = resp.read(chunk)
+                    if not buf:
+                        break
+                    fout.write(buf)
+                    copied += len(buf)
+                    if progress_cb and total:
+                        progress_cb(copied, total)
+        log.info(f'Update baixado do GitHub: {dst} ({copied} bytes)')
+        return dst
+    except Exception as e:
+        log.warning(f'Download GitHub falhou: {e}')
+        return None
+
+
+def _download_from_share(share_path, dst, progress_cb=None):
     try:
         src = os.path.join(share_path, 'MBChat.exe')
         if not os.path.isfile(src):
             log.error(f'Exe nao encontrado no share: {src}')
             return None
-
-        os.makedirs(_UPDATE_DIR, exist_ok=True)
-        dst = os.path.join(_UPDATE_DIR, 'MBChat_new.exe')
-
         total = os.path.getsize(src)
         copied = 0
-        chunk = 256 * 1024  # 256KB
-
+        chunk = 256 * 1024
         with open(src, 'rb') as fin, open(dst, 'wb') as fout:
             while True:
                 buf = fin.read(chunk)
@@ -70,11 +142,10 @@ def download_update(share_path, progress_cb=None):
                 copied += len(buf)
                 if progress_cb:
                     progress_cb(copied, total)
-
-        log.info(f'Update baixado: {dst} ({total} bytes)')
+        log.info(f'Update baixado do share: {dst} ({total} bytes)')
         return dst
     except Exception as e:
-        log.error(f'Download de update falhou: {e}')
+        log.error(f'Download share falhou: {e}')
         return None
 
 
