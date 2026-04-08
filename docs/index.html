@@ -11,30 +11,23 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --navy-900: #0a1628;
-            --navy-800: #111d35;
-            --navy-700: #162544;
-            --navy-600: #1b2d54;
-            --navy-500: #1e3461;
-            --accent: #3b82f6;
-            --accent-bright: #60a5fa;
-            --accent-glow: rgba(59, 130, 246, 0.3);
+            --navy-900: #0c1a3a;
+            --navy-800: #112044;
+            --navy-700: #18295a;
+            --red: #d42030;
+            --red-dark: #a81820;
+            --red-glow: rgba(212, 32, 48, 0.25);
             --white: #f0f4f8;
             --white-pure: #ffffff;
             --gray-300: #cbd5e1;
             --gray-400: #94a3b8;
             --gray-500: #64748b;
-            --success: #22c55e;
             --font: 'Plus Jakarta Sans', -apple-system, sans-serif;
             --mono: 'JetBrains Mono', monospace;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        html {
-            scroll-behavior: smooth;
-            overflow-x: hidden;
-        }
+        html { scroll-behavior: smooth; overflow-x: hidden; }
 
         body {
             font-family: var(--font);
@@ -44,17 +37,7 @@
             -webkit-font-smoothing: antialiased;
         }
 
-        /* ── Noise texture overlay ── */
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
-            pointer-events: none;
-            z-index: 9999;
-        }
-
-        /* ── Navigation ── */
+        /* ── Nav ── */
         nav {
             position: fixed;
             top: 0;
@@ -65,9 +48,8 @@
             justify-content: space-between;
             align-items: center;
             backdrop-filter: blur(20px);
-            background: rgba(10, 22, 40, 0.8);
+            background: rgba(12, 26, 58, 0.85);
             border-bottom: 1px solid rgba(255,255,255,0.05);
-            transition: all 0.3s;
         }
 
         .nav-logo {
@@ -78,24 +60,10 @@
             color: var(--white);
         }
 
-        .nav-logo img {
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-        }
+        .nav-logo img { width: 36px; height: 36px; border-radius: 8px; }
+        .nav-logo span { font-weight: 800; font-size: 1.25rem; letter-spacing: -0.02em; }
 
-        .nav-logo span {
-            font-weight: 800;
-            font-size: 1.25rem;
-            letter-spacing: -0.02em;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            align-items: center;
-        }
-
+        .nav-links { display: flex; gap: 2rem; align-items: center; }
         .nav-links a {
             color: var(--gray-400);
             text-decoration: none;
@@ -103,90 +71,95 @@
             font-weight: 500;
             transition: color 0.2s;
         }
-
         .nav-links a:hover { color: var(--white); }
 
         .nav-btn {
-            background: var(--accent);
+            background: var(--red);
             color: var(--white-pure) !important;
             padding: 0.5rem 1.25rem;
-            border-radius: 8px;
+            border-radius: 4px;
             font-weight: 600;
             transition: all 0.2s;
         }
-
         .nav-btn:hover {
-            background: var(--accent-bright) !important;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 20px var(--accent-glow);
+            background: var(--red-dark);
+            box-shadow: 0 4px 20px var(--red-glow);
         }
 
         /* ── Hero ── */
         .hero {
             min-height: 100vh;
             display: flex;
-            flex-direction: column;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             text-align: center;
             padding: 8rem 2rem 4rem;
             position: relative;
             overflow: hidden;
         }
 
-        /* Gradient orbs */
+        /* Diagonal vermelho — estilo MB Contabilidade */
         .hero::before {
             content: '';
             position: absolute;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
-            top: -100px;
-            right: -200px;
-            animation: float 8s ease-in-out infinite;
+            width: 200%;
+            height: 300px;
+            background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+            top: -150px;
+            left: -50%;
+            transform: rotate(-6deg);
+            opacity: 0.15;
         }
 
         .hero::after {
             content: '';
             position: absolute;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(34, 197, 94, 0.08) 0%, transparent 70%);
-            bottom: -100px;
-            left: -150px;
-            animation: float 10s ease-in-out infinite reverse;
+            width: 200%;
+            height: 200px;
+            background: linear-gradient(135deg, var(--red) 0%, transparent 60%);
+            bottom: -80px;
+            right: -50%;
+            transform: rotate(-3deg);
+            opacity: 0.08;
         }
 
-        @keyframes float {
-            0%, 100% { transform: translate(0, 0); }
-            50% { transform: translate(30px, -30px); }
+        /* Faixa lateral vermelha */
+        .hero-stripe {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 6px;
+            height: 100%;
+            background: linear-gradient(180deg, var(--red), transparent 70%);
         }
 
         .hero-content {
             position: relative;
             z-index: 2;
-            max-width: 800px;
+            max-width: 700px;
         }
 
         .hero-badge {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            background: rgba(59, 130, 246, 0.1);
-            border: 1px solid rgba(59, 130, 246, 0.25);
+            background: rgba(212, 32, 48, 0.1);
+            border: 1px solid rgba(212, 32, 48, 0.3);
             padding: 0.4rem 1rem;
-            border-radius: 100px;
+            border-radius: 2px;
             font-size: 0.85rem;
-            font-weight: 500;
-            color: var(--accent-bright);
+            font-weight: 600;
+            color: #f87171;
             margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
             animation: fadeUp 0.6s ease both;
         }
 
         .hero-badge .dot {
             width: 8px;
             height: 8px;
-            background: var(--success);
+            background: var(--red);
             border-radius: 50%;
             animation: pulse 2s infinite;
         }
@@ -197,7 +170,7 @@
         }
 
         .hero h1 {
-            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-size: clamp(2.5rem, 6vw, 4.2rem);
             font-weight: 800;
             letter-spacing: -0.03em;
             line-height: 1.1;
@@ -206,16 +179,13 @@
         }
 
         .hero h1 .highlight {
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-bright) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: var(--red);
         }
 
         .hero p {
-            font-size: 1.2rem;
+            font-size: 1.15rem;
             color: var(--gray-400);
-            max-width: 560px;
+            max-width: 520px;
             margin: 0 auto 2.5rem;
             animation: fadeUp 0.6s ease 0.2s both;
         }
@@ -233,43 +203,37 @@
             align-items: center;
             gap: 0.5rem;
             padding: 0.875rem 2rem;
-            border-radius: 12px;
+            border-radius: 4px;
             font-family: var(--font);
             font-size: 1rem;
             font-weight: 600;
             text-decoration: none;
-            transition: all 0.25s;
+            transition: all 0.2s;
             cursor: pointer;
             border: none;
         }
 
         .btn-primary {
-            background: var(--accent);
+            background: var(--red);
             color: var(--white-pure);
-            box-shadow: 0 4px 24px var(--accent-glow);
+            box-shadow: 0 4px 20px var(--red-glow);
         }
-
         .btn-primary:hover {
-            background: var(--accent-bright);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 32px var(--accent-glow);
+            background: var(--red-dark);
+            box-shadow: 0 8px 32px var(--red-glow);
         }
 
         .btn-secondary {
-            background: rgba(255,255,255,0.06);
+            background: transparent;
             color: var(--white);
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.15);
         }
-
         .btn-secondary:hover {
-            background: rgba(255,255,255,0.1);
-            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.05);
         }
 
-        .btn svg {
-            width: 20px;
-            height: 20px;
-        }
+        .btn svg { width: 18px; height: 18px; }
 
         .hero-version {
             margin-top: 1rem;
@@ -279,313 +243,96 @@
             animation: fadeUp 0.6s ease 0.4s both;
         }
 
-        /* ── Mockup ── */
-        .hero-mockup {
-            margin-top: 4rem;
+        /* ── Features ── */
+        #features {
+            padding: 5rem 2rem;
             position: relative;
-            z-index: 2;
-            animation: fadeUp 0.8s ease 0.5s both;
         }
 
-        .mockup-window {
-            background: var(--navy-800);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow:
-                0 24px 80px rgba(0,0,0,0.4),
-                0 0 0 1px rgba(255,255,255,0.05),
-                inset 0 1px 0 rgba(255,255,255,0.05);
-            max-width: 700px;
-            margin: 0 auto;
+        /* Linha vermelha separadora */
+        #features::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: var(--red);
         }
 
-        .mockup-titlebar {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1rem;
-            background: var(--navy-700);
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-        }
-
-        .mockup-dots {
-            display: flex;
-            gap: 6px;
-        }
-
-        .mockup-dots span {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.1);
-        }
-
-        .mockup-dots span:nth-child(1) { background: #ef4444; }
-        .mockup-dots span:nth-child(2) { background: #eab308; }
-        .mockup-dots span:nth-child(3) { background: #22c55e; }
-
-        .mockup-title {
-            flex: 1;
+        .section-title {
             text-align: center;
-            font-size: 0.8rem;
-            color: var(--gray-500);
-            font-weight: 500;
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 3rem;
         }
 
-        .mockup-body {
-            padding: 1.5rem;
-            display: flex;
-            gap: 1rem;
-            min-height: 320px;
-        }
-
-        .mockup-sidebar {
-            width: 200px;
-            flex-shrink: 0;
-        }
-
-        .mockup-search {
-            background: rgba(255,255,255,0.05);
-            border-radius: 8px;
-            padding: 0.5rem 0.75rem;
-            font-size: 0.75rem;
-            color: var(--gray-500);
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .mockup-contact {
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            padding: 0.5rem 0.6rem;
-            border-radius: 8px;
-            margin-bottom: 0.25rem;
-            transition: background 0.15s;
-            cursor: default;
-        }
-
-        .mockup-contact.active {
-            background: rgba(59, 130, 246, 0.15);
-        }
-
-        .mockup-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.7rem;
-            font-weight: 700;
-            color: var(--white-pure);
-            flex-shrink: 0;
-        }
-
-        .mockup-contact-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .mockup-contact-name {
-            font-size: 0.8rem;
-            font-weight: 600;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .mockup-contact-status {
-            font-size: 0.65rem;
-            color: var(--gray-500);
-        }
-
-        .mockup-online {
-            width: 6px;
-            height: 6px;
-            background: var(--success);
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-
-        .mockup-chat {
-            flex: 1;
+        .features-list {
+            max-width: 800px;
+            margin: 0 auto;
             display: flex;
             flex-direction: column;
-            background: rgba(255,255,255,0.02);
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.05);
+            gap: 0;
         }
 
-        .mockup-chat-header {
-            padding: 0.75rem 1rem;
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1.25rem;
+            padding: 1.25rem 0;
             border-bottom: 1px solid rgba(255,255,255,0.05);
-            font-size: 0.85rem;
-            font-weight: 600;
+            transition: all 0.2s;
         }
 
-        .mockup-messages {
-            flex: 1;
-            padding: 1rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
+        .feature-item:last-child { border-bottom: none; }
+
+        .feature-item:hover {
+            padding-left: 0.5rem;
         }
 
-        .mockup-msg {
-            max-width: 75%;
-            padding: 0.5rem 0.85rem;
-            border-radius: 12px;
-            font-size: 0.78rem;
+        .feature-marker {
+            width: 3px;
+            height: 20px;
+            background: var(--red);
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        .feature-item h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .feature-item p {
+            color: var(--gray-400);
+            font-size: 0.9rem;
             line-height: 1.4;
         }
 
-        .mockup-msg.received {
-            background: rgba(255,255,255,0.06);
-            align-self: flex-start;
-            border-bottom-left-radius: 4px;
-        }
-
-        .mockup-msg.sent {
-            background: var(--accent);
-            color: var(--white-pure);
-            align-self: flex-end;
-            border-bottom-right-radius: 4px;
-        }
-
-        .mockup-msg .time {
-            font-size: 0.6rem;
-            opacity: 0.5;
-            margin-top: 0.2rem;
-        }
-
-        .mockup-input {
-            padding: 0.75rem 1rem;
-            border-top: 1px solid rgba(255,255,255,0.05);
-            display: flex;
-            gap: 0.5rem;
-            align-items: center;
-        }
-
-        .mockup-input-field {
-            flex: 1;
-            background: rgba(255,255,255,0.05);
-            border-radius: 8px;
-            padding: 0.45rem 0.75rem;
-            font-size: 0.75rem;
-            color: var(--gray-500);
-        }
-
-        .mockup-send {
-            width: 28px;
-            height: 28px;
-            background: var(--accent);
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .mockup-send svg {
-            width: 14px;
-            height: 14px;
-            fill: white;
-        }
-
-        /* ── Section base ── */
-        section {
-            padding: 6rem 2rem;
-        }
-
-        .section-header {
-            text-align: center;
-            max-width: 600px;
-            margin: 0 auto 4rem;
-        }
-
-        .section-label {
-            font-family: var(--mono);
-            font-size: 0.8rem;
-            color: var(--accent);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 0.75rem;
-        }
-
-        .section-header h2 {
-            font-size: clamp(1.75rem, 4vw, 2.5rem);
-            font-weight: 800;
-            letter-spacing: -0.02em;
-            margin-bottom: 1rem;
-        }
-
-        .section-header p {
-            color: var(--gray-400);
-            font-size: 1.05rem;
-        }
-
-        /* ── Features ── */
-        #features {
+        /* ── Install ── */
+        #install {
+            padding: 5rem 2rem;
             background: var(--navy-800);
-            border-top: 1px solid rgba(255,255,255,0.03);
-            border-bottom: 1px solid rgba(255,255,255,0.03);
+            position: relative;
         }
 
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-            max-width: 1100px;
-            margin: 0 auto;
+        #install::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--red), transparent 50%);
         }
 
-        .feature-card {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.05);
-            border-radius: 16px;
-            padding: 1.75rem;
-            transition: all 0.3s;
-        }
-
-        .feature-card:hover {
-            background: rgba(255,255,255,0.05);
-            border-color: rgba(59, 130, 246, 0.2);
-            transform: translateY(-4px);
-            box-shadow: 0 12px 40px rgba(0,0,0,0.2);
-        }
-
-        .feature-icon {
-            width: 44px;
-            height: 44px;
-            background: rgba(59, 130, 246, 0.1);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 1rem;
-            font-size: 1.3rem;
-        }
-
-        .feature-card h3 {
-            font-size: 1.05rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .feature-card p {
-            color: var(--gray-400);
-            font-size: 0.9rem;
-            line-height: 1.5;
-        }
-
-        /* ── How it works ── */
         .steps {
             display: flex;
-            gap: 2rem;
-            max-width: 900px;
+            gap: 3rem;
+            max-width: 800px;
             margin: 0 auto;
             justify-content: center;
             flex-wrap: wrap;
@@ -593,29 +340,21 @@
 
         .step {
             flex: 1;
-            min-width: 220px;
-            text-align: center;
-            position: relative;
+            min-width: 200px;
         }
 
-        .step-number {
-            width: 56px;
-            height: 56px;
-            background: linear-gradient(135deg, var(--accent), var(--accent-bright));
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.3rem;
+        .step-num {
+            font-family: var(--mono);
+            font-size: 2rem;
             font-weight: 800;
-            margin: 0 auto 1rem;
-            color: var(--white-pure);
+            color: var(--red);
+            margin-bottom: 0.5rem;
         }
 
         .step h3 {
-            font-size: 1.05rem;
+            font-size: 1rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.35rem;
         }
 
         .step p {
@@ -625,88 +364,61 @@
 
         /* ── Download ── */
         #download {
-            background: var(--navy-800);
-            border-top: 1px solid rgba(255,255,255,0.03);
-        }
-
-        .download-cards {
-            display: flex;
-            gap: 1.5rem;
-            max-width: 700px;
-            margin: 0 auto;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-
-        .download-card {
-            flex: 1;
-            min-width: 280px;
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 2rem;
+            padding: 5rem 2rem;
             text-align: center;
-            transition: all 0.3s;
-        }
-
-        .download-card:hover {
-            border-color: var(--accent);
-            box-shadow: 0 0 40px var(--accent-glow);
-        }
-
-        .download-card.recommended {
-            border-color: rgba(59, 130, 246, 0.3);
             position: relative;
         }
 
-        .download-card.recommended::before {
-            content: 'Recomendado';
+        #download::before {
+            content: '';
             position: absolute;
-            top: -10px;
+            top: 0;
             left: 50%;
             transform: translateX(-50%);
-            background: var(--accent);
-            color: var(--white-pure);
-            font-size: 0.7rem;
-            font-weight: 600;
-            padding: 0.2rem 0.75rem;
-            border-radius: 100px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            width: 60px;
+            height: 3px;
+            background: var(--red);
         }
 
-        .download-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
+        .download-box {
+            max-width: 500px;
+            margin: 2rem auto 0;
+            border: 1px solid rgba(255,255,255,0.08);
+            padding: 2.5rem;
+            background: var(--navy-800);
         }
 
-        .download-card h3 {
-            font-size: 1.15rem;
+        .download-box h3 {
+            font-size: 1.2rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
 
-        .download-card p {
+        .download-box p {
             color: var(--gray-400);
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             margin-bottom: 1.5rem;
         }
 
-        .download-card .btn {
-            width: 100%;
-            justify-content: center;
+        .download-box .btn { width: 100%; justify-content: center; }
+
+        .download-alt {
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-500);
         }
+
+        .download-alt a {
+            color: var(--gray-400);
+            text-decoration: underline;
+        }
+        .download-alt a:hover { color: var(--white); }
 
         /* ── Footer ── */
         footer {
-            padding: 3rem 2rem;
+            padding: 2.5rem 2rem;
             text-align: center;
             border-top: 1px solid rgba(255,255,255,0.05);
-        }
-
-        .footer-content {
-            max-width: 600px;
-            margin: 0 auto;
         }
 
         .footer-logo {
@@ -714,52 +426,27 @@
             align-items: center;
             gap: 0.5rem;
             justify-content: center;
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
-        .footer-logo img {
-            width: 28px;
-            height: 28px;
-            border-radius: 6px;
-        }
+        .footer-logo img { width: 24px; height: 24px; border-radius: 4px; }
+        .footer-logo span { font-weight: 700; font-size: 0.95rem; }
 
-        .footer-logo span {
-            font-weight: 700;
-            font-size: 1rem;
-        }
-
-        footer p {
-            color: var(--gray-500);
-            font-size: 0.85rem;
-        }
-
-        footer a {
-            color: var(--accent-bright);
-            text-decoration: none;
-        }
-
-        footer a:hover {
-            text-decoration: underline;
-        }
+        footer p { color: var(--gray-500); font-size: 0.8rem; }
+        footer a { color: var(--gray-400); text-decoration: none; }
+        footer a:hover { color: var(--white); }
 
         /* ── Animations ── */
         @keyframes fadeUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .fade-in {
             opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.6s ease;
+            transform: translateY(15px);
+            transition: all 0.5s ease;
         }
-
         .fade-in.visible {
             opacity: 1;
             transform: translateY(0);
@@ -770,18 +457,12 @@
             nav { padding: 0.75rem 1rem; }
             .nav-links a:not(.nav-btn) { display: none; }
             .hero { padding: 6rem 1.5rem 3rem; min-height: auto; }
-            .mockup-body { flex-direction: column; }
-            .mockup-sidebar { width: 100%; }
-            .mockup-chat { min-height: 200px; }
-            .features-grid { grid-template-columns: 1fr; }
-            .steps { flex-direction: column; align-items: center; }
-            .download-cards { flex-direction: column; }
+            .steps { flex-direction: column; gap: 2rem; }
         }
     </style>
 </head>
 <body>
 
-<!-- Nav -->
 <nav>
     <a href="#" class="nav-logo">
         <img src="icon.png" alt="MB Chat">
@@ -794,19 +475,19 @@
     </div>
 </nav>
 
-<!-- Hero -->
 <section class="hero">
+    <div class="hero-stripe"></div>
     <div class="hero-content">
         <div class="hero-badge">
             <span class="dot"></span>
-            Open Source &middot; 100% Gratuito
+            Open Source &middot; Gratuito
         </div>
         <h1>Comunicação <span class="highlight">instantânea</span> na sua rede local</h1>
-        <p>Mensageiro LAN para escritórios. Sem servidor, sem internet, sem complicação. Conecte toda a equipe em segundos.</p>
+        <p>Mensageiro LAN para escritórios. Sem servidor, sem internet, sem complicação.</p>
         <div class="hero-actions">
             <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe" class="btn btn-primary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Download Gratuito
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Instalador
             </a>
             <a href="https://github.com/pedropaivaf/MBchat" class="btn btn-secondary" target="_blank">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
@@ -815,143 +496,111 @@
         </div>
         <p class="hero-version">v1.2.0 &middot; Windows 10/11 &middot; ~20 MB</p>
     </div>
-
-    <!-- Screenshot placeholder - adicionar prints reais futuramente -->
 </section>
 
-<!-- Features -->
 <section id="features">
-    <div class="section-header fade-in">
-        <div class="section-label">Recursos</div>
-        <h2>Tudo que seu escritório precisa</h2>
-        <p>Comunicação rápida e segura dentro da rede local, sem depender de serviços externos.</p>
-    </div>
-    <div class="features-grid">
-        <div class="feature-card fade-in">
-            <div class="feature-icon">💬</div>
-            <h3>Mensagens Instantâneas</h3>
-            <p>Chat individual e em grupo com emojis coloridos, estilo bolha ou linear.</p>
+    <h2 class="section-title fade-in">Recursos</h2>
+    <div class="features-list">
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Mensagens Instantâneas</h3>
+                <p>Chat individual e em grupo com emojis coloridos, estilo bolha ou linear.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">📁</div>
-            <h3>Transferência de Arquivos</h3>
-            <p>Envie arquivos até 100 MB diretamente pela rede local com velocidade máxima.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Transferência de Arquivos</h3>
+                <p>Envie arquivos até 100 MB diretamente pela rede local com velocidade máxima.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">👥</div>
-            <h3>Grupos</h3>
-            <p>Crie grupos temporários ou fixos para equipes, departamentos ou projetos.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Grupos Temporários e Fixos</h3>
+                <p>Crie grupos para equipes, departamentos ou projetos.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">🔔</div>
-            <h3>Notificações Windows</h3>
-            <p>Notificações clicáveis que abrem direto na conversa. Nunca perca uma mensagem.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Notificações Windows</h3>
+                <p>Notificações clicáveis que abrem direto na conversa.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">🔄</div>
-            <h3>Auto-Update</h3>
-            <p>Atualizações automáticas via GitHub. O app detecta, baixa e instala sozinho.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Auto-Update</h3>
+                <p>Atualizações automáticas. O app detecta, baixa e instala sozinho.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">🔒</div>
-            <h3>100% Local</h3>
-            <p>Nenhum dado sai da sua rede. Sem servidor central, sem nuvem, sem rastreamento.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>100% Local</h3>
+                <p>Nenhum dado sai da sua rede. Sem servidor central, sem nuvem.</p>
+            </div>
         </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">🎨</div>
-            <h3>Temas Visuais</h3>
-            <p>3 temas inclusos com design flat moderno, bordas arredondadas e hover effects.</p>
-        </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">📢</div>
-            <h3>Transmitir Mensagem</h3>
-            <p>Envie uma mensagem para vários contatos de uma vez. Ideal para comunicados.</p>
-        </div>
-        <div class="feature-card fade-in">
-            <div class="feature-icon">🖼️</div>
-            <h3>Avatares Personalizados</h3>
-            <p>Foto de perfil circular sincronizada automaticamente para todos na rede.</p>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Transmitir Mensagem</h3>
+                <p>Envie comunicados para vários contatos de uma vez.</p>
+            </div>
         </div>
     </div>
 </section>
 
-<!-- How it works -->
 <section id="install">
-    <div class="section-header fade-in">
-        <div class="section-label">Instalação</div>
-        <h2>Pronto em 3 passos</h2>
-        <p>Sem configuração de servidor. Instale e comece a conversar.</p>
-    </div>
+    <h2 class="section-title fade-in">Instalação em 3 passos</h2>
     <div class="steps">
         <div class="step fade-in">
-            <div class="step-number">1</div>
+            <div class="step-num">01</div>
             <h3>Baixe o instalador</h3>
-            <p>Clique em Download e execute o MBChat_Setup.exe em cada máquina.</p>
+            <p>Execute o MBChat_Setup.exe em cada máquina.</p>
         </div>
         <div class="step fade-in">
-            <div class="step-number">2</div>
+            <div class="step-num">02</div>
             <h3>Abra o app</h3>
-            <p>O MB Chat detecta automaticamente todos os colegas na mesma rede.</p>
+            <p>Detecta automaticamente todos os colegas na rede.</p>
         </div>
         <div class="step fade-in">
-            <div class="step-number">3</div>
+            <div class="step-num">03</div>
             <h3>Comece a conversar</h3>
-            <p>Mensagens, arquivos e grupos — tudo funcionando instantaneamente.</p>
+            <p>Mensagens, arquivos e grupos funcionando instantaneamente.</p>
         </div>
     </div>
 </section>
 
-<!-- Download -->
 <section id="download">
-    <div class="section-header fade-in">
-        <div class="section-label">Download</div>
-        <h2>Baixe agora, é gratuito</h2>
-        <p>Windows 10/11. Código aberto no GitHub.</p>
-    </div>
-    <div class="download-cards">
-        <div class="download-card recommended fade-in">
-            <div class="download-icon">🖥️</div>
-            <h3>Instalador Windows</h3>
-            <p>Instalação guiada com atalho no Desktop, Menu Iniciar e desinstalador.</p>
-            <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe" class="btn btn-primary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                MBChat_Setup.exe
-            </a>
-        </div>
-        <div class="download-card fade-in">
-            <div class="download-icon">📦</div>
-            <h3>Executável Portátil</h3>
-            <p>Arquivo único, sem instalação. Rode de qualquer pasta ou pen drive.</p>
-            <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat.exe" class="btn btn-secondary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                MBChat.exe
-            </a>
-        </div>
+    <h2 class="section-title fade-in">Download</h2>
+    <div class="download-box fade-in">
+        <h3>MB Chat para Windows</h3>
+        <p>Instalador com atalho no Desktop, Menu Iniciar e desinstalador completo.</p>
+        <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Baixar MBChat_Setup.exe
+        </a>
+        <p class="download-alt">Ou baixe o <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat.exe">executável portátil</a> (sem instalação)</p>
     </div>
 </section>
 
-<!-- Footer -->
 <footer>
-    <div class="footer-content">
-        <div class="footer-logo">
-            <img src="icon.png" alt="MB Chat">
-            <span>MB Chat</span>
-        </div>
-        <p>Desenvolvido por <a href="https://github.com/pedropaivaf" target="_blank">MB Contabilidade</a> &middot; Código aberto sob licença MIT</p>
-        <p style="margin-top: 0.5rem;"><a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/releases" target="_blank">Releases</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
+    <div class="footer-logo">
+        <img src="icon.png" alt="MB Chat">
+        <span>MB Chat</span>
     </div>
+    <p><a href="https://github.com/pedropaivaf" target="_blank">MB Contabilidade</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
 </footer>
 
-<!-- Scroll animations -->
 <script>
     const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.classList.add('visible');
-            }
+            if (entry.isIntersecting) entry.target.classList.add('visible');
         });
     }, { threshold: 0.1 });
-
     document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
 </script>
 
