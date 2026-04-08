@@ -171,50 +171,82 @@ def apply_update(new_exe_path):
     # Chamador deve fechar o app logo depois (os._exit ou sys.exit).
     target = _get_long_path(sys.executable)
     new_exe_path = _get_long_path(new_exe_path)
-    bat_path = os.path.join(_UPDATE_DIR, 'update.bat')
+    long_temp = _get_long_path(os.environ.get('TEMP', os.environ.get('TMP', '')))
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
 
-    bat_content = f'''@echo off
-set LOG="{log_path}"
-echo [%date% %time%] Update iniciado >> %LOG%
-echo Target: "{target}" >> %LOG%
-echo Source: "{new_exe_path}" >> %LOG%
+    # Script PowerShell que faz tudo: mata processo, move exe, fixa TEMP, relanca.
+    # Usa [Diagnostics.Process]::Start com UseShellExecute=$false (CreateProcess)
+    # para que o app filho HERDE o TEMP longo setado via $env:TEMP.
+    ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
-taskkill /f /im MBChat.exe >nul 2>&1
-timeout /t 3 /noretry >nul
+    ps_content = f'''
+$LogFile = "{log_path}"
+function Log($msg) {{ "{0:yyyy-MM-dd HH:mm:ss}" -f (Get-Date) + " $msg" | Out-File -Append -FilePath $LogFile }}
 
-set RETRIES=10
-:retry
-echo [%date% %time%] Tentando move (retry %RETRIES%) >> %LOG%
-move /Y "{new_exe_path}" "{target}"
-if not errorlevel 1 goto done
-echo [%date% %time%] Move falhou, aguardando... >> %LOG%
-timeout /t 2 /noretry >nul
-set /a RETRIES-=1
-if %RETRIES% gtr 0 goto retry
-echo [%date% %time%] ERRO: todas as tentativas falharam >> %LOG%
-exit /b 1
-:done
-echo [%date% %time%] Move OK >> %LOG%
-timeout /t 1 /noretry >nul
-echo [%date% %time%] Iniciando app... >> %LOG%
-echo [%date% %time%] TEMP antes: %TEMP% >> %LOG%
-REM Resolve TEMP/TMP para caminho longo (evita 8.3 como PEDRO~1.PAI)
-for /f "delims=" %%i in ('powershell -NoProfile -Command "(Get-Item $env:TEMP).FullName"') do set "TEMP=%%i"
-set "TMP=%TEMP%"
-echo [%date% %time%] TEMP depois: %TEMP% >> %LOG%
-powershell -NoProfile -Command "$t=(Get-Item $env:TEMP).FullName; $env:TEMP=$t; $env:TMP=$t; Start-Process -FilePath '{target}'"
-echo [%date% %time%] Start-Process executado >> %LOG%
-del "%~f0"
+Log "Update iniciado"
+Log "Target: {target}"
+Log "Source: {new_exe_path}"
+
+# Mata o processo
+Stop-Process -Name "MBChat" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3
+
+# Move com retry
+$ok = $false
+for ($i = 0; $i -lt 10; $i++) {{
+    try {{
+        Move-Item -Path "{new_exe_path}" -Destination "{target}" -Force -ErrorAction Stop
+        $ok = $true
+        Log "Move OK"
+        break
+    }} catch {{
+        Log "Move falhou (tentativa $i): $_"
+        Start-Sleep -Seconds 2
+    }}
+}}
+
+if (-not $ok) {{
+    Log "ERRO: todas as tentativas falharam"
+    exit 1
+}}
+
+Start-Sleep -Seconds 1
+
+# Fixa TEMP/TMP no registro (permanente, resolve 8.3 como PEDRO~1.PAI)
+$longTemp = "{long_temp}"
+setx TEMP "$longTemp" 2>$null | Out-Null
+setx TMP "$longTemp" 2>$null | Out-Null
+
+# Seta TEMP/TMP no processo atual ANTES de lancar o app
+$env:TEMP = $longTemp
+$env:TMP = $longTemp
+Log "TEMP: $env:TEMP"
+
+# Lanca o app via CreateProcess (herda env com TEMP longo)
+# Start-Process usa ShellExecute que ignora env do pai — NAO usar
+Log "Lancando app..."
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = "{target}"
+$psi.UseShellExecute = $false
+[System.Diagnostics.Process]::Start($psi) | Out-Null
+Log "App lancado via CreateProcess"
+
+# Remove este script
+Start-Sleep -Seconds 2
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '''
-    with open(bat_path, 'w', encoding='ascii') as f:
-        f.write(bat_content)
+    with open(ps_path, 'w', encoding='utf-8') as f:
+        f.write(ps_content)
 
-    # Lanca o bat como processo desacoplado (sobrevive ao app fechar)
+    # Lanca PowerShell desacoplado com TEMP longo no env
+    env = os.environ.copy()
+    env['TEMP'] = long_temp
+    env['TMP'] = long_temp
     CREATE_NO_WINDOW = 0x08000000
     DETACHED_PROCESS = 0x00000008
     subprocess.Popen(
-        ['cmd.exe', '/c', bat_path],
+        ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
+        env=env,
         creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
         close_fds=True)
 
