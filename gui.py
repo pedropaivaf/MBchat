@@ -973,7 +973,7 @@ class PreferencesWindow(tk.Toplevel):
     def _init_vars(self):
         db = self.messenger.db
         self.var_autostart = tk.BooleanVar(
-            value=db.get_setting('autostart', '0') == '1')
+            value=db.get_setting('autostart', '1') == '1')
         self.var_show_main = tk.BooleanVar(
             value=db.get_setting('show_main_on_start', '1') == '1')
         self.var_tray_icon = tk.BooleanVar(
@@ -4672,6 +4672,10 @@ class LanMessengerApp:
         # Inicia tray icon para notificacoes
         if HAS_TRAY and HAS_PIL:
             self.root.after(50, self._start_tray)
+
+        # Registra autostart se habilitado (default=sim na primeira execucao)
+        if self.messenger.db.get_setting('autostart', '1') == '1':
+            _setup_autostart()
 
         # Verifica atualizacoes em background
         self.root.after(2000, self._check_update_startup)

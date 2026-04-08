@@ -80,6 +80,11 @@ def _deploy(deploy_path, version):
 
 
 def _do_build():
+    # Limpa __pycache__ para evitar que PyInstaller use bytecode com versao antiga
+    cache_dir = os.path.join(HERE, '__pycache__')
+    if os.path.isdir(cache_dir):
+        shutil.rmtree(cache_dir)
+
     print('Gerando icone...')
     from create_icon import save_icon
     save_icon(ICON)
