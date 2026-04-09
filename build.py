@@ -124,6 +124,12 @@ def _do_build():
     from create_icon import save_icon
     save_icon(ICON)
 
+    # Gera VERSIONINFO para reduzir falsos positivos de antivirus
+    from make_version_info import generate_version_info
+    version_info_path = os.path.join(HERE, 'file_version_info.txt')
+    generate_version_info(version_info_path)
+    manifest_path = os.path.join(HERE, 'MBChat.exe.manifest')
+
     cmd = [
         sys.executable, '-m', 'PyInstaller',
         '--noconfirm',
@@ -131,6 +137,8 @@ def _do_build():
         '--windowed',
         '--noupx',
         f'--icon={ICON}',
+        f'--version-file={version_info_path}',
+        f'--manifest={manifest_path}',
         f'--add-data={ICON};assets',
         '--paths=.',
         '--hidden-import=messenger',
