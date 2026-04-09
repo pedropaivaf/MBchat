@@ -1619,6 +1619,14 @@ class PreferencesWindow(tk.Toplevel):
             self.var_avatar_index.get(),
             self.var_custom_avatar.get())
 
+        # Save department
+        if hasattr(self, '_dept_combo'):
+            dept = self._dept_combo.get().strip()
+            if dept == '(Nenhum)':
+                dept = ''
+            db.set_setting('department', dept)
+            self.messenger.discovery.department = dept
+
         # Apply name change (uses StringVar, safe even if Conta tab not visible)
         new_name = self.var_display_name.get().strip()
         if new_name and new_name != self.messenger.display_name:
@@ -6300,9 +6308,7 @@ class LanMessengerApp:
         self.ctx_menu.add_command(label=_t('ctx_send_file'),
                                   command=self._ctx_file)   # Enviar arquivo
         self.ctx_menu.add_separator()
-        self.ctx_menu.add_command(label='Nota Privada...',
-                                  command=self._ctx_private_note)
-        self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)  # Info do usuário
+        self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)
 
 
     # Cria imagens de bolinha colorida (10x10px) para cada status possível.
@@ -6412,40 +6418,47 @@ class LanMessengerApp:
 
     # Renderiza linha composta (avatar + nome + nota com emojis coloridos) para o TreeView.
     # Retorna ImageTk.PhotoImage ou None se PIL indisponível.
-    def _render_contact_display(self, uid, name, note, status, bold=False, unread_count=0):
+    def _render_contact_display(self, uid, name, note, status, bold=False, unread_count=0, dept=''):
         if not HAS_PIL:
             return None
         from PIL import ImageDraw, ImageFont
-        emoji_size = 20  # tamanho do emoji na lista de contatos
+        emoji_size = 20
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
             name_font = ImageFont.truetype(font_name, 14)
             note_font = ImageFont.truetype('segoeui.ttf', 12)
+            dept_font = ImageFont.truetype('segoeui.ttf', 11)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
             emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
         except Exception:
             return None
 
-        # Cores por status
         status_colors = {
             'online': '#1a202c', 'away': '#cc8800',
             'busy': '#cc0000', 'offline': '#888888'
         }
         name_color = status_colors.get(status, '#1a202c')
         note_color = '#718096'
+        dept_color = '#5a7bb5'
 
-        # Monta texto do nome
         name_text = name
         if unread_count > 0:
             name_text += f' ({unread_count})'
 
-        # Imagem temporária para medição de texto
         tmp = Image.new('RGBA', (1, 1))
         d = ImageDraw.Draw(tmp)
 
         name_bbox = d.textbbox((0, 0), name_text, font=name_font)
         name_w = name_bbox[2] - name_bbox[0]
+
+        # Departamento badge
+        dept_w = 0
+        dept_text = ''
+        if dept:
+            dept_text = f'[{dept}]'
+            db = d.textbbox((0, 0), dept_text, font=dept_font)
+            dept_w = db[2] - db[0] + 6
 
         # Segmentos da nota (texto e emoji separados)
         note_segments = []
@@ -6480,7 +6493,7 @@ class LanMessengerApp:
         # Monta imagem composta
         av_size = 36
         gap = 10
-        total_w = av_size + gap + name_w + total_note_w + 10
+        total_w = av_size + gap + name_w + dept_w + total_note_w + 10
         height = 42
 
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
@@ -6499,6 +6512,11 @@ class LanMessengerApp:
         x = av_size + gap
         draw.text((x, text_y), name_text, fill=name_color, font=name_font)
         x += name_w
+
+        # Departamento
+        if dept_text:
+            draw.text((x + 4, text_y + 2), dept_text, fill=dept_color, font=dept_font)
+            x += dept_w
 
         # Nota com emojis coloridos
         for seg_type, seg_text, seg_w in note_segments:
@@ -6568,8 +6586,9 @@ class LanMessengerApp:
             tag = status if status in ('online', 'away', 'busy') else 'offline'
             name = c.get('display_name', 'Unknown')
             note = c.get('note', '')
+            dept = c.get('department', '')
             avatar = self._create_contact_avatar(uid, name, tag)
-            row_img = self._render_contact_display(uid, name, note, tag)
+            row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
             parent = self.group_general if tag != 'offline' else self.group_offline
             if row_img:
                 iid = self.tree.insert(parent, 'end', text='', tags=(tag,), image=row_img)
@@ -7294,7 +7313,7 @@ class LanMessengerApp:
 
         # Tenta renderizar linha composta com emojis coloridos (PIL)
         avatar = self._create_contact_avatar(uid, name, tag)
-        row_img = self._render_contact_display(uid, name, note, tag)
+        row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
 
         if row_img:
             display = ''  # texto vazio, tudo na imagem
@@ -7409,16 +7428,13 @@ class LanMessengerApp:
             status_tag = [t for t in tags if t in ('online','away','busy','offline')]
             status = status_tag[0] if status_tag else 'online'
             avatar = self._create_contact_avatar(uid, name, status)
-            row_img = self._render_contact_display(uid, name, note, status, bold=True, unread_count=unread)
+            dept = info.get('department', '')
+            row_img = self._render_contact_display(uid, name, note, status, bold=True, unread_count=unread, dept=dept)
             if row_img:
                 self.tree.item(item, text='', image=row_img)
             else:
                 self.tree.item(item, text=f'  {name} ({unread})', image=avatar)
 
-    # Remove a marcacao de nao lido do contato no TreeView.
-    #
-    # Remove a tag 'unread' (negrito) e restaura o texto do item
-    # para apenas o nome, sem contagem de mensagens pendentes.
     def _clear_unread(self, uid):
         if uid in self.peer_items:
             item = self.peer_items[uid]
@@ -7427,9 +7443,10 @@ class LanMessengerApp:
             info = self.peer_info.get(uid, {})
             name = info.get('display_name', '')
             note = info.get('note', '')
+            dept = info.get('department', '')
             status = tags[0] if tags and tags[0] != 'group' else 'online'
             avatar = self._create_contact_avatar(uid, name, status)
-            row_img = self._render_contact_display(uid, name, note, status)
+            row_img = self._render_contact_display(uid, name, note, status, dept=dept)
             if row_img:
                 self.tree.item(item, text='', image=row_img)
             else:
