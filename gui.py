@@ -457,7 +457,6 @@ def _grab_clipboard_image():
     # Tentativa 2: win32 clipboard CF_DIB via ctypes (fallback Win10)
     try:
         import ctypes
-        from ctypes import wintypes
         u32 = ctypes.windll.user32
         k32 = ctypes.windll.kernel32
         CF_DIB = 8
@@ -475,8 +474,26 @@ def _grab_clipboard_image():
                 return None
             try:
                 size = k32.GlobalSize(h)
-                data = ctypes.string_at(ptr, size)
-                return Image.open(io.BytesIO(data))
+                dib_data = ctypes.string_at(ptr, size)
+                # CF_DIB nao tem BMP file header — PIL precisa dele
+                import struct
+                # header_size = primeiros 4 bytes do DIB (BITMAPINFOHEADER=40, V4=108, V5=124)
+                hdr_size = struct.unpack_from('<I', dib_data, 0)[0]
+                # bits per pixel nos bytes 14-15 do DIB header
+                bpp = struct.unpack_from('<H', dib_data, 14)[0]
+                # cores na tabela de cores
+                if bpp <= 8:
+                    clr_used = struct.unpack_from('<I', dib_data, 32)[0]
+                    if clr_used == 0:
+                        clr_used = 1 << bpp
+                    palette_size = clr_used * 4
+                else:
+                    palette_size = 0
+                pixel_offset = 14 + hdr_size + palette_size
+                file_size = 14 + size
+                bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, pixel_offset)
+                bmp_data = bmp_header + dib_data
+                return Image.open(io.BytesIO(bmp_data))
             finally:
                 k32.GlobalUnlock(h)
         finally:
@@ -2554,6 +2571,7 @@ class ChatWindow(tk.Toplevel):
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.bind('<Control-v>', self._on_paste)
+        self.entry.bind('<Control-V>', self._on_paste)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         # Este é o único evento confiável para detectar emojis inseridos pelo Windows Emoji Picker
         self.entry.bind('<<Modified>>', self._on_modified)
@@ -4357,6 +4375,7 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.bind('<Control-v>', self._on_paste)
+        self.entry.bind('<Control-V>', self._on_paste)
         self.entry.bind('<KeyRelease>', self._on_entry_key)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         self.entry.bind('<<Modified>>', self._on_modified)
