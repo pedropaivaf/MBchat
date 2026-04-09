@@ -8719,7 +8719,7 @@ class LanMessengerApp:
         body = tk.Frame(dlg, bg='#ffffff')
         body.pack(fill='both', expand=True, padx=14, pady=10)
 
-        tk.Label(body, text='Nome:', font=('Segoe UI', 10, 'bold'),
+        tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(anchor='w')
         txt_entry = tk.Entry(body, font=('Segoe UI', 11), relief='flat',
                              bg='#f7fafc', highlightthickness=1,
@@ -8762,7 +8762,7 @@ class LanMessengerApp:
         body = tk.Frame(dlg, bg='#ffffff')
         body.pack(fill='both', expand=True, padx=14, pady=10)
 
-        tk.Label(body, text='Nome:', font=('Segoe UI', 10, 'bold'),
+        tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
         txt_entry = tk.Entry(body, font=('Segoe UI', 10), relief='flat',
                               bg='#f7fafc', highlightthickness=1,
