@@ -260,6 +260,15 @@ class Messenger:
         elif msg_type == MT_ACK:
             pass  # Pode ser usado para marcar entrega (nao implementado)
 
+        # --- Recusa/cancelamento de arquivo (reservados, fluxo via FileReceiver) ---
+        elif msg_type in (MT_FILE_DEC, MT_FILE_CANCEL):
+            file_id = msg.get('file_id', '')
+            if file_id and file_id in self._file_senders:
+                self._file_senders[file_id].cancel()
+                if self.on_file_error:
+                    reason = 'Arquivo recusado' if msg_type == MT_FILE_DEC else 'Transferência cancelada'
+                    self.on_file_error(file_id, reason)
+
         # --- Imagem inline (clipboard) ---
         elif msg_type == MT_IMAGE:
             msg_id = msg.get('msg_id', str(uuid.uuid4()))

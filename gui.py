@@ -991,7 +991,6 @@ class PreferencesWindow(tk.Toplevel):
             ('Geral', self._build_geral),
             ('Conta', self._build_conta),
             ('Mensagens', self._build_mensagens),
-            ('Histórico', self._build_historico),
             ('Alertas', self._build_alertas),
             ('Rede', self._build_rede),
             ('Transferência de arq.', self._build_transferencia),
@@ -1381,10 +1380,6 @@ class PreferencesWindow(tk.Toplevel):
                        font=FONT, bg=BG_WINDOW).pack(anchor='w')
 
     # ----- HISTÓRICO -----
-    def _build_historico(self, parent):
-        tk.Label(parent, text='Histórico', font=FONT_SECTION,
-                 bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
-
     # ----- ALERTAS -----
     def _build_alertas(self, parent):
         tk.Label(parent, text='Alertas', font=FONT_SECTION,
@@ -2121,14 +2116,15 @@ class FileTransferDialog(tk.Toplevel):
     # Abre o explorador na pasta do arquivo.
     def _open_folder(self, filepath):
         try:
-            folder = os.path.dirname(filepath)
-            if os.name == 'nt':
-                os.startfile(folder)
+            import subprocess
+            if os.path.exists(filepath):
+                subprocess.Popen(['explorer', '/select,', filepath])
             else:
-                import subprocess
-                subprocess.Popen(['xdg-open', folder])
+                folder = os.path.dirname(filepath)
+                if os.path.isdir(folder):
+                    subprocess.Popen(['explorer', folder])
         except Exception:
-            pass
+            log.exception('Erro ao abrir pasta')
 
     def _safe_destroy(self):
         try:
@@ -2342,15 +2338,24 @@ class FileTransfersWindow(tk.Toplevel):
 
     def _open_folder_selected(self):
         fid, row = self._get_selected()
-        if fid:
-            fp = row._entry.get('filepath', '')
-            if fp and os.path.exists(fp):
+        if not fid:
+            return
+        fp = row._entry.get('filepath', '')
+        if not fp:
+            log.warning('Mostrar pasta: filepath vazio para %s', fid)
+            return
+        try:
+            import subprocess
+            if os.path.exists(fp):
+                subprocess.Popen(['explorer', '/select,', fp])
+            else:
                 folder = os.path.dirname(fp)
-                try:
-                    if os.name == 'nt':
-                        os.startfile(folder)
-                except Exception:
-                    pass
+                if os.path.isdir(folder):
+                    subprocess.Popen(['explorer', folder])
+                else:
+                    log.warning('Mostrar pasta: caminho nao existe: %s', fp)
+        except Exception:
+            log.exception('Erro ao abrir pasta')
 
     def _remove_selected(self):
         fid, row = self._get_selected()
@@ -2718,7 +2723,8 @@ class ChatWindow(tk.Toplevel):
                                      spacing1=0, spacing3=4)
 
         # Dados de mensagens para reply (msg_id, sender, text_preview)
-        self._msg_data = []  # [{msg_id, sender, text}]
+        self._msg_data = []  # [{msg_id, sender, text, is_mine}]
+        self._img_click_handled = False
 
         # Menu de contexto no chat (Responder / Copiar)
         self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
@@ -3070,23 +3076,21 @@ class ChatWindow(tk.Toplevel):
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        # Outer: borda azul esquerda via bg do container + padx assimetrico
         outer = tk.Frame(self, bg='#2451a0')
-        outer.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
+        outer.pack(fill='x', side='bottom', after=self._input_outer, padx=8, pady=(0, 2))
         bar = tk.Frame(outer, bg='#e2e8f0')
-        bar.pack(fill='both', expand=True, padx=(3, 0))  # 3px azul a esquerda
-        # Conteudo: nome + texto
+        bar.pack(fill='both', expand=True, padx=(3, 0))
         tk.Label(bar, text=sender,
-                 font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
-                 fg='#2451a0', anchor='w').pack(fill='x', padx=6, pady=(3, 0))
-        tk.Label(bar, text=text_preview[:60],
+                 font=('Segoe UI', 9, 'bold'), bg='#e2e8f0',
+                 fg='#2451a0', anchor='w').pack(fill='x', padx=8, pady=(4, 0))
+        preview = text_preview[:80] if text_preview else '[Mensagem]'
+        tk.Label(bar, text=preview,
                  font=('Segoe UI', 8), bg='#e2e8f0',
-                 fg='#4a5568', anchor='w').pack(fill='x', padx=6, pady=(0, 3))
-        # Botao fechar
+                 fg='#4a5568', anchor='w').pack(fill='x', padx=8, pady=(0, 4))
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                            bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
-        btn_x.place(relx=1.0, x=-4, y=2, anchor='ne')
+        btn_x.place(relx=1.0, x=-6, y=4, anchor='ne')
         self._reply_bar = outer
 
     # Remove barra de reply
@@ -3098,12 +3102,13 @@ class ChatWindow(tk.Toplevel):
 
     # Clique direito no chat: mostra menu contexto (Responder / Copiar)
     def _on_chat_right_click(self, event):
+        if self._img_click_handled:
+            self._img_click_handled = False
+            return
         idx = self.chat_text.index(f'@{event.x},{event.y}')
         self._ctx_click_index = idx
-        # Determina qual mensagem esta naquela posicao
         line = int(idx.split('.')[0])
         self._ctx_msg_idx = self._find_msg_at_line(line)
-        # Esconde Responder para mensagens proprias
         msg_idx = self._ctx_msg_idx
         if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
             self._chat_ctx.entryconfigure(0, state='disabled')
@@ -4037,7 +4042,7 @@ class ChatWindow(tk.Toplevel):
             self._cancel_image_preview()
             self._pending_image = img
             outer = tk.Frame(self, bg='#2451a0')
-            outer.pack(fill='x', side='bottom', before=self._input_outer, padx=8, pady=(2, 0))
+            outer.pack(fill='x', side='bottom', after=self._input_outer, padx=8, pady=(0, 2))
             bar = tk.Frame(outer, bg='#e2e8f0')
             bar.pack(fill='both', expand=True, padx=(3, 0))
             thumb = img.copy()
@@ -4151,9 +4156,9 @@ class ChatWindow(tk.Toplevel):
                                    self.chat_text.index('end - 1 chars'))
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
-                                    lambda e, p=image_path: self._open_image_file(p))
+                                    lambda e, p=image_path: self._on_image_click(p))
             self.chat_text.tag_bind(tag_name, '<Button-3>',
-                                    lambda e, p=image_path: self._show_image_ctx(e, p))
+                                    lambda e, p=image_path: self._on_image_right_click(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
                                     lambda e: self.chat_text.config(cursor='hand2'))
             self.chat_text.tag_bind(tag_name, '<Leave>',
@@ -4166,23 +4171,32 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
+    def _on_image_click(self, image_path):
+        self._img_click_handled = True
+        self._open_image_file(image_path)
+
+    def _on_image_right_click(self, event, image_path):
+        self._img_click_handled = True
+        self._show_image_ctx(event, image_path)
+
     def _open_image_file(self, image_path):
         if not os.path.exists(image_path):
             return
-        try:
-            os.startfile(image_path)
-        except Exception:
+        def _open():
             try:
-                import subprocess
-                subprocess.Popen(['explorer', image_path])
+                os.startfile(image_path)
             except Exception:
-                log.exception('Erro ao abrir imagem')
+                try:
+                    import subprocess
+                    subprocess.Popen(['explorer', image_path])
+                except Exception:
+                    log.exception('Erro ao abrir imagem')
+        threading.Thread(target=_open, daemon=True).start()
 
     def _show_image_ctx(self, event, image_path):
         m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
         m.add_command(label='Abrir', command=lambda: self._open_image_file(image_path))
         m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
-        m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
         m.tk_popup(event.x_root, event.y_root)
 
     def _save_image_as(self, image_path):
@@ -4198,44 +4212,6 @@ class ChatWindow(tk.Toplevel):
                 shutil.copy2(image_path, dest)
             except Exception:
                 log.exception('Erro ao salvar imagem')
-
-    def _copy_image_to_clipboard(self, image_path):
-        try:
-            import ctypes
-            img = Image.open(image_path).convert('RGB')
-            buf = io.BytesIO()
-            img.save(buf, format='BMP')
-            bmp_bytes = buf.getvalue()
-            dib_data = bmp_bytes[14:]  # remove BMP file header (14 bytes)
-            u32 = ctypes.windll.user32
-            k32 = ctypes.windll.kernel32
-            CF_DIB = 8
-            GMEM_MOVEABLE = 0x0002
-            if not u32.OpenClipboard(0):
-                log.warning('Copiar imagem: OpenClipboard falhou')
-                return
-            try:
-                u32.EmptyClipboard()
-                size = len(dib_data)
-                h = k32.GlobalAlloc(GMEM_MOVEABLE, size)
-                if not h:
-                    log.warning('Copiar imagem: GlobalAlloc falhou')
-                    return
-                k32.GlobalLock.restype = ctypes.c_void_p
-                ptr = k32.GlobalLock(h)
-                if not ptr:
-                    log.warning('Copiar imagem: GlobalLock falhou')
-                    return
-                try:
-                    ctypes.memmove(ptr, dib_data, size)
-                finally:
-                    k32.GlobalUnlock(h)
-                u32.SetClipboardData(CF_DIB, h)
-            finally:
-                u32.CloseClipboard()
-            log.debug('Imagem copiada para clipboard (%d bytes)', len(dib_data))
-        except Exception:
-            log.exception('Erro ao copiar imagem para clipboard')
 
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
@@ -4426,6 +4402,7 @@ class GroupChatWindow(tk.Toplevel):
         self._image_preview_bar = None    # Frame da barra de preview de imagem
         self._preview_thumb_ref = None    # referencia para evitar GC do thumbnail
         self._msg_data = []     # [{msg_id, sender, text, is_mine}] para reply
+        self._img_click_handled = False
         self._mention_popup = None  # Popup de autocomplete @mencao
 
         # Drag & Drop de arquivos (windnd)
@@ -5133,29 +5110,26 @@ class GroupChatWindow(tk.Toplevel):
             self._send_message()
             return 'break'  # Impede inserção de nova linha
 
-    # Mostra barra de reply acima do campo de entrada (estilo WhatsApp)
     def _show_reply_bar(self, msg_id, sender, text_preview):
         self._reply_to = {'msg_id': msg_id, 'sender': sender,
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        # Outer: borda azul esquerda via bg do container + padx assimetrico
         outer = tk.Frame(self, bg='#2451a0')
-        outer.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
+        outer.pack(fill='x', side='bottom', after=self._input_outer, padx=6, pady=(0, 2))
         bar = tk.Frame(outer, bg='#e2e8f0')
-        bar.pack(fill='both', expand=True, padx=(3, 0))  # 3px azul a esquerda
-        # Conteudo: nome + texto
+        bar.pack(fill='both', expand=True, padx=(3, 0))
         tk.Label(bar, text=sender,
-                 font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
-                 fg='#2451a0', anchor='w').pack(fill='x', padx=6, pady=(3, 0))
-        tk.Label(bar, text=text_preview[:60],
+                 font=('Segoe UI', 9, 'bold'), bg='#e2e8f0',
+                 fg='#2451a0', anchor='w').pack(fill='x', padx=8, pady=(4, 0))
+        preview = text_preview[:80] if text_preview else '[Mensagem]'
+        tk.Label(bar, text=preview,
                  font=('Segoe UI', 8), bg='#e2e8f0',
-                 fg='#4a5568', anchor='w').pack(fill='x', padx=6, pady=(0, 3))
-        # Botao fechar
+                 fg='#4a5568', anchor='w').pack(fill='x', padx=8, pady=(0, 4))
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                            bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
-        btn_x.place(relx=1.0, x=-4, y=2, anchor='ne')
+        btn_x.place(relx=1.0, x=-6, y=4, anchor='ne')
         self._reply_bar = outer
 
     def _cancel_reply(self):
@@ -5164,13 +5138,14 @@ class GroupChatWindow(tk.Toplevel):
             self._reply_bar.destroy()
             self._reply_bar = None
 
-    # Clique direito no chat do grupo
     def _on_chat_right_click(self, event):
+        if self._img_click_handled:
+            self._img_click_handled = False
+            return
         idx = self.chat_text.index(f'@{event.x},{event.y}')
         self._ctx_click_index = idx
         line = int(idx.split('.')[0])
         self._ctx_msg_idx = self._find_msg_at_line(line)
-        # Esconde Responder para mensagens proprias
         msg_idx = self._ctx_msg_idx
         if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
             self._chat_ctx.entryconfigure(0, state='disabled')
@@ -5408,7 +5383,7 @@ class GroupChatWindow(tk.Toplevel):
             self._cancel_image_preview()
             self._pending_image = img
             outer = tk.Frame(self, bg='#2451a0')
-            outer.pack(fill='x', side='bottom', before=self._input_outer, padx=6, pady=(2, 0))
+            outer.pack(fill='x', side='bottom', after=self._input_outer, padx=6, pady=(0, 2))
             bar = tk.Frame(outer, bg='#e2e8f0')
             bar.pack(fill='both', expand=True, padx=(3, 0))
             thumb = img.copy()
@@ -5513,9 +5488,9 @@ class GroupChatWindow(tk.Toplevel):
                                    self.chat_text.index('end - 1 chars'))
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
-                                    lambda e, p=image_path: self._open_image_file(p))
+                                    lambda e, p=image_path: self._on_image_click(p))
             self.chat_text.tag_bind(tag_name, '<Button-3>',
-                                    lambda e, p=image_path: self._show_image_ctx(e, p))
+                                    lambda e, p=image_path: self._on_image_right_click(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
                                     lambda e: self.chat_text.config(cursor='hand2'))
             self.chat_text.tag_bind(tag_name, '<Leave>',
@@ -5528,23 +5503,32 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
+    def _on_image_click(self, image_path):
+        self._img_click_handled = True
+        self._open_image_file(image_path)
+
+    def _on_image_right_click(self, event, image_path):
+        self._img_click_handled = True
+        self._show_image_ctx(event, image_path)
+
     def _open_image_file(self, image_path):
         if not os.path.exists(image_path):
             return
-        try:
-            os.startfile(image_path)
-        except Exception:
+        def _open():
             try:
-                import subprocess
-                subprocess.Popen(['explorer', image_path])
+                os.startfile(image_path)
             except Exception:
-                log.exception('Erro ao abrir imagem')
+                try:
+                    import subprocess
+                    subprocess.Popen(['explorer', image_path])
+                except Exception:
+                    log.exception('Erro ao abrir imagem')
+        threading.Thread(target=_open, daemon=True).start()
 
     def _show_image_ctx(self, event, image_path):
         m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
         m.add_command(label='Abrir', command=lambda: self._open_image_file(image_path))
         m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
-        m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
         m.tk_popup(event.x_root, event.y_root)
 
     def _save_image_as(self, image_path):
@@ -5560,44 +5544,6 @@ class GroupChatWindow(tk.Toplevel):
                 shutil.copy2(image_path, dest)
             except Exception:
                 log.exception('Erro ao salvar imagem')
-
-    def _copy_image_to_clipboard(self, image_path):
-        try:
-            import ctypes
-            img = Image.open(image_path).convert('RGB')
-            buf = io.BytesIO()
-            img.save(buf, format='BMP')
-            bmp_bytes = buf.getvalue()
-            dib_data = bmp_bytes[14:]
-            u32 = ctypes.windll.user32
-            k32 = ctypes.windll.kernel32
-            CF_DIB = 8
-            GMEM_MOVEABLE = 0x0002
-            if not u32.OpenClipboard(0):
-                log.warning('Copiar imagem: OpenClipboard falhou')
-                return
-            try:
-                u32.EmptyClipboard()
-                size = len(dib_data)
-                h = k32.GlobalAlloc(GMEM_MOVEABLE, size)
-                if not h:
-                    log.warning('Copiar imagem: GlobalAlloc falhou')
-                    return
-                k32.GlobalLock.restype = ctypes.c_void_p
-                ptr = k32.GlobalLock(h)
-                if not ptr:
-                    log.warning('Copiar imagem: GlobalLock falhou')
-                    return
-                try:
-                    ctypes.memmove(ptr, dib_data, size)
-                finally:
-                    k32.GlobalUnlock(h)
-                u32.SetClipboardData(CF_DIB, h)
-            finally:
-                u32.CloseClipboard()
-            log.debug('Imagem copiada para clipboard (%d bytes)', len(dib_data))
-        except Exception:
-            log.exception('Erro ao copiar imagem para clipboard')
 
     # Confirmação para sair de grupo fixo.
     def _confirm_leave(self):
@@ -5781,6 +5727,7 @@ class LanMessengerApp:
             on_group_join=self._safe(self._on_group_join),
             on_image=self._safe(self._on_image),
             on_poll=self._safe(self._on_poll),
+            on_status=self._safe(self._on_peer_status),
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
@@ -9397,6 +9344,11 @@ class LanMessengerApp:
     # Move o contato para a secao Offline no TreeView via _remove_contact().
     def _on_user_lost(self, uid, info):
         self._remove_contact(uid)  # move para secao Offline no TreeView
+
+    def _on_peer_status(self, uid, new_status):
+        if uid in self.peer_info:
+            self.peer_info[uid]['status'] = new_status
+            self._add_contact(uid, self.peer_info[uid])
 
     # Callback: mensagem individual recebida via TCP.
     #
