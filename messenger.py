@@ -25,7 +25,7 @@ from network import (
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
-    MT_IMAGE, TCP_PORT
+    MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE, TCP_PORT
 )
 from database import Database  # Banco de dados local
 
@@ -52,13 +52,14 @@ class Messenger:
     # on_group_leave: Callback(group_id, uid, name) - membro saiu do grupo
     # on_group_join: Callback(group_id, uid, name) - membro entrou no grupo
     # on_image: Callback(from_user, image_path, msg_id, timestamp) - imagem recebida
+    # on_poll: Callback(group_id, poll_data) - enquete recebida ou voto atualizado
     def __init__(self, display_name=None, on_user_found=None,
                  on_user_lost=None, on_message=None, on_status=None,
                  on_typing=None, on_file_incoming=None,
                  on_file_progress=None, on_file_complete=None,
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
-                 on_group_join=None, on_image=None):
+                 on_group_join=None, on_image=None, on_poll=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -80,6 +81,7 @@ class Messenger:
         self.on_group_leave = on_group_leave    # Membro saiu do grupo
         self.on_group_join = on_group_join      # Membro entrou no grupo
         self.on_image = on_image                # Imagem recebida
+        self.on_poll = on_poll                  # Enquete recebida/voto
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -119,6 +121,7 @@ class Messenger:
         self.discovery.note = self.note
         self.discovery.avatar_index = self.avatar_index
         self.discovery.avatar_data = self.avatar_data
+        self.discovery.department = self.db.get_setting('department', '')
 
         # Servidor TCP: recebe mensagens de outros peers
         self.tcp_server = TCPServer(
@@ -185,6 +188,9 @@ class Messenger:
             avatar_index=info.get('avatar_index', 0),
             avatar_data=info.get('avatar_data', '')
         )
+        dept = info.get('department', '')
+        if dept:
+            self.db.set_contact_department(uid, dept)
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
 
@@ -218,13 +224,12 @@ class Messenger:
             msg_id = msg.get('msg_id', str(uuid.uuid4()))
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', time.time())
+            reply_to = msg.get('reply_to', '')
 
-            # Salva no banco de dados
             self.db.save_message(msg_id, from_user, self.user_id,
                                 content, 'text', is_sent=False,
-                                timestamp=timestamp)
+                                timestamp=timestamp, reply_to_id=reply_to)
 
-            # Envia ACK (confirmacao de recebimento) de volta
             contact = self.db.get_contact(from_user)
             if contact:
                 TCPClient.send_message(contact['ip_address'], TCP_PORT, {
@@ -233,9 +238,9 @@ class Messenger:
                     'msg_id': msg_id
                 })
 
-            # Notifica a GUI para exibir a mensagem
             if self.on_message:
-                self.on_message(from_user, content, msg_id, timestamp)
+                self.on_message(from_user, content, msg_id, timestamp,
+                               reply_to=reply_to)
 
         # --- Indicador de digitacao ---
         elif msg_type == MT_TYPING:
@@ -320,11 +325,14 @@ class Messenger:
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', time.time())
             display_name = msg.get('display_name', from_user)
+            reply_to = msg.get('reply_to', '')
+            mentions = msg.get('mentions', [])
+            msg_id = msg.get('msg_id', '')
 
-            # Notifica GUI para exibir na janela do grupo
             if self.on_group_message:
                 self.on_group_message(group_id, from_user, display_name,
-                                      content, timestamp)
+                                      content, timestamp, reply_to=reply_to,
+                                      mentions=mentions, msg_id=msg_id)
 
         # --- Membro saiu do grupo ---
         elif msg_type == MT_GROUP_LEAVE:
@@ -368,6 +376,33 @@ class Messenger:
             if self.on_group_join:
                 self.on_group_join(group_id, from_user, display_name)
 
+        # --- Enquete criada ---
+        elif msg_type == MT_POLL_CREATE:
+            group_id = msg.get('group_id')
+            poll_id = msg.get('poll_id')
+            question = msg.get('question', '')
+            options = msg.get('options', [])
+            self.db.save_poll(poll_id, group_id, from_user, question, options)
+            if self.on_poll:
+                self.on_poll(group_id, {
+                    'action': 'create', 'poll_id': poll_id,
+                    'question': question, 'options': options,
+                    'creator': msg.get('display_name', from_user)
+                })
+
+        # --- Voto em enquete ---
+        elif msg_type == MT_POLL_VOTE:
+            poll_id = msg.get('poll_id')
+            group_id = msg.get('group_id')
+            option_index = msg.get('option_index', 0)
+            self.db.save_poll_vote(poll_id, from_user, option_index)
+            if self.on_poll:
+                self.on_poll(group_id, {
+                    'action': 'vote', 'poll_id': poll_id,
+                    'voter': msg.get('display_name', from_user),
+                    'option_index': option_index
+                })
+
     # ========================================
     # SEND — Acoes de envio
     # ========================================
@@ -377,21 +412,19 @@ class Messenger:
     # to_user_id: user_id do destinatario
     # content: Texto da mensagem
     # Retorna True se enviou com sucesso, False se falhou
-    def send_message(self, to_user_id, content):
+    def send_message(self, to_user_id, content, reply_to_id=''):
         contact = self.db.get_contact(to_user_id)
         if not contact:
-            return False  # Contato nao encontrado
+            return False, None
 
-        msg_id = self._next_msg_id()  # Gera ID unico
+        msg_id = self._next_msg_id()
         timestamp = time.time()
 
-        # Salva mensagem como enviada no banco local
         self.db.save_message(msg_id, self.user_id, to_user_id,
                             content, 'text', is_sent=True,
-                            timestamp=timestamp)
+                            timestamp=timestamp, reply_to_id=reply_to_id)
 
-        # Envia via TCP para o IP do contato
-        return TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+        payload = {
             'type': MT_MESSAGE,
             'from_user': self.user_id,
             'to_user': to_user_id,
@@ -399,7 +432,11 @@ class Messenger:
             'msg_id': msg_id,
             'content': content,
             'timestamp': timestamp
-        })
+        }
+        if reply_to_id:
+            payload['reply_to'] = reply_to_id
+        ok = TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+        return ok, msg_id
 
     # Envia imagem (bytes JPEG) para um peer
     # image_bytes: bytes JPEG da imagem ja comprimida
@@ -700,19 +737,19 @@ class Messenger:
     # Envia mensagem de texto para todos os membros do grupo
     # Usa mesh: cada membro envia diretamente para todos os outros
     # Nao ha servidor central intermediando
-    def send_group_message(self, group_id, content):
+    def send_group_message(self, group_id, content, reply_to_id='',
+                           mentions=None):
         group = self._groups.get(group_id)
         if not group:
             return
         timestamp = time.time()
         msg_id = self._next_msg_id()
 
-        # Envia para cada membro (exceto si mesmo)
         for member in group['members']:
             uid = member['uid']
             if uid == self.user_id:
                 continue
-            TCPClient.send_message(member['ip'], TCP_PORT, {
+            payload = {
                 'type': MT_GROUP_MSG,
                 'from_user': self.user_id,
                 'display_name': self.display_name,
@@ -720,6 +757,50 @@ class Messenger:
                 'msg_id': msg_id,
                 'content': content,
                 'timestamp': timestamp,
+            }
+            if reply_to_id:
+                payload['reply_to'] = reply_to_id
+            if mentions:
+                payload['mentions'] = mentions
+            TCPClient.send_message(member['ip'], TCP_PORT, payload)
+
+    # Cria enquete em grupo e envia para todos os membros
+    def create_poll(self, group_id, question, options):
+        group = self._groups.get(group_id)
+        if not group:
+            return None
+        poll_id = self._next_msg_id()
+        self.db.save_poll(poll_id, group_id, self.user_id, question, options)
+        for member in group['members']:
+            if member['uid'] == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_POLL_CREATE,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'group_id': group_id,
+                'poll_id': poll_id,
+                'question': question,
+                'options': options,
+            })
+        return poll_id
+
+    # Vota numa enquete e propaga para membros do grupo
+    def vote_poll(self, group_id, poll_id, option_index):
+        self.db.save_poll_vote(poll_id, self.user_id, option_index)
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        for member in group['members']:
+            if member['uid'] == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_POLL_VOTE,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'group_id': group_id,
+                'poll_id': poll_id,
+                'option_index': option_index,
             })
 
     # Carrega grupos fixos do banco para memoria

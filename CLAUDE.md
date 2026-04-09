@@ -126,6 +126,13 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
+- **Responder mensagem (Reply/Quote)** — clique direito na mensagem > "Responder", mostra barra de preview acima do input com a mensagem referenciada. Quote aparece no chat com fundo destacado. Funciona em chat individual e grupo. Campo `reply_to_id` no banco, `reply_to` no payload de rede.
+- **Mencoes em grupo (@fulano)** — digitar @ no input de grupo abre popup com lista de membros. Selecionar insere @Nome. Mencoes destacadas em azul negrito no chat. Lista de `mentions` (UIDs) no payload MT_GROUP_MSG.
+- **Enquete em grupo** — botao na toolbar do grupo abre dialogo para criar enquete (pergunta + opcoes). Exibe no chat com botoes clicaveis para votar. Contagem atualiza em tempo real via MT_POLL_VOTE. Tabelas `polls` e `poll_votes` no banco.
+- **Lembretes** — menu Ferramentas > Lembretes. Criar lembrete com texto e data/hora. Timer de 30s verifica pendentes e dispara notificacao Windows (winotify). Tabela `reminders` no banco.
+- **Drag & Drop de arquivos** — arrastar arquivo para janela de chat ou grupo inicia transferencia automaticamente. Usa biblioteca `windnd` para detectar drop no Windows.
+- **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento (Fiscal, Contabil, RH, etc). Contatos agrupados por departamento no TreeView (nodes dinamicos). Campo `department` no UDP announce e na tabela `contacts`.
+- **Notas privadas nos contatos** — clique direito no contato > "Nota Privada..." abre dialogo para adicionar nota visivel apenas localmente. Coluna `private_note` na tabela `contacts`. Nota aparece no dialogo de informacoes do contato.
 - Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback)
   - App consulta GitHub Releases API no startup (2s delay), compara tag_name com APP_VERSION
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
@@ -140,7 +147,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 ## Convencoes importantes
 
 - Threading: NUNCA modificar widgets tkinter fora da main thread. Usar _safe() wrapper.
-- Dependencias opcionais: sempre try/except com HAS_* flag (PIL, pystray, winotify).
+- Dependencias opcionais: sempre try/except com HAS_* flag (PIL, pystray, winotify, windnd).
 - Banco: threading.local() para conexao por thread, parametros ? em SQL.
 - Temas: dicts em THEMES com chaves padronizadas de cor.
 - Chat abre limpo (sem historico), mas _open_chat() carrega mensagens nao lidas do banco (get_unread_messages) para exibir ao abrir via notificacao. Historico completo acessivel via botao History.
@@ -166,10 +173,12 @@ Constantes em network.py:
 - `MT_MESSAGE`, `MT_TYPING`, `MT_STATUS`, `MT_ACK` - mensagens individuais
 - `MT_FILE_REQ`, `MT_FILE_ACC`, `MT_FILE_DEC`, `MT_FILE_CANCEL` - transferencia de arquivos
 - `MT_GROUP_INV` - convite para grupo (inclui lista de membros)
-- `MT_GROUP_MSG` - mensagem de grupo (mesh: cada membro envia para todos)
+- `MT_GROUP_MSG` - mensagem de grupo (mesh: cada membro envia para todos). Campos opcionais: `reply_to`, `mentions`, `msg_id`
 - `MT_GROUP_LEAVE` - notificacao de saida do grupo (remove membro do painel de todos)
 - `MT_GROUP_JOIN` - notificacao de entrada no grupo (adiciona membro ao painel de todos)
 - `MT_IMAGE` - imagem inline (clipboard base64, chat individual e grupo)
+- `MT_POLL_CREATE` - cria enquete em grupo (question, options)
+- `MT_POLL_VOTE` - voto em enquete (poll_id, option_index)
 
 ## Testes
 
@@ -188,6 +197,13 @@ Sem suite de testes automatizados. Testar manualmente:
 12. Transferencia: dialogo diferente para quem envia vs quem recebe
 13. Auto-update: build com versao nova, verificar barra amarela, clicar Atualizar, confirmar restart
 14. Build interativo: `python build.py` → testar opcoes 1, 2 e 3
+15. Reply/Quote: clique direito > Responder em chat e grupo, barra de preview, quote no chat
+16. Mencoes: digitar @ em grupo, popup de membros, selecionar, highlight no chat
+17. Enquete: criar enquete em grupo, votar, contagem atualiza
+18. Lembretes: criar, notificacao Windows dispara no horario
+19. Drag & Drop: arrastar arquivo para chat e grupo, transferencia inicia
+20. Departamentos: configurar em Preferencias, contatos agrupados no TreeView
+21. Nota Privada: clique direito no contato, adicionar/editar nota, visivel no Info
 
 ## Workflow obrigatorio para TODA alteracao
 

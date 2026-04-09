@@ -69,6 +69,13 @@ try:
 except ImportError:
     HAS_WINOTIFY = False                    # Sem winotify: sem notificações nativas do Windows
 
+# windnd: drag-and-drop de arquivos no Windows (arrastar arquivo para a janela)
+try:
+    import windnd
+    HAS_WINDND = True
+except ImportError:
+    HAS_WINDND = False
+
 APP_NAME = 'MB Chat'                        # Nome do aplicativo exibido nos títulos de janela
 
 # Expressão regular para detectar emojis Unicode no texto das mensagens.
@@ -1188,6 +1195,23 @@ class PreferencesWindow(tk.Toplevel):
                       fg=FG_RED, command=self._remove_custom_avatar
                       ).pack(anchor='w', pady=2)
 
+        # Departamento
+        lf3 = tk.LabelFrame(parent, text='Departamento / Equipe', font=FONT,
+                             bg=BG_WINDOW, padx=10, pady=8)
+        lf3.pack(fill='x', padx=10, pady=(0, 8))
+        dept_row = tk.Frame(lf3, bg=BG_WINDOW)
+        dept_row.pack(fill='x', pady=4)
+        tk.Label(dept_row, text='Departamento:', font=FONT,
+                 bg=BG_WINDOW).pack(side='left')
+        self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
+                                         values=['', 'Fiscal', 'Contabil', 'RH',
+                                                 'Financeiro', 'TI', 'Comercial',
+                                                 'Administrativo', 'Juridico'])
+        self._dept_combo.set(self.messenger.db.get_setting('department', ''))
+        self._dept_combo.pack(side='right')
+        tk.Label(lf3, text='Visivel para todos na lista de contatos.',
+                 font=FONT_SMALL, bg=BG_WINDOW, fg=FG_GRAY).pack(anchor='w')
+
     # Show image preview in the custom_preview canvas.
     def _show_preview(self, path):
         self._custom_preview.delete('all')
@@ -1722,6 +1746,11 @@ class AccountWindow(tk.Toplevel):
             self.var_avatar_index.get(),
             self.var_custom_avatar.get())
         self.app._update_avatar()
+        # Save department
+        if hasattr(self, '_dept_combo'):
+            dept = self._dept_combo.get().strip()
+            db.set_setting('department', dept)
+            self.messenger.discovery.department = dept
         self.destroy()
 
 
@@ -2442,6 +2471,8 @@ class ChatWindow(tk.Toplevel):
         self.entry.focus_set()
 
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
+        self._reply_to = None   # {msg_id, sender, text} — mensagem sendo respondida
+        self._reply_bar = None  # Frame da barra de reply
 
         # Área de exibição das mensagens (chat_frame se expande para preencher o espaço restante)
         chat_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
@@ -2550,8 +2581,47 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_bind('copy_btn', '<Leave>',
                                 lambda e: self.chat_text.config(cursor='arrow'))
 
+        # Tag para quote/reply (fundo suave, borda esquerda visual via lmargin)
+        self.chat_text.tag_configure('quote',
+                                     background='#e8ecf1',
+                                     foreground='#4a5568',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     lmargin1=12, lmargin2=12,
+                                     spacing1=2, spacing3=2)
+        self.chat_text.tag_configure('quote_name',
+                                     background='#e8ecf1',
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     lmargin1=12, lmargin2=12,
+                                     spacing1=4)
+
+        # Dados de mensagens para reply (msg_id, sender, text_preview)
+        self._msg_data = []  # [{msg_id, sender, text}]
+
+        # Menu de contexto no chat (Responder / Copiar)
+        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
+        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
+        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
+        self.chat_text.bind('<Button-3>', self._on_chat_right_click)
+        self._ctx_click_index = None
+
         self.protocol('WM_DELETE_WINDOW', self._on_close)  # trata fechamento da janela
         self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))  # para o flash da taskbar ao focar
+
+        # Drag & Drop de arquivos (windnd)
+        if HAS_WINDND:
+            try:
+                windnd.hook_dropfiles(self, func=self._on_drop_files)
+            except Exception:
+                pass
+
+    # Callback do windnd: arquivos arrastados para a janela
+    def _on_drop_files(self, files):
+        for f in files:
+            path = f.decode('utf-8') if isinstance(f, bytes) else str(f)
+            if os.path.isfile(path):
+                self.app._start_file_send(self.peer_id, path)
+                break  # envia apenas o primeiro arquivo
 
     # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
     # Após exibir, marca todas como lidas no banco de dados.
@@ -2564,7 +2634,9 @@ class ChatWindow(tk.Toplevel):
             sender = self.app.messenger.display_name if is_mine else self.peer_name
             # Adiciona a mensagem na área de chat com timestamp original
             self._append_message(sender, msg['content'], is_mine,
-                                 timestamp=msg['timestamp'])
+                                 timestamp=msg['timestamp'],
+                                 msg_id=msg.get('msg_id', ''),
+                                 reply_to=msg.get('reply_to_id', ''))
         # Marca todas as mensagens deste contato como lidas no banco
         self.messenger.mark_as_read(self.peer_id)
 
@@ -2735,9 +2807,23 @@ class ChatWindow(tk.Toplevel):
     #
     # O widget fica em state='disabled' para bloquear edição pelo usuário. É
     # temporariamente habilitado para inserir a mensagem e depois desabilitado novamente.
-    def _append_message(self, sender, text, is_mine, timestamp=None):
+    def _append_message(self, sender, text, is_mine, timestamp=None,
+                        msg_id='', reply_to=''):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')  # habilita temporariamente para inserção
+
+        # Renderiza quote de reply se houver
+        if reply_to:
+            orig = self.messenger.db.get_message_by_id(reply_to)
+            if orig:
+                q_sender = orig.get('from_user', '')
+                q_text = orig.get('content', '')[:80]
+                if q_sender == self.messenger.user_id:
+                    q_name = self.messenger.display_name
+                else:
+                    q_name = self.peer_name
+                self.chat_text.insert('end', f'\u2503 {q_name}\n', 'quote_name')
+                self.chat_text.insert('end', f'\u2503 {q_text}\n', 'quote')
 
         style = self.messenger.db.get_setting('msg_style', 'bubble')
 
@@ -2765,7 +2851,8 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.insert('end', '\n', 'msg')
 
         self._msg_ranges.append(text)        # salva texto para funcionalidade copiar
-        msg_idx = len(self._msg_ranges) - 1  # índice desta mensagem (não usado ainda)
+        self._msg_data.append({'msg_id': msg_id, 'sender': sender,
+                               'text': text[:80]})
         self.chat_text.insert('end', '\n')   # linha em branco entre mensagens
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
@@ -2789,8 +2876,10 @@ class ChatWindow(tk.Toplevel):
     # Exibe a mensagem no chat, marca como lida no banco e toca o bipe do sistema
     # se a janela não estiver em foco (útil para notificar o usuário em background).
     # Este método é sempre chamado na main thread via app._safe().
-    def receive_message(self, content, timestamp=None):
-        self._append_message(self.peer_name, content, False, timestamp=timestamp)
+    def receive_message(self, content, timestamp=None, reply_to='', msg_id=''):
+        self._append_message(self.peer_name, content, False,
+                             timestamp=timestamp, msg_id=msg_id,
+                             reply_to=reply_to)
         self.messenger.mark_as_read(self.peer_id)
         if self.focus_get() is None:
             self.bell()   # bipe do sistema quando a janela está sem foco
@@ -2853,18 +2942,89 @@ class ChatWindow(tk.Toplevel):
                          args=(self.peer_id, False),
                          daemon=True).start()
 
+    # Mostra barra de reply acima do campo de entrada
+    def _show_reply_bar(self, msg_id, sender, text_preview):
+        self._reply_to = {'msg_id': msg_id, 'sender': sender,
+                          'text': text_preview}
+        if self._reply_bar:
+            self._reply_bar.destroy()
+        bar = tk.Frame(self, bg='#e8ecf1')
+        # Pack antes do input_outer (que esta com side=bottom)
+        bar.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
+        lbl = tk.Label(bar, text=f'\u21b3 {sender}: {text_preview[:60]}',
+                        font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568',
+                        anchor='w')
+        lbl.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                           bg='#e8ecf1', fg='#718096', relief='flat', bd=0,
+                           cursor='hand2', command=self._cancel_reply)
+        btn_x.pack(side='right', padx=4)
+        self._reply_bar = bar
+
+    # Remove barra de reply
+    def _cancel_reply(self):
+        self._reply_to = None
+        if self._reply_bar:
+            self._reply_bar.destroy()
+            self._reply_bar = None
+
+    # Clique direito no chat: mostra menu contexto (Responder / Copiar)
+    def _on_chat_right_click(self, event):
+        idx = self.chat_text.index(f'@{event.x},{event.y}')
+        self._ctx_click_index = idx
+        # Determina qual mensagem esta naquela posicao
+        line = int(idx.split('.')[0])
+        self._ctx_msg_idx = self._find_msg_at_line(line)
+        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+
+    # Encontra indice da mensagem na posicao da linha clicada
+    def _find_msg_at_line(self, click_line):
+        # Percorre mensagens de tras pra frente procurando a mais proxima
+        total_lines = int(self.chat_text.index('end').split('.')[0])
+        # Conta linhas por mensagem (estimativa: cada msg ocupa ~3-5 linhas)
+        # Abordagem simples: cada _msg_data entry corresponde a blocos sequenciais
+        if not self._msg_data:
+            return -1
+        # Busca reversa: ultima mensagem cujo bloco comeca antes da linha clicada
+        return max(0, min(len(self._msg_data) - 1,
+                          click_line // 4))  # estimativa conservadora
+
+    # Contexto: Responder mensagem clicada
+    def _ctx_reply(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        if data.get('msg_id'):
+            self._show_reply_bar(data['msg_id'], data['sender'], data['text'])
+            self.entry.focus_set()
+
+    # Contexto: Copiar texto da mensagem clicada
+    def _ctx_copy(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        text = self._msg_data[idx].get('text', '')
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
     def _send_message(self):
         content = self._get_entry_content()  # reconstrói texto + emojis do campo
         if not content:
             return  # não envia mensagens vazias
+        reply_to_id = self._reply_to['msg_id'] if self._reply_to else ''
+        self._cancel_reply()  # limpa barra de reply
         self.entry.delete('1.0', 'end')  # limpa o campo de entrada
         self._entry_img_map.clear()       # limpa mapa de imagens
-        self._append_message(self.messenger.display_name, content, True)  # exibe localmente
+        self._append_message(self.messenger.display_name, content, True,
+                             reply_to=reply_to_id)  # exibe localmente
         # Envia via rede em thread separada para não travar a UI
         threading.Thread(target=self.messenger.send_message,
-                         args=(self.peer_id, content), daemon=True).start()
+                         args=(self.peer_id, content, reply_to_id),
+                         daemon=True).start()
 
     # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
     def _send_file(self):
@@ -3984,6 +4144,15 @@ class GroupChatWindow(tk.Toplevel):
                                    command=self._send_file)
         btn_attach.pack(side='left', pady=2, padx=(0, 2))
 
+        # Botao Enquete
+        btn_poll = tk.Button(btn_frame, text='\U0001f4ca', font=('Segoe UI', 10),
+                             relief='flat', bd=0, cursor='hand2',
+                             bg=win_bg, fg=flat_fg,
+                             activebackground='#e2e8f0',
+                             command=self._create_poll_dialog)
+        btn_poll.pack(side='left', pady=2, padx=(0, 2))
+        _Tooltip(btn_poll, 'Criar Enquete')
+
         # ===== Input area =====
         input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
         input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
@@ -3998,11 +4167,23 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.bind('<Control-v>', self._on_paste)
+        self.entry.bind('<KeyRelease>', self._on_entry_key)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         self.entry.bind('<<Modified>>', self._on_modified)
         self.entry.focus_set()
 
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
+        self._reply_to = None   # {msg_id, sender, text}
+        self._reply_bar = None  # Frame da barra de reply
+        self._msg_data = []     # [{msg_id, sender, text}] para reply
+        self._mention_popup = None  # Popup de autocomplete @mencao
+
+        # Drag & Drop de arquivos (windnd)
+        if HAS_WINDND:
+            try:
+                windnd.hook_dropfiles(self, func=self._on_drop_files)
+            except Exception:
+                pass
 
         # ===== Separator =====
         tk.Frame(self, bg='#e2e8f0', height=1).pack(side='bottom', fill='x')
@@ -4082,6 +4263,32 @@ class GroupChatWindow(tk.Toplevel):
                                      font=('Segoe UI', 7),
                                      justify='left', lmargin1=8,
                                      lmargin2=8, rmargin=80)
+
+        # Tags para reply/quote
+        self.chat_text.tag_configure('quote',
+                                     background='#e8ecf1',
+                                     foreground='#4a5568',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     lmargin1=12, lmargin2=12,
+                                     spacing1=2, spacing3=2)
+        self.chat_text.tag_configure('quote_name',
+                                     background='#e8ecf1',
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 8, 'bold'),
+                                     lmargin1=12, lmargin2=12,
+                                     spacing1=4)
+
+        # Tag para @mencao destacada
+        self.chat_text.tag_configure('mention',
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 10, 'bold'))
+
+        # Menu de contexto no chat (Responder / Copiar)
+        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
+        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
+        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
+        self.chat_text.bind('<Button-3>', self._on_chat_right_click)
+        self._ctx_click_index = None
 
         # ===== Participants panel (right) =====
         self._panel = tk.Frame(self._paned, bg='#f8fafc', width=250)
@@ -4585,9 +4792,19 @@ class GroupChatWindow(tk.Toplevel):
 
     # Adiciona uma mensagem na area de chat com nome, horario e emojis coloridos.
     # Suporta modo linear (padrao) e modo bolha (WhatsApp style) conforme preferencia.
-    def _append_message(self, sender, text, is_mine, timestamp=None):
+    def _append_message(self, sender, text, is_mine, timestamp=None,
+                        msg_id='', reply_to='', mentions=None):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
+
+        # Renderiza quote de reply
+        if reply_to:
+            orig = self.app.messenger.db.get_message_by_id(reply_to)
+            if orig:
+                q_name = orig.get('from_user', '')[:20]
+                q_text = orig.get('content', '')[:80]
+                self.chat_text.insert('end', f'\u2503 {q_name}\n', 'quote_name')
+                self.chat_text.insert('end', f'\u2503 {q_text}\n', 'quote')
 
         style = self.app.messenger.db.get_setting('msg_style', 'bubble')
 
@@ -4603,23 +4820,43 @@ class GroupChatWindow(tk.Toplevel):
                 msg_tag = 'peer_bubble'
             self.chat_text.insert('end', f'{sender}', name_tag)
             self.chat_text.insert('end', f'  {ts}\n', time_tag)
-            self._insert_text_with_emojis(text, msg_tag)
+            self._insert_text_with_mentions(text, msg_tag, mentions)
             self.chat_text.insert('end', '\n', msg_tag)
         else:
             # --- Modo linear (padrao LAN Messenger) ---
             name_tag = 'my_name' if is_mine else 'peer_name'
             self.chat_text.insert('end', sender, name_tag)
             self.chat_text.insert('end', f'  {ts}\n', 'time')
-            self._insert_text_with_emojis(text, 'msg')
+            self._insert_text_with_mentions(text, 'msg', mentions)
             self.chat_text.insert('end', '\n')
 
+        self._msg_data.append({'msg_id': msg_id, 'sender': sender,
+                               'text': text[:80]})
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
+    # Insere texto com @mencoes destacadas
+    def _insert_text_with_mentions(self, text, base_tag, mentions=None):
+        if not mentions:
+            self._insert_text_with_emojis(text, base_tag)
+            return
+        # Busca @nomes no texto e destaca
+        parts = re.split(r'(@\w+)', text)
+        member_names = {m.get('display_name', '').lower()
+                        for m in self._members.values()}
+        for part in parts:
+            if part.startswith('@') and part[1:].lower() in member_names:
+                self.chat_text.insert('end', part, 'mention')
+            else:
+                self._insert_text_with_emojis(part, base_tag)
+
     # Callback chamado ao receber mensagem de outro membro do grupo.
-    def receive_message(self, display_name, content, timestamp=None):
-        self._append_message(display_name, content, False, timestamp)
+    def receive_message(self, display_name, content, timestamp=None,
+                        reply_to='', mentions=None, msg_id=''):
+        self._append_message(display_name, content, False, timestamp,
+                             msg_id=msg_id, reply_to=reply_to,
+                             mentions=mentions)
 
     # <<Modified>> dispara SEMPRE que o conteúdo do tk.Text muda.
     # Inclui teclado, IME, Windows Emoji Picker (Win+.), paste, etc.
@@ -4644,17 +4881,257 @@ class GroupChatWindow(tk.Toplevel):
             self._send_message()
             return 'break'  # Impede inserção de nova linha
 
+    # Mostra barra de reply acima do campo de entrada
+    def _show_reply_bar(self, msg_id, sender, text_preview):
+        self._reply_to = {'msg_id': msg_id, 'sender': sender,
+                          'text': text_preview}
+        if self._reply_bar:
+            self._reply_bar.destroy()
+        bar = tk.Frame(self, bg='#e8ecf1')
+        bar.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
+        lbl = tk.Label(bar, text=f'\u21b3 {sender}: {text_preview[:60]}',
+                        font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568',
+                        anchor='w')
+        lbl.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                           bg='#e8ecf1', fg='#718096', relief='flat', bd=0,
+                           cursor='hand2', command=self._cancel_reply)
+        btn_x.pack(side='right', padx=4)
+        self._reply_bar = bar
+
+    def _cancel_reply(self):
+        self._reply_to = None
+        if self._reply_bar:
+            self._reply_bar.destroy()
+            self._reply_bar = None
+
+    # Clique direito no chat do grupo
+    def _on_chat_right_click(self, event):
+        idx = self.chat_text.index(f'@{event.x},{event.y}')
+        self._ctx_click_index = idx
+        line = int(idx.split('.')[0])
+        self._ctx_msg_idx = self._find_msg_at_line(line)
+        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+
+    def _find_msg_at_line(self, click_line):
+        if not self._msg_data:
+            return -1
+        return max(0, min(len(self._msg_data) - 1, click_line // 4))
+
+    def _ctx_reply(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        if data.get('msg_id'):
+            self._show_reply_bar(data['msg_id'], data['sender'], data['text'])
+            self.entry.focus_set()
+
+    def _ctx_copy(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        text = self._msg_data[idx].get('text', '')
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+    # Callback do windnd: arquivos arrastados para a janela do grupo
+    def _on_drop_files(self, files):
+        for f in files:
+            path = f.decode('utf-8') if isinstance(f, bytes) else str(f)
+            if os.path.isfile(path):
+                self.app._start_group_file_send(self.group_id, path)
+                break
+
+    # Extrai @mencoes do texto para enviar no payload
+    def _extract_mentions(self, text):
+        mentions = []
+        parts = re.findall(r'@(\w+)', text)
+        for name in parts:
+            for uid, info in self._members.items():
+                if info.get('display_name', '').lower() == name.lower():
+                    mentions.append(uid)
+                    break
+        return mentions if mentions else None
+
+    # Detecta @ digitado e mostra popup de autocomplete
+    def _on_entry_key(self, event):
+        try:
+            cursor = self.entry.index('insert')
+            line_start = self.entry.index(f'{cursor} linestart')
+            text_before = self.entry.get(line_start, cursor)
+            # Procura @ seguido de texto parcial
+            m = re.search(r'@(\w*)$', text_before)
+            if m:
+                prefix = m.group(1).lower()
+                names = [info.get('display_name', '')
+                         for uid, info in self._members.items()
+                         if info.get('display_name', '').lower().startswith(prefix)
+                         and uid != self.app.messenger.user_id]
+                if names:
+                    self._show_mention_popup(names, m.start())
+                    return
+            self._hide_mention_popup()
+        except Exception:
+            pass
+
+    # Mostra popup de autocomplete de @mencao
+    def _show_mention_popup(self, names, at_pos):
+        self._hide_mention_popup()
+        popup = tk.Toplevel(self)
+        popup.wm_overrideredirect(True)
+        popup.configure(bg='#e2e8f0')
+        # Posiciona acima do campo de entrada
+        try:
+            x = self.entry.winfo_rootx() + 10
+            y = self.entry.winfo_rooty() - min(len(names), 8) * 26 - 4
+            if y < 0:
+                y = self.entry.winfo_rooty() + self.entry.winfo_height() + 2
+        except Exception:
+            x, y = 100, 100
+        popup.geometry(f'+{x}+{y}')
+        for name in names[:8]:
+            btn = tk.Button(popup, text=f'  @{name}', font=('Segoe UI', 9),
+                            bg='#ffffff', fg='#1a202c', relief='flat',
+                            bd=0, anchor='w', padx=8, pady=3, cursor='hand2',
+                            activebackground='#e8f0fe',
+                            command=lambda n=name: self._insert_mention(n, at_pos))
+            btn.pack(fill='x', padx=1, pady=(1, 0))
+            _add_hover(btn, '#ffffff', '#e8f0fe')
+        self._mention_popup = popup
+        popup.bind('<FocusOut>', lambda e: self._hide_mention_popup())
+
+    def _hide_mention_popup(self):
+        if self._mention_popup:
+            try:
+                self._mention_popup.destroy()
+            except Exception:
+                pass
+            self._mention_popup = None
+
+    # Insere @nome no campo de entrada substituindo o @parcial
+    def _insert_mention(self, name, at_pos):
+        self._hide_mention_popup()
+        try:
+            cursor = self.entry.index('insert')
+            line_start = self.entry.index(f'{cursor} linestart')
+            text_before = self.entry.get(line_start, cursor)
+            # Remove @parcial e insere @nome completo
+            m = re.search(r'@\w*$', text_before)
+            if m:
+                del_start = f'{line_start}+{m.start()}c'
+                self.entry.delete(del_start, cursor)
+                self.entry.insert(del_start, f'@{name} ')
+        except Exception:
+            pass
+        self.entry.focus_set()
+
+    # Dialogo para criar enquete no grupo
+    def _create_poll_dialog(self):
+        dlg = tk.Toplevel(self)
+        dlg.title('Criar Enquete')
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 380, 340)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        tk.Label(dlg, text='Pergunta:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
+        q_entry = tk.Entry(dlg, font=('Segoe UI', 10), relief='flat',
+                           bg='#f7fafc', highlightthickness=1,
+                           highlightbackground='#e2e8f0')
+        q_entry.pack(fill='x', padx=12)
+        q_entry.focus_set()
+
+        tk.Label(dlg, text='Opcoes (uma por linha):',
+                 font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
+        opts_text = tk.Text(dlg, font=('Segoe UI', 10), height=6, relief='flat',
+                            bg='#f7fafc', highlightthickness=1,
+                            highlightbackground='#e2e8f0', wrap='word')
+        opts_text.pack(fill='both', expand=True, padx=12)
+
+        def _create():
+            question = q_entry.get().strip()
+            options = [l.strip() for l in opts_text.get('1.0', 'end').strip().split('\n')
+                       if l.strip()]
+            if not question or len(options) < 2:
+                messagebox.showwarning('Enquete', 'Insira uma pergunta e pelo menos 2 opcoes.',
+                                        parent=dlg)
+                return
+            dlg.destroy()
+            def _do():
+                poll_id = self.app.messenger.create_poll(self.group_id, question, options)
+                if poll_id:
+                    self.after(0, lambda: self._display_poll(
+                        question, options, self.app.messenger.display_name, poll_id))
+            threading.Thread(target=_do, daemon=True).start()
+
+        btn_frame = tk.Frame(dlg, bg='#ffffff')
+        btn_frame.pack(fill='x', padx=12, pady=10)
+        tk.Button(btn_frame, text='Criar', font=('Segoe UI', 9, 'bold'),
+                  bg='#0f2a5c', fg='#ffffff', relief='flat', bd=0,
+                  padx=16, pady=4, cursor='hand2',
+                  command=_create).pack(side='right')
+        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                  padx=12, pady=4, cursor='hand2',
+                  command=dlg.destroy).pack(side='right', padx=(0, 6))
+
+    # Exibe enquete no chat
+    def _display_poll(self, question, options, creator, poll_id):
+        self.chat_text.configure(state='normal')
+        self.chat_text.insert('end', f'\U0001f4ca Enquete de {creator}\n', 'quote_name')
+        self.chat_text.insert('end', f'{question}\n\n', 'msg')
+        for i, opt in enumerate(options):
+            tag_name = f'poll_{poll_id}_{i}'
+            self.chat_text.tag_configure(tag_name,
+                                         foreground='#2451a0',
+                                         font=('Segoe UI', 10),
+                                         underline=True)
+            self.chat_text.insert('end', f'  {i+1}. {opt}\n', tag_name)
+            self.chat_text.tag_bind(tag_name, '<Button-1>',
+                                     lambda e, pi=poll_id, oi=i: self._vote_poll(pi, oi))
+            self.chat_text.tag_bind(tag_name, '<Enter>',
+                                     lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(tag_name, '<Leave>',
+                                     lambda e: self.chat_text.config(cursor='arrow'))
+        self.chat_text.insert('end', '\n')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
+    # Vota numa opcao da enquete
+    def _vote_poll(self, poll_id, option_index):
+        def _do():
+            self.app.messenger.vote_poll(self.group_id, poll_id, option_index)
+            self.after(0, lambda: self._show_vote_confirmation(poll_id, option_index))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _show_vote_confirmation(self, poll_id, option_index):
+        self.chat_text.configure(state='normal')
+        self.chat_text.insert('end',
+            f'\u2714 Voce votou na opcao {option_index + 1}\n\n', 'sys_msg')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
     # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
         content = self._get_entry_content()  # Extrai texto + emojis do campo
         if not content:
             return
+        reply_to_id = self._reply_to['msg_id'] if self._reply_to else ''
+        mentions = self._extract_mentions(content)
+        self._cancel_reply()
         self.entry.delete('1.0', 'end')    # Limpa campo de entrada
         self._entry_img_map.clear()         # Limpa mapeamento de imagens
-        self._append_message(self.app.messenger.display_name, content, True)  # Exibe localmente
+        self._append_message(self.app.messenger.display_name, content, True,
+                             reply_to=reply_to_id, mentions=mentions)
         # Envia em thread background para não travar a UI
         threading.Thread(target=self.app.messenger.send_group_message,
-                         args=(self.group_id, content),
+                         args=(self.group_id, content, reply_to_id, mentions),
                          daemon=True).start()
 
     # Ctrl+V — detecta imagem no clipboard e envia para o grupo
@@ -4834,6 +5311,7 @@ class LanMessengerApp:
         self._pending_group_msgs = {}       # group_id -> [(nome, conteúdo, timestamp)] - msgs de grupo sem janela
         self.peer_items = {}                # peer_id -> item_id do TreeView
         self.peer_info = {}                 # peer_id -> {display_name, ip, status, note, ...}
+        self._dept_nodes = {}               # department_name -> tree item id (nos de departamento)
         self._file_dialogs = {}             # file_id -> FileTransferDialog (diálogos de transferência)
         self._transfer_history = []         # Histórico de transferências para a janela de transferências
         self._transfers_window = None       # Referência à janela de Transferências (se aberta)
@@ -4926,15 +5404,20 @@ class LanMessengerApp:
             on_group_leave=self._safe(self._on_group_leave),
             on_group_join=self._safe(self._on_group_join),
             on_image=self._safe(self._on_image),
+            on_poll=self._safe(self._on_poll),
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
         self.root.title(f'{APP_NAME} v{APP_VERSION}')
         self._update_avatar()
+        self._start_reminder_timer()
 
     def _safe(self, func):
         def wrapper(*args, **kwargs):
-            self.root.after(0, func, *args, **kwargs)
+            if kwargs:
+                self.root.after(0, lambda: func(*args, **kwargs))
+            else:
+                self.root.after(0, func, *args)
         return wrapper
 
     # Atualiza textos da UI apos mudanca de idioma.
@@ -4956,6 +5439,8 @@ class LanMessengerApp:
                        command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'),
                        command=self._show_transfers)
+        m2.add_command(label='Lembretes',
+                       command=self._show_reminders)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
@@ -5177,6 +5662,7 @@ class LanMessengerApp:
         m2 = tk.Menu(menubar, tearoff=0, font=FONT)
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
+        m2.add_command(label='Lembretes', command=self._show_reminders)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -5491,6 +5977,8 @@ class LanMessengerApp:
         self.ctx_menu.add_command(label=_t('ctx_send_file'),
                                   command=self._ctx_file)   # Enviar arquivo
         self.ctx_menu.add_separator()
+        self.ctx_menu.add_command(label='Nota Privada...',
+                                  command=self._ctx_private_note)
         self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)  # Info do usuário
 
 
@@ -6411,6 +6899,8 @@ class LanMessengerApp:
         item = sel[0]
         if item in (self.group_general, self.group_offline, self.group_groups):
             return None  # clicou em um header de secao, nao em um contato
+        if item in self._dept_nodes.values():
+            return None  # clicou em header de departamento
         # Verifica se o item clicado e um grupo (nao um contato)
         if item in self._group_tree_items.values():
             return None  # e um item de grupo, nao um contato
@@ -6455,14 +6945,29 @@ class LanMessengerApp:
     # Existente: atualiza texto/tag/avatar e move para grupo correto (Geral/Offline).
     # Novo: insere como item no TreeView no grupo correspondente ao status.
     # Tambem propaga atualizacao de nota para janelas de grupo abertas.
+    def _get_dept_node(self, dept_name):
+        if dept_name in self._dept_nodes:
+            return self._dept_nodes[dept_name]
+        # Cria no de departamento antes do Offline
+        node = self.tree.insert('', self.tree.index(self.group_offline),
+                                text=dept_name, open=True, tags=('group',))
+        self._dept_nodes[dept_name] = node
+        return node
+
     def _add_contact(self, uid, info):
         status = info.get('status', 'online')  # status atual do contato recebido
         tag = status if status in ('online', 'away', 'busy') else 'offline'
         name = info.get('display_name', 'Unknown')
         note = info.get('note', '')
+        dept = info.get('department', '')
 
-        # Determina o grupo pai correto
-        parent = self.group_general if tag != 'offline' else self.group_offline
+        # Determina o grupo pai correto (departamento > Geral > Offline)
+        if tag == 'offline':
+            parent = self.group_offline
+        elif dept:
+            parent = self._get_dept_node(dept)
+        else:
+            parent = self.group_general
 
         # Tenta renderizar linha composta com emojis coloridos (PIL)
         avatar = self._create_contact_avatar(uid, name, tag)
@@ -6699,11 +7204,17 @@ class LanMessengerApp:
                 self._apply_theme_to_group(gw, self._theme)  # aplica tema atual
         # Exibe mensagens pendentes acumuladas enquanto a janela estava fechada
         pending = self._pending_group_msgs.pop(group_id, [])  # remove do buffer pendente
-        for dname, content, ts in pending:       # entrega cada mensagem acumulada
+        for item in pending:       # entrega cada mensagem acumulada
+            dname, content, ts = item[0], item[1], item[2]
+            rto = item[3] if len(item) > 3 else ''
+            ment = item[4] if len(item) > 4 else None
+            mid = item[5] if len(item) > 5 else ''
             if isinstance(content, str) and content.startswith('[img]'):
                 gw.receive_image(dname, content[5:], ts)
             else:
-                gw.receive_message(dname, content, ts)
+                gw.receive_message(dname, content, ts,
+                                   reply_to=rto, mentions=ment,
+                                   msg_id=mid)
         self._clear_group_unread(group_id)       # limpa o indicador bold/contagem no TreeView
         # Coloca o foco no campo de texto para o usuario poder digitar imediatamente
         try:
@@ -6724,8 +7235,10 @@ class LanMessengerApp:
     # Trata clique direito no TreeView: exibe menu de contexto para contatos online.
     def _on_tree_right(self, e):
         item = self.tree.identify_row(e.y)  # identifica o item na posicao Y do mouse
-        if item and item not in (self.group_general, self.group_offline,
-                                  self.group_groups):
+        # Ignora nos de secao (Geral, Offline, Grupos, departamentos)
+        section_nodes = {self.group_general, self.group_offline, self.group_groups}
+        section_nodes.update(self._dept_nodes.values())
+        if item and item not in section_nodes:
             # Block right-click on offline contacts
             tags = self.tree.item(item, 'tags')
             if 'offline' in tags:
@@ -6752,12 +7265,69 @@ class LanMessengerApp:
         uid = self._get_selected_peer()  # pega uid do contato selecionado
         if uid and uid in self.peer_info:
             i = self.peer_info[uid]
-            messagebox.showinfo('Info do Usuário',
+            dept = i.get('department', '')
+            contact = self.messenger.db.get_contact(uid)
+            pnote = contact.get('private_note', '') if contact else ''
+            info_text = (
                 f"Nome: {i.get('display_name','?')}\n"
                 f"IP: {i.get('ip','?')}\n"
                 f"Host: {i.get('hostname','?')}\n"
                 f"OS: {i.get('os','?')}\n"
                 f"Status: {i.get('status','?')}")
+            if dept:
+                info_text += f"\nDepartamento: {dept}"
+            if pnote:
+                info_text += f"\nNota privada: {pnote}"
+            messagebox.showinfo('Info do Usuário', info_text)
+
+    # Dialogo para editar nota privada do contato selecionado (so visivel localmente)
+    def _ctx_private_note(self):
+        uid = self._get_selected_peer()
+        if not uid:
+            return
+        name = self.peer_info.get(uid, {}).get('display_name', uid)
+        contact = self.messenger.db.get_contact(uid)
+        current_note = contact.get('private_note', '') if contact else ''
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f'Nota Privada - {name}')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 360, 200)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        tk.Label(dlg, text=f'Nota sobre {name}:',
+                 font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
+        tk.Label(dlg, text='So voce pode ver esta nota.',
+                 font=('Segoe UI', 8), bg='#ffffff',
+                 fg='#718096').pack(anchor='w', padx=12)
+
+        note_text = tk.Text(dlg, font=('Segoe UI', 10), height=4,
+                             relief='flat', bg='#f7fafc',
+                             highlightthickness=1, highlightbackground='#e2e8f0',
+                             wrap='word')
+        note_text.pack(fill='both', expand=True, padx=12, pady=(6, 0))
+        note_text.insert('1.0', current_note)
+        note_text.focus_set()
+
+        def _save_note():
+            new_note = note_text.get('1.0', 'end').strip()
+            self.messenger.db.set_contact_private_note(uid, new_note)
+            dlg.destroy()
+
+        btn_frame = tk.Frame(dlg, bg='#ffffff')
+        btn_frame.pack(fill='x', padx=12, pady=10)
+        tk.Button(btn_frame, text='Salvar', font=('Segoe UI', 9, 'bold'),
+                  bg='#0f2a5c', fg='#ffffff', relief='flat', bd=0,
+                  padx=16, pady=4, cursor='hand2',
+                  command=_save_note).pack(side='right')
+        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                  padx=12, pady=4, cursor='hand2',
+                  command=dlg.destroy).pack(side='right', padx=(0, 6))
 
     # Abre ou traz ao foco a janela de chat individual com peer_id.
     #
@@ -6787,7 +7357,9 @@ class LanMessengerApp:
                 if msg.get('msg_type') == 'image':
                     cw.receive_image(msg['content'], msg['timestamp'])
                 else:
-                    cw.receive_message(msg['content'], msg['timestamp'])
+                    cw.receive_message(msg['content'], msg['timestamp'],
+                                       reply_to=msg.get('reply_to_id', ''),
+                                       msg_id=msg.get('msg_id', ''))
         except Exception:
             pass
         self._clear_unread(peer_id)           # remove marcacao de nao lido
@@ -7732,7 +8304,8 @@ class LanMessengerApp:
         self._add_group_to_tree(group_id, group_name, group_type)
 
     def _on_group_message(self, group_id, from_uid, display_name,
-                           content, timestamp):
+                           content, timestamp, reply_to='', mentions=None,
+                           msg_id='', **kw):
         # Roteia mensagem de grupo recebida para a janela correta ou acumula pendente.
         #
         # Chamado pelo messenger quando chega MT_GROUP_MSG pela rede.
@@ -7744,7 +8317,9 @@ class LanMessengerApp:
         SoundPlayer.play_notification()
         if group_id in self.group_windows:  # janela do grupo esta aberta?
             gw = self.group_windows[group_id]
-            gw.receive_message(display_name, content, timestamp)  # entrega mensagem diretamente
+            gw.receive_message(display_name, content, timestamp,
+                               reply_to=reply_to, mentions=mentions,
+                               msg_id=msg_id)
             try:
                 if not gw.focus_displayof():  # janela nao esta em foco (usuario nao esta vendo)?
                     self._show_group_toast(group_id, display_name, content)  # notificacao Windows
@@ -7757,7 +8332,8 @@ class LanMessengerApp:
             if group_id not in self._pending_group_msgs:  # primeiro msg pendente deste grupo?
                 self._pending_group_msgs[group_id] = []   # cria lista de pendentes
             self._pending_group_msgs[group_id].append(
-                (display_name, content, timestamp))       # acumula para exibir quando abrir
+                (display_name, content, timestamp,
+                 reply_to, mentions, msg_id))             # acumula para exibir quando abrir
             self._mark_group_unread(group_id)             # bold + contagem no TreeView
             self._show_group_toast(group_id, display_name, content)  # notificacao Windows
             self._flash_window()      # pisca janela principal na taskbar
@@ -7816,6 +8392,16 @@ class LanMessengerApp:
             self._add_transfer_entry(fid, fname, name, 'send', fsize,
                                       'pending')
 
+    # Envia arquivo para todos os membros de um grupo (chamado pelo DnD)
+    def _start_group_file_send(self, group_id, filepath):
+        threading.Thread(target=self.messenger.send_file_to_group,
+                         args=(group_id, filepath),
+                         daemon=True).start()
+        if group_id in self.group_windows:
+            fname = os.path.basename(filepath)
+            self.group_windows[group_id].system_message(
+                f'Enviando "{fname}" para o grupo...')
+
     # Dispara um announce UDP imediato para redescobrir peers na rede.
     def _refresh_peers(self):
         self.messenger.discovery._send_announce()  # envia pacote UDP de presenca agora
@@ -7850,6 +8436,152 @@ class LanMessengerApp:
             if has_update:
                 self.root.after(0, lambda: self._show_update_bar(ver))
         updater.check_update_async(share, _on_result)
+
+    # ========================================
+    # LEMBRETES
+    # ========================================
+
+    # Inicia timer que checa lembretes pendentes a cada 30s
+    def _start_reminder_timer(self):
+        self._check_reminders()
+        self.root.after(30000, self._start_reminder_timer)
+
+    # Checa lembretes pendentes e dispara notificacao
+    def _check_reminders(self):
+        try:
+            pending = self.messenger.db.get_pending_reminders()
+            for rem in pending:
+                self.messenger.db.mark_reminder_notified(rem['id'])
+                text = rem.get('text', 'Lembrete')
+                # Notificacao Windows
+                if HAS_WINOTIFY:
+                    try:
+                        n = WinNotification(app_id=APP_NAME,
+                                            title='\u23f0 Lembrete',
+                                            msg=text)
+                        n.set_audio(wn_audio.Default, loop=False)
+                        n.show()
+                    except Exception:
+                        pass
+                # Messagebox como fallback
+                else:
+                    self.root.after(0, lambda t=text: messagebox.showinfo(
+                        'Lembrete', t))
+                SoundPlayer.play_notification()
+        except Exception:
+            log.exception('Erro ao checar lembretes')
+
+    # Abre janela de gerenciamento de lembretes
+    def _show_reminders(self):
+        win = tk.Toplevel(self.root)
+        win.title('Lembretes')
+        win.transient(self.root)
+        win.configure(bg='#ffffff')
+        _center_window(win, 420, 400)
+        _apply_rounded_corners(win)
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        # Header
+        hdr = tk.Frame(win, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='\u23f0 Lembretes', font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff').pack(padx=10, pady=8, side='left')
+        tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
+                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+                  padx=10, pady=3, cursor='hand2',
+                  command=lambda: self._new_reminder_dialog(win, list_frame)
+                  ).pack(side='right', padx=10, pady=6)
+
+        # Lista de lembretes
+        list_frame = tk.Frame(win, bg='#ffffff')
+        list_frame.pack(fill='both', expand=True, padx=8, pady=8)
+        self._refresh_reminders_list(list_frame)
+
+    def _refresh_reminders_list(self, parent):
+        for w in parent.winfo_children():
+            w.destroy()
+        reminders = self.messenger.db.get_all_reminders()
+        if not reminders:
+            tk.Label(parent, text='Nenhum lembrete.', font=('Segoe UI', 10),
+                     bg='#ffffff', fg='#718096').pack(pady=20)
+            return
+        for rem in reminders:
+            row = tk.Frame(parent, bg='#f7fafc', highlightthickness=1,
+                           highlightbackground='#e2e8f0')
+            row.pack(fill='x', pady=2)
+            text = rem.get('text', '')
+            remind_at = datetime.fromtimestamp(rem['remind_at']).strftime('%d/%m/%Y %H:%M')
+            status = '\u2714' if rem.get('notified') else '\u23f3'
+            tk.Label(row, text=f'{status} {text}', font=('Segoe UI', 9),
+                     bg='#f7fafc', fg='#1a202c', anchor='w').pack(
+                     side='left', fill='x', expand=True, padx=8, pady=4)
+            tk.Label(row, text=remind_at, font=('Segoe UI', 8),
+                     bg='#f7fafc', fg='#718096').pack(side='right', padx=(0, 4))
+            tk.Button(row, text='\u2715', font=('Segoe UI', 8),
+                      bg='#f7fafc', fg='#cc2222', relief='flat', bd=0,
+                      cursor='hand2',
+                      command=lambda rid=rem['id'], p=parent: (
+                          self.messenger.db.delete_reminder(rid),
+                          self._refresh_reminders_list(p))
+                      ).pack(side='right', padx=4)
+
+    # Dialogo para criar novo lembrete
+    def _new_reminder_dialog(self, parent_win, list_frame):
+        dlg = tk.Toplevel(parent_win)
+        dlg.title('Novo Lembrete')
+        dlg.transient(parent_win)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 340, 220)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        tk.Label(dlg, text='Texto:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
+        txt_entry = tk.Entry(dlg, font=('Segoe UI', 10), relief='flat',
+                              bg='#f7fafc', highlightthickness=1,
+                              highlightbackground='#e2e8f0')
+        txt_entry.pack(fill='x', padx=12)
+        txt_entry.focus_set()
+
+        time_frame = tk.Frame(dlg, bg='#ffffff')
+        time_frame.pack(fill='x', padx=12, pady=(10, 0))
+        tk.Label(time_frame, text='Em quantos minutos:',
+                 font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+        min_entry = tk.Entry(time_frame, font=('Segoe UI', 10), width=8,
+                              relief='flat', bg='#f7fafc',
+                              highlightthickness=1, highlightbackground='#e2e8f0')
+        min_entry.pack(side='left', padx=(8, 0))
+        min_entry.insert(0, '30')
+
+        def _create():
+            text = txt_entry.get().strip()
+            try:
+                minutes = int(min_entry.get().strip())
+            except ValueError:
+                messagebox.showwarning('Lembrete', 'Insira um numero valido de minutos.',
+                                        parent=dlg)
+                return
+            if not text:
+                messagebox.showwarning('Lembrete', 'Insira o texto do lembrete.',
+                                        parent=dlg)
+                return
+            remind_at = time.time() + minutes * 60
+            self.messenger.db.add_reminder(text, remind_at)
+            dlg.destroy()
+            self._refresh_reminders_list(list_frame)
+
+        btn_frame = tk.Frame(dlg, bg='#ffffff')
+        btn_frame.pack(fill='x', padx=12, pady=12)
+        tk.Button(btn_frame, text='Criar', font=('Segoe UI', 9, 'bold'),
+                  bg='#0f2a5c', fg='#ffffff', relief='flat', bd=0,
+                  padx=16, pady=4, cursor='hand2',
+                  command=_create).pack(side='right')
+        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                  padx=12, pady=4, cursor='hand2',
+                  command=dlg.destroy).pack(side='right', padx=(0, 6))
 
     # Verificacao manual via menu Ferramentas.
     def _manual_check_update(self):
@@ -7948,11 +8680,13 @@ class LanMessengerApp:
     # - Se nao esta em foco: mostra toast + pisca as janelas.
     # Se a janela NAO esta aberta: marca contato como nao lido (bold + contagem),
     # mostra toast de notificacao, pisca taskbar e toca o bell do sistema.
-    def _on_message(self, from_user, content, msg_id, timestamp):
-        SoundPlayer.play_notification()  # toca som de nova mensagem
-        if from_user in self.chat_windows:  # janela de chat com este usuario esta aberta?
+    def _on_message(self, from_user, content, msg_id, timestamp,
+                    reply_to='', **kw):
+        SoundPlayer.play_notification()
+        if from_user in self.chat_windows:
             cw = self.chat_windows[from_user]
-            cw.receive_message(content, timestamp)  # entrega mensagem diretamente na janela
+            cw.receive_message(content, timestamp, reply_to=reply_to,
+                               msg_id=msg_id)
             # Notifica apenas se a janela de chat nao esta em foco (usuario nao esta vendo)
             try:
                 if not cw.focus_displayof():  # janela sem foco?
@@ -8014,6 +8748,22 @@ class LanMessengerApp:
                     self.root.bell()
                 except Exception:
                     pass
+
+    # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
+    def _on_poll(self, group_id, poll_data):
+        if group_id not in self.group_windows:
+            return
+        gw = self.group_windows[group_id]
+        action = poll_data.get('action')
+        if action == 'create':
+            gw._display_poll(poll_data['question'], poll_data['options'],
+                             poll_data.get('creator', ''), poll_data['poll_id'])
+        elif action == 'vote':
+            gw.chat_text.configure(state='normal')
+            gw.chat_text.insert('end',
+                f"\u2714 {poll_data.get('voter', '?')} votou na enquete\n\n", 'sys_msg')
+            gw.chat_text.configure(state='disabled')
+            gw.chat_text.see('end')
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #

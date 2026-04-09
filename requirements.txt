@@ -1,4 +1,5 @@
 Pillow>=10.0
 pystray>=0.19
 winotify>=1.1
+windnd>=1.0.7
 pyinstaller>=6.0

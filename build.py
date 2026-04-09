@@ -144,6 +144,7 @@ def _do_build():
         '--hidden-import=PIL',
         '--hidden-import=PIL._imagingtk',
         '--hidden-import=PIL._tkinter_finder',
+        '--hidden-import=windnd',
         '--name=MBChat',
         '--clean',
         MAIN,

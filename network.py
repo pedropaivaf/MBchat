@@ -100,6 +100,8 @@ MT_GROUP_MSG = 'group_message'  # TCP: mensagem de texto em grupo (mesh)
 MT_GROUP_LEAVE = 'group_leave'  # TCP: notificacao de saida do grupo
 MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
 MT_IMAGE = 'image'              # TCP: imagem inline (clipboard, base64)
+MT_POLL_CREATE = 'poll_create'  # TCP: criacao de enquete em grupo
+MT_POLL_VOTE = 'poll_vote'      # TCP: voto em enquete de grupo
 
 
 # Detecta IP local da maquina na rede.
@@ -328,6 +330,7 @@ class UDPDiscovery:
             'note': self.note,          # Nota pessoal
             'avatar_index': self.avatar_index,  # Indice do avatar
             'avatar_data': self.avatar_data,    # Thumbnail base64 JPEG
+            'department': getattr(self, 'department', ''),  # Departamento do usuario
             'ip': get_local_ip(),       # IP local atual
             'hostname': socket.gethostname(),   # Nome da maquina
             'os': f"{platform.system()} {platform.release()}",  # OS info

@@ -141,12 +141,53 @@ class Database:
         c.commit()
 
         # Migration: adiciona coluna avatar_data se não existir
-        # Armazena thumbnail base64 JPEG do avatar custom do peer
         try:
             c.execute("ALTER TABLE contacts ADD COLUMN avatar_data TEXT DEFAULT ''")
             c.commit()
         except Exception:
-            pass  # Coluna já existe, ignora
+            pass
+
+        # Migration: reply_to_id em messages
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN reply_to_id TEXT DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
+
+        # Migration: department e private_note em contacts
+        for col in ('department', 'private_note'):
+            try:
+                c.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT DEFAULT ''")
+                c.commit()
+            except Exception:
+                pass
+
+        # Tabelas novas: polls, poll_votes, reminders
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS polls (
+                poll_id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                creator_uid TEXT NOT NULL,
+                question TEXT NOT NULL,
+                options TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS poll_votes (
+                poll_id TEXT NOT NULL,
+                voter_uid TEXT NOT NULL,
+                option_index INTEGER NOT NULL,
+                timestamp REAL NOT NULL,
+                PRIMARY KEY (poll_id, voter_uid)
+            );
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                remind_at REAL NOT NULL,
+                notified INTEGER DEFAULT 0,
+                created_at REAL NOT NULL
+            );
+        """)
+        c.commit()
 
     # ========================================
     # LOCAL USER — Dados do usuário local
@@ -267,17 +308,6 @@ class Database:
     # ========================================
     # MESSAGES — Histórico de mensagens
     # ========================================
-
-    # Salva mensagem no histórico (is_sent=True se enviada por nós)
-    def save_message(self, msg_id, from_user, to_user, content,
-                     msg_type='text', is_sent=False, timestamp=None):
-        ts = timestamp or time.time()
-        self.conn.execute("""
-            INSERT INTO messages (msg_id, from_user, to_user, content,
-                                  msg_type, timestamp, is_sent)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (msg_id, from_user, to_user, content, msg_type, ts, int(is_sent)))
-        self.conn.commit()
 
     # Retorna histórico entre dois usuários (limit=None = todas, com limit inverte DESC→ASC)
     def get_chat_history(self, user_a, user_b, limit=None, offset=0):
@@ -473,6 +503,118 @@ class Database:
         self.conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
             (key, str(value)))
+        self.conn.commit()
+
+    # ========================================
+    # MESSAGES — reply_to_id
+    # ========================================
+
+    def save_message(self, msg_id, from_user, to_user, content,
+                     msg_type='text', is_sent=False, timestamp=None,
+                     reply_to_id=''):
+        ts = timestamp or time.time()
+        self.conn.execute("""
+            INSERT INTO messages (msg_id, from_user, to_user, content,
+                                  msg_type, timestamp, is_sent, reply_to_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (msg_id, from_user, to_user, content, msg_type, ts,
+              int(is_sent), reply_to_id or ''))
+        self.conn.commit()
+
+    def get_message_by_id(self, msg_id):
+        row = self.conn.execute(
+            "SELECT * FROM messages WHERE msg_id=?", (msg_id,)).fetchone()
+        return dict(row) if row else None
+
+    # ========================================
+    # CONTACTS — department, private_note
+    # ========================================
+
+    def set_contact_department(self, user_id, department):
+        self.conn.execute(
+            "UPDATE contacts SET department=? WHERE user_id=?",
+            (department, user_id))
+        self.conn.commit()
+
+    def set_contact_private_note(self, user_id, note):
+        self.conn.execute(
+            "UPDATE contacts SET private_note=? WHERE user_id=?",
+            (note, user_id))
+        self.conn.commit()
+
+    # ========================================
+    # POLLS — Enquetes de grupo
+    # ========================================
+
+    def save_poll(self, poll_id, group_id, creator_uid, question, options):
+        import json
+        self.conn.execute("""
+            INSERT OR REPLACE INTO polls (poll_id, group_id, creator_uid,
+                                           question, options, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (poll_id, group_id, creator_uid, question,
+              json.dumps(options, ensure_ascii=False), time.time()))
+        self.conn.commit()
+
+    def get_poll(self, poll_id):
+        import json
+        row = self.conn.execute(
+            "SELECT * FROM polls WHERE poll_id=?", (poll_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d['options'] = json.loads(d['options'])
+        return d
+
+    def save_poll_vote(self, poll_id, voter_uid, option_index):
+        self.conn.execute("""
+            INSERT OR REPLACE INTO poll_votes (poll_id, voter_uid,
+                                                option_index, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (poll_id, voter_uid, option_index, time.time()))
+        self.conn.commit()
+
+    def get_poll_votes(self, poll_id):
+        rows = self.conn.execute(
+            "SELECT * FROM poll_votes WHERE poll_id=?",
+            (poll_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ========================================
+    # REMINDERS — Lembretes
+    # ========================================
+
+    def add_reminder(self, text, remind_at):
+        self.conn.execute("""
+            INSERT INTO reminders (text, remind_at, created_at)
+            VALUES (?, ?, ?)
+        """, (text, remind_at, time.time()))
+        self.conn.commit()
+
+    def get_pending_reminders(self):
+        now = time.time()
+        rows = self.conn.execute("""
+            SELECT * FROM reminders
+            WHERE notified=0 AND remind_at <= ?
+            ORDER BY remind_at ASC
+        """, (now,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_reminders(self):
+        rows = self.conn.execute("""
+            SELECT * FROM reminders WHERE notified=0
+            ORDER BY remind_at ASC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_reminder_notified(self, reminder_id):
+        self.conn.execute(
+            "UPDATE reminders SET notified=1 WHERE id=?", (reminder_id,))
+        self.conn.commit()
+
+    def delete_reminder(self, reminder_id):
+        self.conn.execute(
+            "DELETE FROM reminders WHERE id=?", (reminder_id,))
         self.conn.commit()
 
     # Fecha conexão da thread atual
