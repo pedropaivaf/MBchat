@@ -432,6 +432,58 @@ def _setup_scrollbar_style():
 # transparente; os pixels fora do círculo são completamente transparentes.
 # Args:
 #     img_or_path: Caminho (str) para arquivo de imagem OU objeto PIL.Image já aberto.
+# Captura imagem do clipboard com fallback robusto para Win10.
+# PIL ImageGrab.grabclipboard() pode falhar no Win10 (retorna None ou lista de paths).
+# Fallback: acessa CF_DIB via ctypes (win32 API) para capturar screenshots.
+def _grab_clipboard_image():
+    if not HAS_PIL:
+        return None
+    # Tentativa 1: PIL ImageGrab (funciona na maioria dos casos)
+    try:
+        clip = ImageGrab.grabclipboard()
+        if clip is not None:
+            if isinstance(clip, Image.Image):
+                return clip
+            # Win10: pode retornar lista de file paths
+            if isinstance(clip, list):
+                for p in clip:
+                    if isinstance(p, str) and os.path.isfile(p):
+                        try:
+                            return Image.open(p)
+                        except Exception:
+                            continue
+    except Exception:
+        pass
+    # Tentativa 2: win32 clipboard CF_DIB via ctypes (fallback Win10)
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        CF_DIB = 8
+        if not u32.OpenClipboard(0):
+            return None
+        try:
+            if not u32.IsClipboardFormatAvailable(CF_DIB):
+                return None
+            h = u32.GetClipboardData(CF_DIB)
+            if not h:
+                return None
+            k32.GlobalLock.restype = ctypes.c_void_p
+            ptr = k32.GlobalLock(h)
+            if not ptr:
+                return None
+            try:
+                size = k32.GlobalSize(h)
+                data = ctypes.string_at(ptr, size)
+                return Image.open(io.BytesIO(data))
+            finally:
+                k32.GlobalUnlock(h)
+        finally:
+            u32.CloseClipboard()
+    except Exception:
+        return None
+
 #     size: Tamanho final do avatar em pixels (quadrado NxN).
 #     antialias: Fator de superamostragem (2 = dobro da resolução final).
 # Returns:
@@ -2623,24 +2675,21 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_bind('copy_btn', '<Leave>',
                                 lambda e: self.chat_text.config(cursor='arrow'))
 
-        # Tags para quote/reply
-        self.chat_text.tag_configure('quote_border',
-                                     foreground='#2451a0',
-                                     font=('Segoe UI', 8),
-                                     lmargin1=8, lmargin2=8,
-                                     spacing1=2)
+        # Tags para quote/reply (barra azul simulada via lmargin + background)
         self.chat_text.tag_configure('quote_name',
                                      background='#e2e8f0',
                                      foreground='#2451a0',
                                      font=('Segoe UI', 8, 'bold'),
-                                     lmargin1=14, lmargin2=14,
-                                     spacing1=4)
+                                     lmargin1=12, lmargin2=12,
+                                     rmargin=40,
+                                     spacing1=4, spacing3=0)
         self.chat_text.tag_configure('quote',
                                      background='#e2e8f0',
                                      foreground='#4a5568',
                                      font=('Segoe UI', 8),
-                                     lmargin1=14, lmargin2=14,
-                                     spacing1=1, spacing3=3)
+                                     lmargin1=12, lmargin2=12,
+                                     rmargin=40,
+                                     spacing1=0, spacing3=4)
 
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text}]
@@ -2869,9 +2918,7 @@ class ChatWindow(tk.Toplevel):
                     q_name = self.messenger.display_name
                 else:
                     q_name = self.peer_name
-                self.chat_text.insert('end', '\u2588 ', 'quote_border')
                 self.chat_text.insert('end', f'{q_name}\n', 'quote_name')
-                self.chat_text.insert('end', '\u2588 ', 'quote_border')
                 self.chat_text.insert('end', f'{q_text}\n', 'quote')
 
         style = self.messenger.db.get_setting('msg_style', 'bubble')
@@ -2991,33 +3038,30 @@ class ChatWindow(tk.Toplevel):
                          args=(self.peer_id, False),
                          daemon=True).start()
 
-    # Mostra barra de reply acima do campo de entrada
+    # Mostra barra de reply acima do campo de entrada (estilo WhatsApp)
     def _show_reply_bar(self, msg_id, sender, text_preview):
         self._reply_to = {'msg_id': msg_id, 'sender': sender,
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        bar = tk.Frame(self, bg='#e2e8f0')
-        bar.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
-        # Borda azul esquerda (estilo WhatsApp)
-        border = tk.Frame(bar, bg='#2451a0', width=3)
-        border.pack(side='left', fill='y')
-        border.pack_propagate(False)
+        # Outer: borda azul esquerda via bg do container + padx assimetrico
+        outer = tk.Frame(self, bg='#2451a0')
+        outer.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
+        bar = tk.Frame(outer, bg='#e2e8f0')
+        bar.pack(fill='both', expand=True, padx=(3, 0))  # 3px azul a esquerda
         # Conteudo: nome + texto
-        text_frame = tk.Frame(bar, bg='#e2e8f0')
-        text_frame.pack(side='left', fill='x', expand=True, padx=6, pady=3)
-        tk.Label(text_frame, text=sender,
+        tk.Label(bar, text=sender,
                  font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
-                 fg='#2451a0', anchor='w').pack(fill='x')
-        tk.Label(text_frame, text=text_preview[:60],
+                 fg='#2451a0', anchor='w').pack(fill='x', padx=6, pady=(3, 0))
+        tk.Label(bar, text=text_preview[:60],
                  font=('Segoe UI', 8), bg='#e2e8f0',
-                 fg='#4a5568', anchor='w').pack(fill='x')
+                 fg='#4a5568', anchor='w').pack(fill='x', padx=6, pady=(0, 3))
         # Botao fechar
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                            bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
-        btn_x.pack(side='right', padx=4)
-        self._reply_bar = bar
+        btn_x.place(relx=1.0, x=-4, y=2, anchor='ne')
+        self._reply_bar = outer
 
     # Remove barra de reply
     def _cancel_reply(self):
@@ -3965,25 +4009,24 @@ class ChatWindow(tk.Toplevel):
     def _show_image_preview(self, img):
         self._cancel_image_preview()
         self._pending_image = img
-        bar = tk.Frame(self, bg='#e2e8f0')
-        bar.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
-        # Borda azul esquerda
-        border = tk.Frame(bar, bg='#2451a0', width=3)
-        border.pack(side='left', fill='y')
-        border.pack_propagate(False)
+        # Outer: borda azul esquerda
+        outer = tk.Frame(self, bg='#2451a0')
+        outer.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
+        bar = tk.Frame(outer, bg='#e2e8f0')
+        bar.pack(fill='both', expand=True, padx=(3, 0))
         # Thumbnail 80px
         thumb = img.copy()
         thumb.thumbnail((80, 80), Image.LANCZOS)
         tk_thumb = ImageTk.PhotoImage(thumb)
         self._preview_thumb_ref = tk_thumb
         tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
-        tk.Label(bar, text='Imagem pronta para enviar',
+        tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
                  font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
-                 anchor='w').pack(side='left', fill='x', expand=True, padx=4)
+                 anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
         tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                   bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                   cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
-        self._image_preview_bar = bar
+        self._image_preview_bar = outer
         self.entry.focus_set()
 
     # Cancela preview de imagem pendente
@@ -3998,24 +4041,10 @@ class ChatWindow(tk.Toplevel):
     def _on_paste(self, event):
         if not HAS_PIL:
             return
-        try:
-            clip = ImageGrab.grabclipboard()
-            if clip is not None:
-                # Win10: grabclipboard() pode retornar lista de file paths
-                if isinstance(clip, list):
-                    for path in clip:
-                        if isinstance(path, str) and os.path.isfile(path):
-                            try:
-                                clip = Image.open(path)
-                                break
-                            except Exception:
-                                continue
-                    else:
-                        return
-                self._show_image_preview(clip)
-                return 'break'
-        except Exception:
-            pass
+        img = _grab_clipboard_image()
+        if img is not None:
+            self._show_image_preview(img)
+            return 'break'
 
     # Comprime e envia imagem do clipboard para o peer
     def _send_clipboard_image(self, img):
@@ -4095,6 +4124,8 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
                                     lambda e, p=image_path: os.startfile(p))
+            self.chat_text.tag_bind(tag_name, '<Button-3>',
+                                    lambda e, p=image_path: self._show_image_ctx(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
                                     lambda e: self.chat_text.config(cursor='hand2'))
             self.chat_text.tag_bind(tag_name, '<Leave>',
@@ -4106,6 +4137,50 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
+
+    # Menu de contexto para imagens no chat (Abrir / Salvar como / Copiar)
+    def _show_image_ctx(self, event, image_path):
+        m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
+        m.add_command(label='Abrir', command=lambda: os.startfile(image_path))
+        m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
+        m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
+        m.tk_popup(event.x_root, event.y_root)
+
+    def _save_image_as(self, image_path):
+        ext = os.path.splitext(image_path)[1] or '.jpg'
+        dest = filedialog.asksaveasfilename(
+            parent=self, title='Salvar imagem',
+            defaultextension=ext,
+            initialfile=os.path.basename(image_path),
+            filetypes=[('Imagem JPEG', '*.jpg'), ('Imagem PNG', '*.png'), ('Todos', '*.*')])
+        if dest:
+            try:
+                import shutil
+                shutil.copy2(image_path, dest)
+            except Exception:
+                pass
+
+    def _copy_image_to_clipboard(self, image_path):
+        try:
+            img = Image.open(image_path).convert('RGB')
+            buf = io.BytesIO()
+            img.save(buf, format='BMP')
+            bmp_data = buf.getvalue()[14:]  # remove BMP file header (14 bytes)
+            import ctypes
+            u32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            CF_DIB = 8
+            u32.OpenClipboard(0)
+            u32.EmptyClipboard()
+            h = k32.GlobalAlloc(0x0002, len(bmp_data))  # GMEM_MOVEABLE
+            k32.GlobalLock.restype = ctypes.c_void_p
+            ptr = k32.GlobalLock(h)
+            ctypes.memmove(ptr, bmp_data, len(bmp_data))
+            k32.GlobalUnlock(h)
+            u32.SetClipboardData(CF_DIB, h)
+            u32.CloseClipboard()
+        except Exception:
+            pass
 
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
@@ -4382,24 +4457,21 @@ class GroupChatWindow(tk.Toplevel):
                                      justify='left', lmargin1=8,
                                      lmargin2=8, rmargin=80)
 
-        # Tags para reply/quote
-        self.chat_text.tag_configure('quote_border',
-                                     foreground='#2451a0',
-                                     font=('Segoe UI', 8),
-                                     lmargin1=8, lmargin2=8,
-                                     spacing1=2)
+        # Tags para quote/reply (barra azul simulada via lmargin + background)
         self.chat_text.tag_configure('quote_name',
                                      background='#e2e8f0',
                                      foreground='#2451a0',
                                      font=('Segoe UI', 8, 'bold'),
-                                     lmargin1=14, lmargin2=14,
-                                     spacing1=4)
+                                     lmargin1=12, lmargin2=12,
+                                     rmargin=40,
+                                     spacing1=4, spacing3=0)
         self.chat_text.tag_configure('quote',
                                      background='#e2e8f0',
                                      foreground='#4a5568',
                                      font=('Segoe UI', 8),
-                                     lmargin1=14, lmargin2=14,
-                                     spacing1=1, spacing3=3)
+                                     lmargin1=12, lmargin2=12,
+                                     rmargin=40,
+                                     spacing1=0, spacing3=4)
 
         # Tag para @mencao destacada
         self.chat_text.tag_configure('mention',
@@ -4926,9 +4998,7 @@ class GroupChatWindow(tk.Toplevel):
             if orig:
                 q_name = orig.get('from_user', '')[:20]
                 q_text = orig.get('content', '')[:80]
-                self.chat_text.insert('end', '\u2588 ', 'quote_border')
                 self.chat_text.insert('end', f'{q_name}\n', 'quote_name')
-                self.chat_text.insert('end', '\u2588 ', 'quote_border')
                 self.chat_text.insert('end', f'{q_text}\n', 'quote')
 
         style = self.app.messenger.db.get_setting('msg_style', 'bubble')
@@ -5006,33 +5076,30 @@ class GroupChatWindow(tk.Toplevel):
             self._send_message()
             return 'break'  # Impede inserção de nova linha
 
-    # Mostra barra de reply acima do campo de entrada
+    # Mostra barra de reply acima do campo de entrada (estilo WhatsApp)
     def _show_reply_bar(self, msg_id, sender, text_preview):
         self._reply_to = {'msg_id': msg_id, 'sender': sender,
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        bar = tk.Frame(self, bg='#e2e8f0')
-        bar.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
-        # Borda azul esquerda (estilo WhatsApp)
-        border = tk.Frame(bar, bg='#2451a0', width=3)
-        border.pack(side='left', fill='y')
-        border.pack_propagate(False)
+        # Outer: borda azul esquerda via bg do container + padx assimetrico
+        outer = tk.Frame(self, bg='#2451a0')
+        outer.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
+        bar = tk.Frame(outer, bg='#e2e8f0')
+        bar.pack(fill='both', expand=True, padx=(3, 0))  # 3px azul a esquerda
         # Conteudo: nome + texto
-        text_frame = tk.Frame(bar, bg='#e2e8f0')
-        text_frame.pack(side='left', fill='x', expand=True, padx=6, pady=3)
-        tk.Label(text_frame, text=sender,
+        tk.Label(bar, text=sender,
                  font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
-                 fg='#2451a0', anchor='w').pack(fill='x')
-        tk.Label(text_frame, text=text_preview[:60],
+                 fg='#2451a0', anchor='w').pack(fill='x', padx=6, pady=(3, 0))
+        tk.Label(bar, text=text_preview[:60],
                  font=('Segoe UI', 8), bg='#e2e8f0',
-                 fg='#4a5568', anchor='w').pack(fill='x')
+                 fg='#4a5568', anchor='w').pack(fill='x', padx=6, pady=(0, 3))
         # Botao fechar
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                            bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
-        btn_x.pack(side='right', padx=4)
-        self._reply_bar = bar
+        btn_x.place(relx=1.0, x=-4, y=2, anchor='ne')
+        self._reply_bar = outer
 
     def _cancel_reply(self):
         self._reply_to = None
@@ -5283,25 +5350,24 @@ class GroupChatWindow(tk.Toplevel):
     def _show_image_preview(self, img):
         self._cancel_image_preview()
         self._pending_image = img
-        bar = tk.Frame(self, bg='#e2e8f0')
-        bar.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
-        # Borda azul esquerda
-        border = tk.Frame(bar, bg='#2451a0', width=3)
-        border.pack(side='left', fill='y')
-        border.pack_propagate(False)
+        # Outer: borda azul esquerda
+        outer = tk.Frame(self, bg='#2451a0')
+        outer.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
+        bar = tk.Frame(outer, bg='#e2e8f0')
+        bar.pack(fill='both', expand=True, padx=(3, 0))
         # Thumbnail 80px
         thumb = img.copy()
         thumb.thumbnail((80, 80), Image.LANCZOS)
         tk_thumb = ImageTk.PhotoImage(thumb)
         self._preview_thumb_ref = tk_thumb
         tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
-        tk.Label(bar, text='Imagem pronta para enviar',
+        tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
                  font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
-                 anchor='w').pack(side='left', fill='x', expand=True, padx=4)
+                 anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
         tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
                   bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                   cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
-        self._image_preview_bar = bar
+        self._image_preview_bar = outer
         self.entry.focus_set()
 
     # Cancela preview de imagem pendente
@@ -5316,24 +5382,10 @@ class GroupChatWindow(tk.Toplevel):
     def _on_paste(self, event):
         if not HAS_PIL:
             return
-        try:
-            clip = ImageGrab.grabclipboard()
-            if clip is not None:
-                # Win10: grabclipboard() pode retornar lista de file paths
-                if isinstance(clip, list):
-                    for path in clip:
-                        if isinstance(path, str) and os.path.isfile(path):
-                            try:
-                                clip = Image.open(path)
-                                break
-                            except Exception:
-                                continue
-                    else:
-                        return
-                self._show_image_preview(clip)
-                return 'break'
-        except Exception:
-            pass
+        img = _grab_clipboard_image()
+        if img is not None:
+            self._show_image_preview(img)
+            return 'break'
 
     # Comprime e envia imagem do clipboard para todos os membros do grupo
     def _send_clipboard_image(self, img):
@@ -5404,6 +5456,8 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
                                     lambda e, p=image_path: os.startfile(p))
+            self.chat_text.tag_bind(tag_name, '<Button-3>',
+                                    lambda e, p=image_path: self._show_image_ctx(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
                                     lambda e: self.chat_text.config(cursor='hand2'))
             self.chat_text.tag_bind(tag_name, '<Leave>',
@@ -5415,6 +5469,50 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
+
+    # Menu de contexto para imagens no chat (Abrir / Salvar como / Copiar)
+    def _show_image_ctx(self, event, image_path):
+        m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
+        m.add_command(label='Abrir', command=lambda: os.startfile(image_path))
+        m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
+        m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
+        m.tk_popup(event.x_root, event.y_root)
+
+    def _save_image_as(self, image_path):
+        ext = os.path.splitext(image_path)[1] or '.jpg'
+        dest = filedialog.asksaveasfilename(
+            parent=self, title='Salvar imagem',
+            defaultextension=ext,
+            initialfile=os.path.basename(image_path),
+            filetypes=[('Imagem JPEG', '*.jpg'), ('Imagem PNG', '*.png'), ('Todos', '*.*')])
+        if dest:
+            try:
+                import shutil
+                shutil.copy2(image_path, dest)
+            except Exception:
+                pass
+
+    def _copy_image_to_clipboard(self, image_path):
+        try:
+            img = Image.open(image_path).convert('RGB')
+            buf = io.BytesIO()
+            img.save(buf, format='BMP')
+            bmp_data = buf.getvalue()[14:]
+            import ctypes
+            u32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            CF_DIB = 8
+            u32.OpenClipboard(0)
+            u32.EmptyClipboard()
+            h = k32.GlobalAlloc(0x0002, len(bmp_data))
+            k32.GlobalLock.restype = ctypes.c_void_p
+            ptr = k32.GlobalLock(h)
+            ctypes.memmove(ptr, bmp_data, len(bmp_data))
+            k32.GlobalUnlock(h)
+            u32.SetClipboardData(CF_DIB, h)
+            u32.CloseClipboard()
+        except Exception:
+            pass
 
     # Confirmação para sair de grupo fixo.
     def _confirm_leave(self):
