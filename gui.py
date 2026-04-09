@@ -2512,6 +2512,9 @@ class ChatWindow(tk.Toplevel):
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
         self._reply_to = None   # {msg_id, sender, text} — mensagem sendo respondida
         self._reply_bar = None  # Frame da barra de reply
+        self._pending_image = None        # PIL Image aguardando envio (Ctrl+V preview)
+        self._image_preview_bar = None    # Frame da barra de preview de imagem
+        self._preview_thumb_ref = None    # referencia para evitar GC do thumbnail
 
         # Área de exibição das mensagens (chat_frame se expande para preencher o espaço restante)
         chat_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
@@ -2620,19 +2623,24 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_bind('copy_btn', '<Leave>',
                                 lambda e: self.chat_text.config(cursor='arrow'))
 
-        # Tag para quote/reply (fundo suave, borda esquerda visual via lmargin)
-        self.chat_text.tag_configure('quote',
-                                     background='#e8ecf1',
-                                     foreground='#4a5568',
-                                     font=('Segoe UI', 8, 'italic'),
-                                     lmargin1=12, lmargin2=12,
-                                     spacing1=2, spacing3=2)
+        # Tags para quote/reply
+        self.chat_text.tag_configure('quote_border',
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 8),
+                                     lmargin1=8, lmargin2=8,
+                                     spacing1=2)
         self.chat_text.tag_configure('quote_name',
-                                     background='#e8ecf1',
+                                     background='#e2e8f0',
                                      foreground='#2451a0',
                                      font=('Segoe UI', 8, 'bold'),
-                                     lmargin1=12, lmargin2=12,
+                                     lmargin1=14, lmargin2=14,
                                      spacing1=4)
+        self.chat_text.tag_configure('quote',
+                                     background='#e2e8f0',
+                                     foreground='#4a5568',
+                                     font=('Segoe UI', 8),
+                                     lmargin1=14, lmargin2=14,
+                                     spacing1=1, spacing3=3)
 
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text}]
@@ -2861,8 +2869,10 @@ class ChatWindow(tk.Toplevel):
                     q_name = self.messenger.display_name
                 else:
                     q_name = self.peer_name
-                self.chat_text.insert('end', f'\u2503 {q_name}\n', 'quote_name')
-                self.chat_text.insert('end', f'\u2503 {q_text}\n', 'quote')
+                self.chat_text.insert('end', '\u2588 ', 'quote_border')
+                self.chat_text.insert('end', f'{q_name}\n', 'quote_name')
+                self.chat_text.insert('end', '\u2588 ', 'quote_border')
+                self.chat_text.insert('end', f'{q_text}\n', 'quote')
 
         style = self.messenger.db.get_setting('msg_style', 'bubble')
 
@@ -2891,7 +2901,7 @@ class ChatWindow(tk.Toplevel):
 
         self._msg_ranges.append(text)        # salva texto para funcionalidade copiar
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
-                               'text': text[:80]})
+                               'text': text[:80], 'is_mine': is_mine})
         self.chat_text.insert('end', '\n')   # linha em branco entre mensagens
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
@@ -2987,15 +2997,24 @@ class ChatWindow(tk.Toplevel):
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        bar = tk.Frame(self, bg='#e8ecf1')
-        # Pack antes do input_outer (que esta com side=bottom)
+        bar = tk.Frame(self, bg='#e2e8f0')
         bar.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
-        lbl = tk.Label(bar, text=f'\u21b3 {sender}: {text_preview[:60]}',
-                        font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568',
-                        anchor='w')
-        lbl.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        # Borda azul esquerda (estilo WhatsApp)
+        border = tk.Frame(bar, bg='#2451a0', width=3)
+        border.pack(side='left', fill='y')
+        border.pack_propagate(False)
+        # Conteudo: nome + texto
+        text_frame = tk.Frame(bar, bg='#e2e8f0')
+        text_frame.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        tk.Label(text_frame, text=sender,
+                 font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
+                 fg='#2451a0', anchor='w').pack(fill='x')
+        tk.Label(text_frame, text=text_preview[:60],
+                 font=('Segoe UI', 8), bg='#e2e8f0',
+                 fg='#4a5568', anchor='w').pack(fill='x')
+        # Botao fechar
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
-                           bg='#e8ecf1', fg='#718096', relief='flat', bd=0,
+                           bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
         btn_x.pack(side='right', padx=4)
         self._reply_bar = bar
@@ -3014,6 +3033,12 @@ class ChatWindow(tk.Toplevel):
         # Determina qual mensagem esta naquela posicao
         line = int(idx.split('.')[0])
         self._ctx_msg_idx = self._find_msg_at_line(line)
+        # Esconde Responder para mensagens proprias
+        msg_idx = self._ctx_msg_idx
+        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
+            self._chat_ctx.entryconfigure(0, state='disabled')
+        else:
+            self._chat_ctx.entryconfigure(0, state='normal')
         self._chat_ctx.tk_popup(event.x_root, event.y_root)
 
     # Encontra indice da mensagem na posicao da linha clicada
@@ -3051,19 +3076,23 @@ class ChatWindow(tk.Toplevel):
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
     def _send_message(self):
-        content = self._get_entry_content()  # reconstrói texto + emojis do campo
-        if not content:
-            return  # não envia mensagens vazias
+        content = self._get_entry_content()
+        pending_img = self._pending_image
+        if not content and not pending_img:
+            return
         reply_to_id = self._reply_to['msg_id'] if self._reply_to else ''
-        self._cancel_reply()  # limpa barra de reply
-        self.entry.delete('1.0', 'end')  # limpa o campo de entrada
-        self._entry_img_map.clear()       # limpa mapa de imagens
-        self._append_message(self.messenger.display_name, content, True,
-                             reply_to=reply_to_id)  # exibe localmente
-        # Envia via rede em thread separada para não travar a UI
-        threading.Thread(target=self.messenger.send_message,
-                         args=(self.peer_id, content, reply_to_id),
-                         daemon=True).start()
+        self._cancel_reply()
+        self._cancel_image_preview()
+        self.entry.delete('1.0', 'end')
+        self._entry_img_map.clear()
+        if content:
+            self._append_message(self.messenger.display_name, content, True,
+                                 reply_to=reply_to_id)
+            threading.Thread(target=self.messenger.send_message,
+                             args=(self.peer_id, content, reply_to_id),
+                             daemon=True).start()
+        if pending_img:
+            self._send_clipboard_image(pending_img)
 
     # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
     def _send_file(self):
@@ -3932,17 +3961,61 @@ class ChatWindow(tk.Toplevel):
         popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
         popup.focus_set()
 
-    # Ctrl+V — detecta imagem no clipboard e envia
+    # Mostra preview da imagem colada antes de enviar
+    def _show_image_preview(self, img):
+        self._cancel_image_preview()
+        self._pending_image = img
+        bar = tk.Frame(self, bg='#e2e8f0')
+        bar.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
+        # Borda azul esquerda
+        border = tk.Frame(bar, bg='#2451a0', width=3)
+        border.pack(side='left', fill='y')
+        border.pack_propagate(False)
+        # Thumbnail 80px
+        thumb = img.copy()
+        thumb.thumbnail((80, 80), Image.LANCZOS)
+        tk_thumb = ImageTk.PhotoImage(thumb)
+        self._preview_thumb_ref = tk_thumb
+        tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
+        tk.Label(bar, text='Imagem pronta para enviar',
+                 font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
+                 anchor='w').pack(side='left', fill='x', expand=True, padx=4)
+        tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                  bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
+                  cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
+        self._image_preview_bar = bar
+        self.entry.focus_set()
+
+    # Cancela preview de imagem pendente
+    def _cancel_image_preview(self):
+        self._pending_image = None
+        self._preview_thumb_ref = None
+        if self._image_preview_bar:
+            self._image_preview_bar.destroy()
+            self._image_preview_bar = None
+
+    # Ctrl+V — detecta imagem no clipboard e mostra preview
     def _on_paste(self, event):
         if not HAS_PIL:
-            return  # sem PIL, deixa o paste padrao de texto funcionar
+            return
         try:
-            img = ImageGrab.grabclipboard()
-            if img is not None:
-                self._send_clipboard_image(img)
-                return 'break'  # consome evento (nao cola texto)
+            clip = ImageGrab.grabclipboard()
+            if clip is not None:
+                # Win10: grabclipboard() pode retornar lista de file paths
+                if isinstance(clip, list):
+                    for path in clip:
+                        if isinstance(path, str) and os.path.isfile(path):
+                            try:
+                                clip = Image.open(path)
+                                break
+                            except Exception:
+                                continue
+                    else:
+                        return
+                self._show_image_preview(clip)
+                return 'break'
         except Exception:
-            pass  # nao e imagem — deixa o paste padrao funcionar
+            pass
 
     # Comprime e envia imagem do clipboard para o peer
     def _send_clipboard_image(self, img):
@@ -4011,6 +4084,9 @@ class ChatWindow(tk.Toplevel):
             tk_img = ImageTk.PhotoImage(pil_img)
             self._image_cache[image_path] = tk_img  # evita garbage collection
             self.chat_text.image_create('end', image=tk_img, padx=4, pady=2)
+            # Aplica tag de alinhamento (justify right para is_mine em bubble mode)
+            img_idx = self.chat_text.index('end - 2 chars')
+            self.chat_text.tag_add(msg_tag, img_idx, self.chat_text.index('end - 1 chars'))
             # Clique abre imagem no visualizador padrao do sistema
             tag_name = f'img_{id(tk_img)}'
             self.chat_text.tag_add(tag_name,
@@ -4214,7 +4290,10 @@ class GroupChatWindow(tk.Toplevel):
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
         self._reply_to = None   # {msg_id, sender, text}
         self._reply_bar = None  # Frame da barra de reply
-        self._msg_data = []     # [{msg_id, sender, text}] para reply
+        self._pending_image = None        # PIL Image aguardando envio (Ctrl+V preview)
+        self._image_preview_bar = None    # Frame da barra de preview de imagem
+        self._preview_thumb_ref = None    # referencia para evitar GC do thumbnail
+        self._msg_data = []     # [{msg_id, sender, text, is_mine}] para reply
         self._mention_popup = None  # Popup de autocomplete @mencao
 
         # Drag & Drop de arquivos (windnd)
@@ -4304,18 +4383,23 @@ class GroupChatWindow(tk.Toplevel):
                                      lmargin2=8, rmargin=80)
 
         # Tags para reply/quote
-        self.chat_text.tag_configure('quote',
-                                     background='#e8ecf1',
-                                     foreground='#4a5568',
-                                     font=('Segoe UI', 8, 'italic'),
-                                     lmargin1=12, lmargin2=12,
-                                     spacing1=2, spacing3=2)
+        self.chat_text.tag_configure('quote_border',
+                                     foreground='#2451a0',
+                                     font=('Segoe UI', 8),
+                                     lmargin1=8, lmargin2=8,
+                                     spacing1=2)
         self.chat_text.tag_configure('quote_name',
-                                     background='#e8ecf1',
+                                     background='#e2e8f0',
                                      foreground='#2451a0',
                                      font=('Segoe UI', 8, 'bold'),
-                                     lmargin1=12, lmargin2=12,
+                                     lmargin1=14, lmargin2=14,
                                      spacing1=4)
+        self.chat_text.tag_configure('quote',
+                                     background='#e2e8f0',
+                                     foreground='#4a5568',
+                                     font=('Segoe UI', 8),
+                                     lmargin1=14, lmargin2=14,
+                                     spacing1=1, spacing3=3)
 
         # Tag para @mencao destacada
         self.chat_text.tag_configure('mention',
@@ -4842,8 +4926,10 @@ class GroupChatWindow(tk.Toplevel):
             if orig:
                 q_name = orig.get('from_user', '')[:20]
                 q_text = orig.get('content', '')[:80]
-                self.chat_text.insert('end', f'\u2503 {q_name}\n', 'quote_name')
-                self.chat_text.insert('end', f'\u2503 {q_text}\n', 'quote')
+                self.chat_text.insert('end', '\u2588 ', 'quote_border')
+                self.chat_text.insert('end', f'{q_name}\n', 'quote_name')
+                self.chat_text.insert('end', '\u2588 ', 'quote_border')
+                self.chat_text.insert('end', f'{q_text}\n', 'quote')
 
         style = self.app.messenger.db.get_setting('msg_style', 'bubble')
 
@@ -4870,7 +4956,7 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.insert('end', '\n')
 
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
-                               'text': text[:80]})
+                               'text': text[:80], 'is_mine': is_mine})
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
@@ -4926,14 +5012,24 @@ class GroupChatWindow(tk.Toplevel):
                           'text': text_preview}
         if self._reply_bar:
             self._reply_bar.destroy()
-        bar = tk.Frame(self, bg='#e8ecf1')
+        bar = tk.Frame(self, bg='#e2e8f0')
         bar.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
-        lbl = tk.Label(bar, text=f'\u21b3 {sender}: {text_preview[:60]}',
-                        font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568',
-                        anchor='w')
-        lbl.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        # Borda azul esquerda (estilo WhatsApp)
+        border = tk.Frame(bar, bg='#2451a0', width=3)
+        border.pack(side='left', fill='y')
+        border.pack_propagate(False)
+        # Conteudo: nome + texto
+        text_frame = tk.Frame(bar, bg='#e2e8f0')
+        text_frame.pack(side='left', fill='x', expand=True, padx=6, pady=3)
+        tk.Label(text_frame, text=sender,
+                 font=('Segoe UI', 8, 'bold'), bg='#e2e8f0',
+                 fg='#2451a0', anchor='w').pack(fill='x')
+        tk.Label(text_frame, text=text_preview[:60],
+                 font=('Segoe UI', 8), bg='#e2e8f0',
+                 fg='#4a5568', anchor='w').pack(fill='x')
+        # Botao fechar
         btn_x = tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
-                           bg='#e8ecf1', fg='#718096', relief='flat', bd=0,
+                           bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
                            cursor='hand2', command=self._cancel_reply)
         btn_x.pack(side='right', padx=4)
         self._reply_bar = bar
@@ -4950,6 +5046,12 @@ class GroupChatWindow(tk.Toplevel):
         self._ctx_click_index = idx
         line = int(idx.split('.')[0])
         self._ctx_msg_idx = self._find_msg_at_line(line)
+        # Esconde Responder para mensagens proprias
+        msg_idx = self._ctx_msg_idx
+        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
+            self._chat_ctx.entryconfigure(0, state='disabled')
+        else:
+            self._chat_ctx.entryconfigure(0, state='normal')
         self._chat_ctx.tk_popup(event.x_root, event.y_root)
 
     def _find_msg_at_line(self, click_line):
@@ -5158,29 +5260,77 @@ class GroupChatWindow(tk.Toplevel):
 
     # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
-        content = self._get_entry_content()  # Extrai texto + emojis do campo
-        if not content:
+        content = self._get_entry_content()
+        pending_img = self._pending_image
+        if not content and not pending_img:
             return
         reply_to_id = self._reply_to['msg_id'] if self._reply_to else ''
-        mentions = self._extract_mentions(content)
+        mentions = self._extract_mentions(content) if content else []
         self._cancel_reply()
-        self.entry.delete('1.0', 'end')    # Limpa campo de entrada
-        self._entry_img_map.clear()         # Limpa mapeamento de imagens
-        self._append_message(self.app.messenger.display_name, content, True,
-                             reply_to=reply_to_id, mentions=mentions)
-        # Envia em thread background para não travar a UI
-        threading.Thread(target=self.app.messenger.send_group_message,
-                         args=(self.group_id, content, reply_to_id, mentions),
-                         daemon=True).start()
+        self._cancel_image_preview()
+        self.entry.delete('1.0', 'end')
+        self._entry_img_map.clear()
+        if content:
+            self._append_message(self.app.messenger.display_name, content, True,
+                                 reply_to=reply_to_id, mentions=mentions)
+            threading.Thread(target=self.app.messenger.send_group_message,
+                             args=(self.group_id, content, reply_to_id, mentions),
+                             daemon=True).start()
+        if pending_img:
+            self._send_clipboard_image(pending_img)
 
-    # Ctrl+V — detecta imagem no clipboard e envia para o grupo
+    # Mostra preview da imagem colada antes de enviar
+    def _show_image_preview(self, img):
+        self._cancel_image_preview()
+        self._pending_image = img
+        bar = tk.Frame(self, bg='#e2e8f0')
+        bar.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
+        # Borda azul esquerda
+        border = tk.Frame(bar, bg='#2451a0', width=3)
+        border.pack(side='left', fill='y')
+        border.pack_propagate(False)
+        # Thumbnail 80px
+        thumb = img.copy()
+        thumb.thumbnail((80, 80), Image.LANCZOS)
+        tk_thumb = ImageTk.PhotoImage(thumb)
+        self._preview_thumb_ref = tk_thumb
+        tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
+        tk.Label(bar, text='Imagem pronta para enviar',
+                 font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
+                 anchor='w').pack(side='left', fill='x', expand=True, padx=4)
+        tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                  bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
+                  cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
+        self._image_preview_bar = bar
+        self.entry.focus_set()
+
+    # Cancela preview de imagem pendente
+    def _cancel_image_preview(self):
+        self._pending_image = None
+        self._preview_thumb_ref = None
+        if self._image_preview_bar:
+            self._image_preview_bar.destroy()
+            self._image_preview_bar = None
+
+    # Ctrl+V — detecta imagem no clipboard e mostra preview
     def _on_paste(self, event):
         if not HAS_PIL:
             return
         try:
-            img = ImageGrab.grabclipboard()
-            if img is not None:
-                self._send_clipboard_image(img)
+            clip = ImageGrab.grabclipboard()
+            if clip is not None:
+                # Win10: grabclipboard() pode retornar lista de file paths
+                if isinstance(clip, list):
+                    for path in clip:
+                        if isinstance(path, str) and os.path.isfile(path):
+                            try:
+                                clip = Image.open(path)
+                                break
+                            except Exception:
+                                continue
+                    else:
+                        return
+                self._show_image_preview(clip)
                 return 'break'
         except Exception:
             pass
@@ -5244,6 +5394,9 @@ class GroupChatWindow(tk.Toplevel):
             tk_img = ImageTk.PhotoImage(pil_img)
             self._image_cache[image_path] = tk_img
             self.chat_text.image_create('end', image=tk_img, padx=4, pady=2)
+            # Aplica tag de alinhamento (justify right para is_mine em bubble mode)
+            img_idx = self.chat_text.index('end - 2 chars')
+            self.chat_text.tag_add(msg_tag, img_idx, self.chat_text.index('end - 1 chars'))
             tag_name = f'img_{id(tk_img)}'
             self.chat_text.tag_add(tag_name,
                                    self.chat_text.index('end - 2 chars'),
