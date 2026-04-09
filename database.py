@@ -607,6 +607,13 @@ class Database:
         """).fetchall()
         return [dict(r) for r in rows]
 
+    def get_completed_reminders(self):
+        rows = self.conn.execute("""
+            SELECT * FROM reminders WHERE notified=1
+            AND remind_at >= ? ORDER BY remind_at DESC
+        """, (time.time() - 86400,)).fetchall()
+        return [dict(r) for r in rows]
+
     def mark_reminder_notified(self, reminder_id):
         self.conn.execute(
             "UPDATE reminders SET notified=1 WHERE id=?", (reminder_id,))

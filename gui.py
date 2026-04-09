@@ -1204,9 +1204,9 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(dept_row, text='Departamento:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
-                                         values=['', 'Fiscal', 'Contabil', 'RH',
-                                                 'Financeiro', 'TI', 'Comercial',
-                                                 'Administrativo', 'Juridico'])
+                                         values=['', 'Fiscal', 'Contábil', 'TI',
+                                                 'Comercial', 'DP', 'SC',
+                                                 'Marketing', 'Recepção'])
         self._dept_combo.set(self.messenger.db.get_setting('department', ''))
         self._dept_combo.pack(side='right')
         tk.Label(lf3, text='Visivel para todos na lista de contatos.',
@@ -8477,53 +8477,115 @@ class LanMessengerApp:
         win.title('Lembretes')
         win.transient(self.root)
         win.configure(bg='#ffffff')
-        _center_window(win, 420, 400)
+        _center_window(win, 440, 450)
         _apply_rounded_corners(win)
         win.bind('<Escape>', lambda e: win.destroy())
 
         # Header
         hdr = tk.Frame(win, bg='#0f2a5c')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\u23f0 Lembretes', font=('Segoe UI', 11, 'bold'),
-                 bg='#0f2a5c', fg='#ffffff').pack(padx=10, pady=8, side='left')
-        tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
-                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
-                  padx=10, pady=3, cursor='hand2',
-                  command=lambda: self._new_reminder_dialog(win, list_frame)
-                  ).pack(side='right', padx=10, pady=6)
+        tk.Label(hdr, text='\u23f0 Lembretes', font=('Segoe UI', 12, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=10, side='left')
+        btn_novo = tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
+                  bg='#2563eb', fg='#ffffff', relief='flat', bd=0,
+                  padx=14, pady=4, cursor='hand2',
+                  command=lambda: self._new_reminder_dialog(win, list_frame))
+        btn_novo.pack(side='right', padx=10, pady=8)
+        _add_hover(btn_novo, '#2563eb', '#1d4ed8')
 
-        # Lista de lembretes
-        list_frame = tk.Frame(win, bg='#ffffff')
-        list_frame.pack(fill='both', expand=True, padx=8, pady=8)
+        # Scrollable list
+        canvas = tk.Canvas(win, bg='#ffffff', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(win, orient='vertical', command=canvas.yview)
+        list_frame = tk.Frame(canvas, bg='#ffffff')
+        list_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0, 0), window=list_frame, anchor='nw', tags='frame')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side='left', fill='both', expand=True, padx=8, pady=8)
+        scrollbar.pack(side='right', fill='y', pady=8)
+        canvas.bind('<Configure>', lambda e: canvas.itemconfig('frame', width=e.width))
+        # Scroll com roda do mouse
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
+        canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        win.bind('<Destroy>', lambda e: canvas.unbind_all('<MouseWheel>') if e.widget == win else None)
         self._refresh_reminders_list(list_frame)
 
     def _refresh_reminders_list(self, parent):
         for w in parent.winfo_children():
             w.destroy()
-        reminders = self.messenger.db.get_all_reminders()
-        if not reminders:
-            tk.Label(parent, text='Nenhum lembrete.', font=('Segoe UI', 10),
-                     bg='#ffffff', fg='#718096').pack(pady=20)
+        # Mostra pendentes + concluidos recentes (ultimas 24h)
+        pending = self.messenger.db.get_all_reminders()
+        completed = self.messenger.db.get_completed_reminders()
+        if not pending and not completed:
+            tk.Label(parent, text='Nenhum lembrete.\nClique em "+ Novo" para criar.',
+                     font=('Segoe UI', 10), bg='#ffffff', fg='#a0aec0',
+                     justify='center').pack(pady=40)
             return
-        for rem in reminders:
-            row = tk.Frame(parent, bg='#f7fafc', highlightthickness=1,
-                           highlightbackground='#e2e8f0')
-            row.pack(fill='x', pady=2)
-            text = rem.get('text', '')
-            remind_at = datetime.fromtimestamp(rem['remind_at']).strftime('%d/%m/%Y %H:%M')
-            status = '\u2714' if rem.get('notified') else '\u23f3'
-            tk.Label(row, text=f'{status} {text}', font=('Segoe UI', 9),
-                     bg='#f7fafc', fg='#1a202c', anchor='w').pack(
-                     side='left', fill='x', expand=True, padx=8, pady=4)
-            tk.Label(row, text=remind_at, font=('Segoe UI', 8),
-                     bg='#f7fafc', fg='#718096').pack(side='right', padx=(0, 4))
-            tk.Button(row, text='\u2715', font=('Segoe UI', 8),
-                      bg='#f7fafc', fg='#cc2222', relief='flat', bd=0,
-                      cursor='hand2',
-                      command=lambda rid=rem['id'], p=parent: (
-                          self.messenger.db.delete_reminder(rid),
-                          self._refresh_reminders_list(p))
-                      ).pack(side='right', padx=4)
+        # Pendentes
+        for rem in pending:
+            self._render_reminder_row(parent, rem, completed=False)
+        # Separador se tem ambos
+        if pending and completed:
+            sep = tk.Frame(parent, bg='#e2e8f0', height=1)
+            sep.pack(fill='x', pady=8)
+            tk.Label(parent, text='Concluidos', font=('Segoe UI', 8),
+                     bg='#ffffff', fg='#a0aec0').pack(anchor='w', padx=8)
+        for rem in completed:
+            self._render_reminder_row(parent, rem, completed=True)
+
+    def _render_reminder_row(self, parent, rem, completed=False):
+        bg = '#f0fdf4' if completed else '#f7fafc'
+        fg_text = '#6b7280' if completed else '#1a202c'
+        row = tk.Frame(parent, bg=bg, highlightthickness=1,
+                       highlightbackground='#e2e8f0' if not completed else '#bbf7d0')
+        row.pack(fill='x', pady=3, padx=2)
+        # Botao check (concluir)
+        if not completed:
+            check_btn = tk.Button(row, text='\u25cb', font=('Segoe UI', 12),
+                                  bg=bg, fg='#22c55e', relief='flat', bd=0,
+                                  cursor='hand2', width=2,
+                                  command=lambda rid=rem['id'], p=parent: (
+                                      self.messenger.db.mark_reminder_notified(rid),
+                                      self._refresh_reminders_list(p)))
+            check_btn.pack(side='left', padx=(4, 0))
+            _add_hover(check_btn, bg, '#dcfce7')
+        else:
+            tk.Label(row, text='\u2714', font=('Segoe UI', 11),
+                     bg=bg, fg='#22c55e', width=2).pack(side='left', padx=(4, 0))
+        # Texto e data
+        info = tk.Frame(row, bg=bg)
+        info.pack(side='left', fill='x', expand=True, padx=4, pady=6)
+        text = rem.get('text', '')
+        lbl_text = tk.Label(info, text=text, font=('Segoe UI', 10),
+                            bg=bg, fg=fg_text, anchor='w', wraplength=250)
+        if completed:
+            lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
+        lbl_text.pack(anchor='w')
+        remind_at = datetime.fromtimestamp(rem['remind_at'])
+        now = datetime.now()
+        # Formato relativo amigavel
+        if remind_at.date() == now.date():
+            time_str = 'Hoje ' + remind_at.strftime('%H:%M')
+        elif remind_at.date() == (now + timedelta(days=1)).date():
+            time_str = 'Amanha ' + remind_at.strftime('%H:%M')
+        else:
+            time_str = remind_at.strftime('%d/%m/%Y %H:%M')
+        # Se ja passou e nao concluido, destacar em vermelho
+        fg_time = '#718096'
+        if not completed and remind_at < now:
+            fg_time = '#ef4444'
+            time_str = '\u26a0 ' + time_str + ' (atrasado)'
+        tk.Label(info, text=time_str, font=('Segoe UI', 8),
+                 bg=bg, fg=fg_time, anchor='w').pack(anchor='w')
+        # Botao X (deletar)
+        del_btn = tk.Button(row, text='\u2715', font=('Segoe UI', 9),
+                            bg=bg, fg='#ef4444', relief='flat', bd=0,
+                            cursor='hand2', width=2,
+                            command=lambda rid=rem['id'], p=parent: (
+                                self.messenger.db.delete_reminder(rid),
+                                self._refresh_reminders_list(p)))
+        del_btn.pack(side='right', padx=(0, 4))
+        _add_hover(del_btn, bg, '#fef2f2')
 
     # Dialogo para criar novo lembrete
     def _new_reminder_dialog(self, parent_win, list_frame):
@@ -8532,56 +8594,183 @@ class LanMessengerApp:
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 340, 220)
+        _center_window(dlg, 380, 360)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
-        tk.Label(dlg, text='Texto:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
-        txt_entry = tk.Entry(dlg, font=('Segoe UI', 10), relief='flat',
+        # Header
+        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='\u23f0 Novo Lembrete', font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
+
+        body = tk.Frame(dlg, bg='#ffffff')
+        body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        tk.Label(body, text='Texto:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
+        txt_entry = tk.Entry(body, font=('Segoe UI', 10), relief='flat',
                               bg='#f7fafc', highlightthickness=1,
-                              highlightbackground='#e2e8f0')
-        txt_entry.pack(fill='x', padx=12)
+                              highlightbackground='#cbd5e1')
+        txt_entry.pack(fill='x')
         txt_entry.focus_set()
 
-        time_frame = tk.Frame(dlg, bg='#ffffff')
-        time_frame.pack(fill='x', padx=12, pady=(10, 0))
-        tk.Label(time_frame, text='Em quantos minutos:',
-                 font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-        min_entry = tk.Entry(time_frame, font=('Segoe UI', 10), width=8,
+        # Quando?
+        tk.Label(body, text='Quando:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(12, 4))
+
+        mode_var = tk.StringVar(value='minutes')
+
+        # Aba de selecao de modo
+        tab_frame = tk.Frame(body, bg='#ffffff')
+        tab_frame.pack(fill='x', pady=(0, 6))
+        tab_btns = {}
+        def _select_tab(mode):
+            mode_var.set(mode)
+            for m, b in tab_btns.items():
+                if m == mode:
+                    b.configure(bg='#0f2a5c', fg='#ffffff')
+                else:
+                    b.configure(bg='#e2e8f0', fg='#4a5568')
+            for f in (frame_min, frame_hours, frame_date):
+                f.pack_forget()
+            if mode == 'minutes':
+                frame_min.pack(fill='x')
+            elif mode == 'hours':
+                frame_hours.pack(fill='x')
+            elif mode == 'date':
+                frame_date.pack(fill='x')
+        for label, mode in [('Minutos', 'minutes'), ('Horas', 'hours'), ('Data', 'date')]:
+            b = tk.Button(tab_frame, text=label, font=('Segoe UI', 9),
+                          relief='flat', bd=0, padx=12, pady=3, cursor='hand2',
+                          command=lambda m=mode: _select_tab(m))
+            b.pack(side='left', padx=(0, 4))
+            tab_btns[mode] = b
+
+        # Frame minutos
+        frame_min = tk.Frame(body, bg='#ffffff')
+        quick_min_frame = tk.Frame(frame_min, bg='#ffffff')
+        quick_min_frame.pack(fill='x', pady=(0, 4))
+        min_entry = tk.Entry(frame_min, font=('Segoe UI', 10), width=8,
                               relief='flat', bg='#f7fafc',
-                              highlightthickness=1, highlightbackground='#e2e8f0')
-        min_entry.pack(side='left', padx=(8, 0))
+                              highlightthickness=1, highlightbackground='#cbd5e1')
+        for val in ['5', '15', '30', '60']:
+            qb = tk.Button(quick_min_frame, text=f'{val} min', font=('Segoe UI', 8),
+                           relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
+                           padx=8, pady=2, cursor='hand2',
+                           command=lambda v=val: (min_entry.delete(0, 'end'), min_entry.insert(0, v)))
+            qb.pack(side='left', padx=(0, 4))
+            _add_hover(qb, '#eef2ff', '#c7d2fe')
+        min_row = tk.Frame(frame_min, bg='#ffffff')
+        min_row.pack(fill='x')
+        tk.Label(min_row, text='Em', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+        min_entry.pack(in_=min_row, side='left', padx=6)
         min_entry.insert(0, '30')
+        tk.Label(min_row, text='minutos', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+
+        # Frame horas (hoje)
+        frame_hours = tk.Frame(body, bg='#ffffff')
+        quick_h_frame = tk.Frame(frame_hours, bg='#ffffff')
+        quick_h_frame.pack(fill='x', pady=(0, 4))
+        hour_entry = tk.Entry(frame_hours, font=('Segoe UI', 10), width=6,
+                               relief='flat', bg='#f7fafc',
+                               highlightthickness=1, highlightbackground='#cbd5e1')
+        for val in ['1', '2', '4', '8']:
+            qb = tk.Button(quick_h_frame, text=f'{val}h', font=('Segoe UI', 8),
+                           relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
+                           padx=8, pady=2, cursor='hand2',
+                           command=lambda v=val: (hour_entry.delete(0, 'end'), hour_entry.insert(0, v)))
+            qb.pack(side='left', padx=(0, 4))
+            _add_hover(qb, '#eef2ff', '#c7d2fe')
+        h_row = tk.Frame(frame_hours, bg='#ffffff')
+        h_row.pack(fill='x')
+        tk.Label(h_row, text='Em', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+        hour_entry.pack(in_=h_row, side='left', padx=6)
+        hour_entry.insert(0, '1')
+        tk.Label(h_row, text='horas', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+
+        # Frame data (calendario simples)
+        frame_date = tk.Frame(body, bg='#ffffff')
+        date_row1 = tk.Frame(frame_date, bg='#ffffff')
+        date_row1.pack(fill='x', pady=(0, 4))
+        # Botoes rapidos de dias
+        days_entry = tk.Entry(frame_date, font=('Segoe UI', 10), width=12,
+                               relief='flat', bg='#f7fafc',
+                               highlightthickness=1, highlightbackground='#cbd5e1')
+        now = datetime.now()
+        for label, days in [('Amanha', 1), ('3 dias', 3), ('1 semana', 7)]:
+            target = now + timedelta(days=days)
+            ds = target.strftime('%d/%m/%Y')
+            qb = tk.Button(date_row1, text=label, font=('Segoe UI', 8),
+                           relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
+                           padx=8, pady=2, cursor='hand2',
+                           command=lambda d=ds: (days_entry.delete(0, 'end'), days_entry.insert(0, d)))
+            qb.pack(side='left', padx=(0, 4))
+            _add_hover(qb, '#eef2ff', '#c7d2fe')
+        d_row = tk.Frame(frame_date, bg='#ffffff')
+        d_row.pack(fill='x')
+        tk.Label(d_row, text='Data:', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+        days_entry.pack(in_=d_row, side='left', padx=6)
+        days_entry.insert(0, (now + timedelta(days=1)).strftime('%d/%m/%Y'))
+        tk.Label(d_row, text='Hora:', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left', padx=(8, 0))
+        time_entry = tk.Entry(frame_date, font=('Segoe UI', 10), width=6,
+                               relief='flat', bg='#f7fafc',
+                               highlightthickness=1, highlightbackground='#cbd5e1')
+        time_entry.pack(in_=d_row, side='left', padx=6)
+        time_entry.insert(0, '09:00')
+
+        # Mostra frame de minutos por padrao
+        _select_tab('minutes')
 
         def _create():
             text = txt_entry.get().strip()
-            try:
-                minutes = int(min_entry.get().strip())
-            except ValueError:
-                messagebox.showwarning('Lembrete', 'Insira um numero valido de minutos.',
-                                        parent=dlg)
-                return
             if not text:
                 messagebox.showwarning('Lembrete', 'Insira o texto do lembrete.',
                                         parent=dlg)
                 return
-            remind_at = time.time() + minutes * 60
+            mode = mode_var.get()
+            try:
+                if mode == 'minutes':
+                    minutes = int(min_entry.get().strip())
+                    remind_at = time.time() + minutes * 60
+                elif mode == 'hours':
+                    hours = float(hour_entry.get().strip())
+                    remind_at = time.time() + hours * 3600
+                elif mode == 'date':
+                    date_str = days_entry.get().strip()
+                    time_str_val = time_entry.get().strip()
+                    dt = datetime.strptime(f'{date_str} {time_str_val}', '%d/%m/%Y %H:%M')
+                    remind_at = dt.timestamp()
+                else:
+                    return
+            except (ValueError, OverflowError):
+                messagebox.showwarning('Lembrete', 'Valor de tempo invalido.',
+                                        parent=dlg)
+                return
             self.messenger.db.add_reminder(text, remind_at)
             dlg.destroy()
             self._refresh_reminders_list(list_frame)
 
         btn_frame = tk.Frame(dlg, bg='#ffffff')
-        btn_frame.pack(fill='x', padx=12, pady=12)
-        tk.Button(btn_frame, text='Criar', font=('Segoe UI', 9, 'bold'),
+        btn_frame.pack(fill='x', padx=14, pady=(0, 12))
+        btn_criar = tk.Button(btn_frame, text='Criar', font=('Segoe UI', 10, 'bold'),
                   bg='#0f2a5c', fg='#ffffff', relief='flat', bd=0,
-                  padx=16, pady=4, cursor='hand2',
-                  command=_create).pack(side='right')
-        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  padx=20, pady=5, cursor='hand2',
+                  command=_create)
+        btn_criar.pack(side='right')
+        _add_hover(btn_criar, '#0f2a5c', '#1a3f7a')
+        btn_cancel = tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
                   bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
-                  padx=12, pady=4, cursor='hand2',
-                  command=dlg.destroy).pack(side='right', padx=(0, 6))
+                  padx=14, pady=5, cursor='hand2',
+                  command=dlg.destroy)
+        btn_cancel.pack(side='right', padx=(0, 6))
+        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e1')
 
     # Verificacao manual via menu Ferramentas.
     def _manual_check_update(self):
