@@ -17,10 +17,10 @@ python gui.py
 python build.py
 
 # Build direto via CLI + deploy para share
-python build.py --version 1.3.1 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
+python build.py --version 1.4.11 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
 
 # Build + instalador + GitHub Release (pipeline completo)
-python build.py --version 1.3.1 --release
+python build.py --version 1.4.11 --release
 
 # Regenerar icone
 python create_icon.py
@@ -120,6 +120,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Notificacoes Windows clicaveis (winotify) para chats individuais e grupos
   - Chat individual: `mbchat://open/{peer_id}` — abre chat com mensagens nao lidas do banco
   - Grupo: `mbchat://group/{group_id}` — abre grupo com msgs pendentes
+- **Preferencias > Alertas** — 3 secoes: Mensagens (notif_windows, sound, flash), Lembretes (notif_reminder, sound_reminder, flash_reminder), Geral (sound master on/off)
 - System tray, instancia unica, auto-start
 - Popups e todas as janelas de Chat/Grupos fecham com a tecla Escape chamando logicamente _on_close() para limpeza de estado
 - Emoji pickers fecham ao clicar fora
@@ -129,9 +130,9 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - **Responder mensagem (Reply/Quote)** — clique direito na mensagem > "Responder", mostra barra de preview acima do input com a mensagem referenciada. Quote aparece no chat com fundo destacado. Funciona em chat individual e grupo. Campo `reply_to_id` no banco, `reply_to` no payload de rede.
 - **Mencoes em grupo (@fulano)** — digitar @ no input de grupo abre popup com lista de membros. Selecionar insere @Nome. Mencoes destacadas em azul negrito no chat. Lista de `mentions` (UIDs) no payload MT_GROUP_MSG.
 - **Enquete em grupo** — botao na toolbar do grupo abre dialogo para criar enquete (pergunta + opcoes). Exibe no chat com botoes clicaveis para votar. Contagem atualiza em tempo real via MT_POLL_VOTE. Tabelas `polls` e `poll_votes` no banco.
-- **Lembretes** — menu Ferramentas > Lembretes. Criar lembrete com texto e data/hora. Timer de 30s verifica pendentes e dispara notificacao Windows (winotify). Tabela `reminders` no banco.
+- **Lembretes** — menu Ferramentas > Lembretes. Dois tipos: Normal (sem data, fica na lista ate excluir/concluir, fundo amarelo) e Programado (com calendario e hora, dispara notificacao Windows). Timer de 10s verifica pendentes. Notificacao via winotify com fallback pystray/messagebox. Configuracoes individuais em Preferencias > Alertas (notif_reminder, sound_reminder, flash_reminder). Tabela `reminders` no banco (remind_at=0 para normais). BUG PENDENTE: clicar na notificacao Windows nao abre a tela de lembretes (protocolo mbchat://open/__reminders__ registrado mas nao funciona — investigar).
 - **Drag & Drop de arquivos** — arrastar arquivo para janela de chat ou grupo inicia transferencia automaticamente. Usa biblioteca `windnd` para detectar drop no Windows.
-- **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento (Fiscal, Contabil, RH, etc). Contatos agrupados por departamento no TreeView (nodes dinamicos). Campo `department` no UDP announce e na tabela `contacts`.
+- **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento. Opcoes: (Nenhum), Fiscal, Contabil, TI, Comercial, DP, SC, Marketing, Recepcao. Contatos agrupados por departamento no TreeView (nodes dinamicos). Campo `department` no UDP announce e na tabela `contacts`.
 - **Notas privadas nos contatos** — clique direito no contato > "Nota Privada..." abre dialogo para adicionar nota visivel apenas localmente. Coluna `private_note` na tabela `contacts`. Nota aparece no dialogo de informacoes do contato.
 - Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback)
   - App consulta GitHub Releases API no startup (2s delay), compara tag_name com APP_VERSION
