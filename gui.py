@@ -8463,21 +8463,37 @@ class LanMessengerApp:
                 text = rem.get('text', 'Lembrete')
                 remind_at = datetime.fromtimestamp(rem['remind_at'])
                 time_str = remind_at.strftime('%H:%M')
-                # Notificacao Windows (funciona com app na bandeja)
+                title = f'\u23f0 Lembrete ({time_str})'
+                notified = False
+                # Notificacao Windows via winotify (mesmo padrao do _show_toast)
                 if HAS_WINOTIFY:
                     try:
-                        n = WinNotification(app_id=APP_NAME,
-                                            title=f'\u23f0 Lembrete ({time_str})',
-                                            msg=text)
+                        n = WinNotification(
+                            app_id='MB Chat',
+                            title=title,
+                            msg=text,
+                            icon=self._icon_path or '')
                         n.set_audio(wn_audio.Default, loop=False)
                         n.show()
+                        notified = True
+                    except Exception:
+                        log.exception('Erro winotify lembrete')
+                # Fallback: balloon tip via pystray
+                if not notified and self._tray_icon is not None:
+                    try:
+                        self._tray_icon.notify(text, title=title)
+                        notified = True
                     except Exception:
                         pass
-                # Messagebox como fallback
-                else:
-                    self.root.after(0, lambda t=text: messagebox.showinfo(
-                        'Lembrete', t))
+                # Fallback final: messagebox
+                if not notified:
+                    self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
                 SoundPlayer.play_notification()
+                # Pisca a janela principal na taskbar
+                try:
+                    self._flash_window()
+                except Exception:
+                    pass
             # Atualiza janela de lembretes se estiver aberta
             if pending and hasattr(self, '_reminders_list_frame'):
                 try:
