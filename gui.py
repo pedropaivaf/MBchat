@@ -4677,6 +4677,9 @@ class LanMessengerApp:
         if self.messenger.db.get_setting('autostart', '1') == '1':
             _setup_autostart()
 
+        # Mostra barra de "atualizacao concluida" se versao mudou
+        self._check_post_update()
+
         # Verifica atualizacoes em background
         self.root.after(2000, self._check_update_startup)
 
@@ -7583,6 +7586,25 @@ class LanMessengerApp:
         self.messenger.discovery._send_announce()  # envia pacote UDP de presenca agora
 
     # --- Auto-update ---
+
+    # Detecta se o app acabou de ser atualizado comparando versao salva no banco.
+    def _check_post_update(self):
+        last = self.messenger.db.get_setting('last_version', None)
+        self.messenger.db.set_setting('last_version', APP_VERSION)
+        if last and last != APP_VERSION:
+            self.root.after(500, lambda: self._show_post_update_bar(last))
+
+    # Barra verde "Atualizacao concluida" que some apos 8 segundos ou clicando X.
+    def _show_post_update_bar(self, old_ver):
+        bar = tk.Frame(self.root, bg='#d4edda', bd=0)
+        bar.pack(fill='x', before=self.root.winfo_children()[1] if len(self.root.winfo_children()) > 1 else None)
+        tk.Label(bar, text=f'Atualização concluída! {old_ver} → v{APP_VERSION}',
+                 font=('Segoe UI', 9), bg='#d4edda', fg='#155724'
+                 ).pack(side='left', padx=(10, 5), pady=4)
+        tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg='#d4edda',
+                  fg='#155724', bd=0, cursor='hand2',
+                  command=bar.destroy).pack(side='right', padx=(0, 10), pady=4)
+        self.root.after(8000, lambda: bar.destroy() if bar.winfo_exists() else None)
 
     # Verifica update no startup (chamado no _deferred_init em background).
     def _check_update_startup(self):
