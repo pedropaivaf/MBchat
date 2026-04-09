@@ -973,7 +973,7 @@ class PreferencesWindow(tk.Toplevel):
     def _init_vars(self):
         db = self.messenger.db
         self.var_autostart = tk.BooleanVar(
-            value=db.get_setting('autostart', '1') == '1')
+            value=db.get_setting('autostart', '0') == '1')
         self.var_show_main = tk.BooleanVar(
             value=db.get_setting('show_main_on_start', '1') == '1')
         self.var_tray_icon = tk.BooleanVar(
@@ -4673,8 +4673,16 @@ class LanMessengerApp:
         if HAS_TRAY and HAS_PIL:
             self.root.after(50, self._start_tray)
 
-        # Registra autostart se habilitado (default=sim na primeira execucao)
-        if self.messenger.db.get_setting('autostart', '1') == '1':
+        # Registra autostart respeitando escolha do instalador na primeira execucao
+        autostart_val = self.messenger.db.get_setting('autostart', None)
+        if autostart_val is None:
+            # Primeira execucao — detecta se instalador criou atalho na pasta Startup
+            startup_lnk = os.path.join(
+                os.environ.get('APPDATA', ''),
+                'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'MB Chat.lnk')
+            autostart_val = '1' if os.path.exists(startup_lnk) else '0'
+            self.messenger.db.set_setting('autostart', autostart_val)
+        if autostart_val == '1':
             _setup_autostart()
 
         # Mostra barra de "atualizacao concluida" se versao mudou
