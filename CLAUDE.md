@@ -16,8 +16,11 @@ python gui.py
 # Build interativo (menu com opcoes)
 python build.py
 
-# Build direto via CLI
-python build.py --version 1.2.0 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
+# Build direto via CLI + deploy para share
+python build.py --version 1.3.1 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
+
+# Build + instalador + GitHub Release (pipeline completo)
+python build.py --version 1.3.1 --release
 
 # Regenerar icone
 python create_icon.py
@@ -28,8 +31,22 @@ python create_icon.py
 Ao rodar `python build.py` sem argumentos, aparece menu:
 1. **Build normal** - builda sem mudar versao, sem deploy
 2. **Build + versao + deploy** - pede nova versao, builda e copia para o share
-3. **Somente deploy** - envia exe existente para o share (sem rebuildar)
-4. **Sair**
+3. **Somente deploy** - envia build existente para o share (sem rebuildar)
+4. **Build + versao + GitHub release** - build completo + publica no GitHub
+5. **Sair**
+
+### O que o build gera
+- `dist/MBChat/` — pasta com `MBChat.exe` + `_internal/` (PyInstaller `--onedir`)
+- `dist/MBChat_update.zip` — zip para auto-update (gerado automaticamente)
+- `dist/MBChat_Setup.exe` — instalador Inno Setup (compilado automaticamente)
+
+### Versionamento automatico
+`_set_version(version)` atualiza 3 arquivos de uma vez:
+- `version.py` — APP_VERSION
+- `installer.iss` — AppVersion e AppVerName
+- `docs/index.html` — versao no hero badge da landing page
+
+**IMPORTANTE**: Build usa `--onedir` (NAO `--onefile`). O `--onefile` causa "Failed to load Python DLL" no Windows 10 porque o loader de DLLs do Win10 nao resolve dependencias dentro da pasta temporaria `_MEI*`. Com `--onedir`, DLLs ficam permanentemente em `_internal/`.
 
 ## Arquitetura (4 camadas)
 
@@ -40,7 +57,7 @@ Ao rodar `python build.py` sem argumentos, aparece menu:
 
 gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
 - **version.py** - Constante APP_VERSION (fonte unica de verdade para versao)
-- **updater.py** - Auto-update via pasta compartilhada (check, download, apply via batch script)
+- **updater.py** - Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback). Baixa zip, extrai, aplica via PowerShell
 
 ## Portas de rede
 
@@ -108,12 +125,11 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
-- Auto-update via pasta compartilhada na rede (`\\192.168.0.9\Works2026\Publico\mbchat-update`)
-  - App checa `version.txt` no share no startup (2s delay), compara com APP_VERSION local
+- Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback)
+  - App consulta GitHub Releases API no startup (2s delay), compara tag_name com APP_VERSION
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
-  - Clique copia exe do GitHub (ou share como fallback), script PowerShell troca o exe e reabre o app
+  - Clique baixa `MBChat_update.zip` do GitHub, extrai para staging dir, script PowerShell substitui pasta inteira e reabre
   - IMPORTANTE: script PowerShell usa `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess) para reabrir — processo filho HERDA env vars do pai (TEMP longo). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env do pai e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI)
-  - `setx TEMP` no script fixa o registro permanentemente (REG_SZ com path longo)
   - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado
   - Menu Ferramentas > "Verificar atualizacoes" para check manual
   - Configuravel em Preferencias > Rede > "Pasta de atualizacao (UNC)"
@@ -140,8 +156,8 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
 - Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
 - Comentarios no codigo: usar apenas `#` (inline comments), NUNCA `"""docstrings"""`. Docstrings poluem o sistema (help(), __doc__, error traces).
-- Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os). Share path default em `updater.DEFAULT_SHARE_PATH`. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Script PowerShell com retry loop troca o exe, fixa TEMP via setx e reabre via `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3. NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o script roda em paralelo e falha se o exe estiver travado.
-- Versionamento: `version.py` contem `APP_VERSION = "X.Y.Z"`. `build.py` atualiza via `--version` flag ou menu interativo. Versao exibida no titulo da janela e no "Sobre".
+- Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os, zipfile, json, urllib). GitHub Releases como fonte primaria, share como fallback. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Script PowerShell com retry loop remove `_internal/`, copia novos arquivos e reabre via `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3. NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o script roda em paralelo e falha se o exe estiver travado.
+- Versionamento: `version.py` contem `APP_VERSION = "X.Y.Z"`. `build.py` atualiza via `--version` flag ou menu interativo. `_set_version()` sincroniza version.py + installer.iss + docs/index.html. Versao exibida no titulo da janela e no "Sobre".
 
 ## Tipos de mensagem de rede
 

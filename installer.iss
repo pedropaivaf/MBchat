@@ -1,8 +1,8 @@
 [Setup]
 AppId={{MB-CHAT-APP}
 AppName=MB Chat
-AppVersion=1.2.11
-AppVerName=MB Chat v1.2.11
+AppVersion=1.3.1
+AppVerName=MB Chat v1.3.1
 AppPublisher=MB Contabilidade
 DefaultDirName={autopf}\MBChat
 DefaultGroupName=MB Chat
@@ -29,7 +29,8 @@ Name: "desktopicon"; Description: "Criar atalho na Area de Trabalho"
 Name: "autostart"; Description: "Iniciar MB Chat com o Windows"
 
 [Files]
-Source: "dist\MBChat.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\MBChat\MBChat.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\MBChat\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\MB Chat"; Filename: "{app}\MBChat.exe"
@@ -49,6 +50,7 @@ Type: files; Name: "{app}\update.bat"
 Type: files; Name: "{app}\update.log"
 Type: files; Name: "{app}\mbchat.log"
 Type: files; Name: "{userstartup}\MB Chat.lnk"
+Type: filesandordirs; Name: "{app}\_internal"
 Type: dirifempty; Name: "{app}"
 
 [Code]
@@ -59,11 +61,9 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    // Remove entrada do registro (autostart)
     RegDeleteValue(HKEY_CURRENT_USER,
       'Software\Microsoft\Windows\CurrentVersion\Run', 'MBChat');
 
-    // Remove atalho do startup se existir
     DeleteFile(ExpandConstant('{userstartup}\MB Chat.lnk'));
 
     AppDataPath := ExpandConstant('{userappdata}\MBChat');
@@ -78,12 +78,10 @@ begin
 
       if Choice = IDNO then
       begin
-        // Desinstalacao COMPLETA - remove tudo
         DelTree(AppDataPath, True, True, True);
       end
       else
       begin
-        // Manter historico - remove apenas temporarios
         DeleteFile(AppDataPath + '\MBChat_new.exe');
         DeleteFile(AppDataPath + '\update.bat');
         DeleteFile(AppDataPath + '\update.log');

@@ -25,3 +25,6 @@ Thumbs.db
 
 # Temp
 preview_*.png
+
+# VC++ Redistributable (25MB, nao commitar)
+assets/vc_redist.x64.exe

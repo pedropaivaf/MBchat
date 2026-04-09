@@ -13,7 +13,7 @@ Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel stand
 - **Emojis coloridos em todo lugar** - Renderizados via PIL no chat, notas pessoais e lista de contatos
 - **Grupos mesh** - Chat em grupo sem servidor central (cada membro envia direto para os demais)
 - **Transferencia de arquivos** - Ponto-a-ponto e para grupos, com dialogo de progresso
-- **Executavel unico** - `MBChat.exe` funciona sem Python instalado
+- **Auto-update** - Atualiza automaticamente via GitHub Releases (ou pasta compartilhada como fallback)
 
 ---
 
@@ -58,13 +58,14 @@ Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel stand
 - Preferencias completas com 9 categorias
 - Suporte a 30+ usuarios simultaneos
 - Auto-start com o sistema
+- Auto-update via GitHub Releases + fallback via pasta compartilhada
 
 ---
 
 ## Instalacao
 
-### Executavel (recomendado)
-Basta copiar `dist/MBChat.exe` para a maquina. Nao precisa de Python.
+### Instalador (recomendado)
+Baixe `MBChat_Setup.exe` da [pagina de releases](https://github.com/pedropaivaf/MBchat/releases/latest) ou do [site](https://pedropaivaf.github.io/MBchat/).
 
 ### Desenvolvimento
 ```bash
@@ -75,9 +76,20 @@ python gui.py
 
 ### Build
 ```bash
+# Menu interativo (build, deploy, release)
 python build.py
-# Saida: dist/MBChat.exe
+
+# CLI direto
+python build.py --version 1.3.1 --release
+
+# Build + deploy para share de rede
+python build.py --version 1.3.1 --deploy "\\192.168.0.9\Works2026\Publico\mbchat-update"
 ```
+
+O build gera:
+- `dist/MBChat/` — pasta com `MBChat.exe` + `_internal/` (PyInstaller --onedir)
+- `dist/MBChat_update.zip` — zip para auto-update
+- `dist/MBChat_Setup.exe` — instalador Inno Setup
 
 ---
 
@@ -89,13 +101,18 @@ MBchat/
   messenger.py      # Controller - conecta rede, banco e GUI
   network.py        # Rede - UDP discovery, TCP messaging, file transfer
   database.py       # Persistencia - SQLite local (WAL mode)
-  build.py          # Build PyInstaller (--onefile --windowed)
+  version.py        # APP_VERSION (fonte unica de verdade)
+  updater.py        # Auto-update via GitHub Releases / share
+  build.py          # Build PyInstaller + Inno Setup + GitHub Release
   create_icon.py    # Gera .ico multi-resolucao a partir do PNG
+  installer.iss     # Script Inno Setup para o instalador
+  CHANGELOG.md      # Historico de versoes
   assets/
     mbchat_icon.png  # Logo 1024x1024
     mbchat.ico       # Icone multi-resolucao
     icon_*.png       # Icones de toolbar
   docs/
+    index.html       # Landing page (GitHub Pages)
     ARCHITECTURE.md  # Arquitetura detalhada (4 camadas)
     CODESTYLE.md     # Padroes de codigo e convencoes
 ```
@@ -124,12 +141,21 @@ Cada camada so conhece a imediatamente abaixo. GUI nunca importa network diretam
 
 ---
 
+## Auto-Update
+
+O app verifica atualizacoes automaticamente no startup:
+1. Consulta GitHub Releases API (`/repos/pedropaivaf/MBchat/releases/latest`)
+2. Compara `tag_name` com `APP_VERSION` local
+3. Se versao nova: barra amarela no topo com botao "Atualizar"
+4. Clique baixa `MBChat_update.zip`, extrai e aplica via script PowerShell
+5. Fallback: se GitHub indisponivel, tenta pasta compartilhada na rede
+
+---
+
 ## Dados Locais
 
 ```
-Windows: %APPDATA%/.mbchat/
-Linux:   ~/.mbchat/
-
+Windows: %APPDATA%/MBChat/
   mbchat.db   - banco SQLite (mensagens, contatos, configuracoes)
   avatars/    - fotos de perfil
 ```
