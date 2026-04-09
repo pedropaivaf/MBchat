@@ -8518,6 +8518,7 @@ class LanMessengerApp:
                             title=title,
                             msg=text,
                             icon=self._icon_path or '')
+                        n.launch = 'mbchat://reminders'
                         n.set_audio(wn_audio.Default, loop=False)
                         n.show()
                         notified = True
@@ -8533,17 +8534,9 @@ class LanMessengerApp:
                 # Fallback final: messagebox (sempre, se nenhuma notif funcionou)
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
-                # Som de alerta (toca 2x)
+                # Som de alerta
                 if want_sound and sound_master:
-                    try:
-                        if platform.system() == 'Windows':
-                            import winsound
-                            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-                            self.root.after(600, lambda: winsound.MessageBeep(winsound.MB_ICONEXCLAMATION))
-                        else:
-                            SoundPlayer.play_notification()
-                    except Exception:
-                        pass
+                    SoundPlayer.play_notification()
                 # Pisca a janela principal na taskbar
                 if want_flash:
                     try:
@@ -8726,17 +8719,18 @@ class LanMessengerApp:
                  bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(10, 4))
         quick_frame = tk.Frame(body, bg='#ffffff')
         quick_frame.pack(fill='x', pady=(0, 6))
-        now = datetime.now()
+        now = datetime.now()  # hora atual ao abrir o dialogo
         # Estado do calendario e hora selecionada
         sel_date = [now.year, now.month, now.day]
         sel_hour = [now.hour]
         sel_min = [now.minute]
 
         def _set_quick(minutes=0, days=0, hour=9, minute=0):
+            fresh_now = datetime.now()  # hora fresca ao clicar
             if minutes:
-                target = now + timedelta(minutes=minutes)
+                target = fresh_now + timedelta(minutes=minutes)
             elif days:
-                target = now.replace(hour=hour, minute=minute, second=0) + timedelta(days=days)
+                target = fresh_now.replace(hour=hour, minute=minute, second=0) + timedelta(days=days)
             else:
                 return
             sel_date[0], sel_date[1], sel_date[2] = target.year, target.month, target.day
@@ -8866,8 +8860,9 @@ class LanMessengerApp:
                                 highlightthickness=1, highlightbackground='#cbd5e1',
                                 justify='center')
         hour_spin.pack(side='left', padx=(8, 0))
+        default_time = now + timedelta(minutes=5)
         hour_spin.delete(0, 'end')
-        hour_spin.insert(0, f'{now.hour:02d}')
+        hour_spin.insert(0, f'{default_time.hour:02d}')
         tk.Label(time_frame, text=':', font=('Segoe UI', 11, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(side='left', padx=2)
         min_spin = tk.Spinbox(time_frame, from_=0, to=59, width=3, wrap=True,
@@ -8877,7 +8872,7 @@ class LanMessengerApp:
                                justify='center', increment=5)
         min_spin.pack(side='left')
         min_spin.delete(0, 'end')
-        min_spin.insert(0, f'{(now.minute // 5 + 1) * 5 % 60:02d}')
+        min_spin.insert(0, f'{default_time.minute:02d}')
 
         def _create():
             text = txt_entry.get().strip()
@@ -9565,6 +9560,9 @@ def _start_instance_listener(app):
                 if data.startswith('OPEN:'):  # comando para abrir chat/grupo especifico
                     peer_id = data[5:].strip()  # extrai uid ou group:gid
                     app.root.after(0, lambda p=peer_id: app._restore_and_open(p))  # main thread
+                elif data == 'REMINDERS':  # comando para abrir tela de lembretes
+                    app.root.after(0, app._restore_and_open)  # restaura janela primeiro
+                    app.root.after(100, app._show_reminders)   # abre lembretes apos restaurar
                 elif data == 'SHOW':  # comando para apenas mostrar a janela
                     app.root.after(0, app._restore_and_open)  # restaura na main thread
             except socket.timeout:
@@ -9609,12 +9607,14 @@ def main():
                 peer_id = f'group:{gid}'                   # formato: group:GID
             elif '/open/' in arg:        # e uma URL de chat (mbchat://open/UID)?
                 peer_id = arg.split('/open/')[-1].strip('/')  # extrai o uid
+            elif '/reminders' in arg:   # e uma URL de lembretes (mbchat://reminders)?
+                peer_id = '__reminders__'  # comando especial para abrir lembretes
             try:
                 # Envia comando para a instancia ja em execucao via loopback
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(0.5)  # loopback e rapido, 500ms basta
                 sock.connect(('127.0.0.1', SINGLE_INSTANCE_PORT))  # conecta na instancia
-                cmd = f'OPEN:{peer_id}' if peer_id else 'SHOW'     # comando a enviar
+                cmd = 'REMINDERS' if peer_id == '__reminders__' else (f'OPEN:{peer_id}' if peer_id else 'SHOW')
                 sock.sendall(cmd.encode())  # envia o comando
                 sock.close()
             except Exception:
