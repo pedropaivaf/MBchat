@@ -21,6 +21,7 @@ Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel stand
 
 ### Mensagens
 - Mensagens instantaneas com indicador de digitacao
+- **Colar imagem do clipboard (Ctrl+V)** — envia screenshots e recortes direto no chat
 - Emojis coloridos renderizados via PIL (seguiemj.ttf) em todos os campos
 - **Nota pessoal** visivel para todos em tempo real com emojis coloridos
 - Historico ilimitado (SQLite local) com busca global em todos os chats e filtro por data

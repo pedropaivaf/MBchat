@@ -3,6 +3,15 @@
 Todas as mudancas notaveis do MB Chat sao documentadas aqui.
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- **Colar imagem do clipboard (Ctrl+V)** — captura via PIL ImageGrab, comprime JPEG, envia base64 via MT_IMAGE
+- Imagens no chat individual e grupo (thumbnail 300px clicavel, abre no visualizador do Windows)
+- Historico individual e global mostra [Imagem] clicavel
+- Barra verde "Atualização concluída" apos auto-update (compara versao no banco)
+- Autostart respeita escolha do instalador na primeira execucao
+
 ## [1.3.1] - 2026-04-08
 
 ### Fixed

@@ -89,6 +89,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 
 ## Funcionalidades principais
 
+- **Colar imagem do clipboard (Ctrl+V)** — captura via PIL ImageGrab, comprime JPEG quality=85, envia base64 via MT_IMAGE (TCP), receptor salva em %APPDATA%/.mbchat/images/, exibe thumbnail 300px clicavel no chat. Funciona em chat individual e grupo. Historico mostra [Imagem] clicavel.
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
 - Nota pessoal visivel para todos em tempo real (emojis coloridos via tk.Text, persistida no banco local, sincronizada via UDP)
   - Emoji picker completo com 6 categorias, busca por nome em PT e scroll (mesmo do chat)
@@ -168,6 +169,7 @@ Constantes em network.py:
 - `MT_GROUP_MSG` - mensagem de grupo (mesh: cada membro envia para todos)
 - `MT_GROUP_LEAVE` - notificacao de saida do grupo (remove membro do painel de todos)
 - `MT_GROUP_JOIN` - notificacao de entrada no grupo (adiciona membro ao painel de todos)
+- `MT_IMAGE` - imagem inline (clipboard base64, chat individual e grupo)
 
 ## Testes
 
