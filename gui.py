@@ -8452,7 +8452,7 @@ class LanMessengerApp:
     # Inicia timer que checa lembretes pendentes a cada 30s
     def _start_reminder_timer(self):
         self._check_reminders()
-        self.root.after(30000, self._start_reminder_timer)
+        self.root.after(10000, self._start_reminder_timer)
 
     # Checa lembretes pendentes e dispara notificacao
     def _check_reminders(self):
@@ -8461,11 +8461,13 @@ class LanMessengerApp:
             for rem in pending:
                 self.messenger.db.mark_reminder_notified(rem['id'])
                 text = rem.get('text', 'Lembrete')
-                # Notificacao Windows
+                remind_at = datetime.fromtimestamp(rem['remind_at'])
+                time_str = remind_at.strftime('%H:%M')
+                # Notificacao Windows (funciona com app na bandeja)
                 if HAS_WINOTIFY:
                     try:
                         n = WinNotification(app_id=APP_NAME,
-                                            title='\u23f0 Lembrete',
+                                            title=f'\u23f0 Lembrete ({time_str})',
                                             msg=text)
                         n.set_audio(wn_audio.Default, loop=False)
                         n.show()
@@ -8476,6 +8478,14 @@ class LanMessengerApp:
                     self.root.after(0, lambda t=text: messagebox.showinfo(
                         'Lembrete', t))
                 SoundPlayer.play_notification()
+            # Atualiza janela de lembretes se estiver aberta
+            if pending and hasattr(self, '_reminders_list_frame'):
+                try:
+                    lf = self._reminders_list_frame
+                    if lf and lf.winfo_exists():
+                        self._refresh_reminders_list(lf)
+                except Exception:
+                    pass
         except Exception:
             log.exception('Erro ao checar lembretes')
 
@@ -8505,6 +8515,7 @@ class LanMessengerApp:
         canvas = tk.Canvas(win, bg='#ffffff', highlightthickness=0)
         scrollbar = ttk.Scrollbar(win, orient='vertical', command=canvas.yview)
         list_frame = tk.Frame(canvas, bg='#ffffff')
+        self._reminders_list_frame = list_frame  # ref para auto-refresh pelo timer
         list_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
         canvas.create_window((0, 0), window=list_frame, anchor='nw', tags='frame')
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -8515,7 +8526,11 @@ class LanMessengerApp:
         def _on_mousewheel(e):
             canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
         canvas.bind_all('<MouseWheel>', _on_mousewheel)
-        win.bind('<Destroy>', lambda e: canvas.unbind_all('<MouseWheel>') if e.widget == win else None)
+        def _on_win_destroy(e):
+            if e.widget == win:
+                canvas.unbind_all('<MouseWheel>')
+                self._reminders_list_frame = None
+        win.bind('<Destroy>', _on_win_destroy)
         self._refresh_reminders_list(list_frame)
 
     def _refresh_reminders_list(self, parent):
@@ -8542,10 +8557,18 @@ class LanMessengerApp:
             self._render_reminder_row(parent, rem, completed=True)
 
     def _render_reminder_row(self, parent, rem, completed=False):
-        bg = '#f0fdf4' if completed else '#f7fafc'
+        is_overdue = not completed and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
+        is_notified = rem.get('notified', 0) == 1
+        if completed:
+            bg = '#f0fdf4'
+        elif is_overdue:
+            bg = '#fef2f2'
+        else:
+            bg = '#f7fafc'
         fg_text = '#6b7280' if completed else '#1a202c'
+        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#e2e8f0'
         row = tk.Frame(parent, bg=bg, highlightthickness=1,
-                       highlightbackground='#e2e8f0' if not completed else '#bbf7d0')
+                       highlightbackground=border_color)
         row.pack(fill='x', pady=3, padx=2)
         # Botao check (concluir)
         if not completed:
@@ -8553,7 +8576,7 @@ class LanMessengerApp:
                                   bg=bg, fg='#22c55e', relief='flat', bd=0,
                                   cursor='hand2', width=2,
                                   command=lambda rid=rem['id'], p=parent: (
-                                      self.messenger.db.mark_reminder_notified(rid),
+                                      self.messenger.db.mark_reminder_completed(rid),
                                       self._refresh_reminders_list(p)))
             check_btn.pack(side='left', padx=(4, 0))
             _add_hover(check_btn, bg, '#dcfce7')
@@ -8580,9 +8603,12 @@ class LanMessengerApp:
             time_str = remind_at.strftime('%d/%m/%Y %H:%M')
         # Se ja passou e nao concluido, destacar em vermelho
         fg_time = '#718096'
-        if not completed and remind_at < now:
+        if not completed and is_overdue:
             fg_time = '#ef4444'
-            time_str = '\u26a0 ' + time_str + ' (atrasado)'
+            if is_notified:
+                time_str = '\U0001f514 ' + time_str + ' (notificado)'
+            else:
+                time_str = '\u26a0 ' + time_str + ' (atrasado)'
         tk.Label(info, text=time_str, font=('Segoe UI', 8),
                  bg=bg, fg=fg_time, anchor='w').pack(anchor='w')
         # Botao X (deletar)

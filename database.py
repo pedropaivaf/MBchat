@@ -162,6 +162,13 @@ class Database:
             except Exception:
                 pass
 
+        # Migration: completed em reminders
+        try:
+            c.execute("ALTER TABLE reminders ADD COLUMN completed INTEGER DEFAULT 0")
+            c.commit()
+        except Exception:
+            pass
+
         # Tabelas novas: polls, poll_votes, reminders
         c.executescript("""
             CREATE TABLE IF NOT EXISTS polls (
@@ -184,6 +191,7 @@ class Database:
                 text TEXT NOT NULL,
                 remind_at REAL NOT NULL,
                 notified INTEGER DEFAULT 0,
+                completed INTEGER DEFAULT 0,
                 created_at REAL NOT NULL
             );
         """)
@@ -601,15 +609,17 @@ class Database:
         return [dict(r) for r in rows]
 
     def get_all_reminders(self):
+        # Pendentes: nao concluidos pelo usuario
         rows = self.conn.execute("""
-            SELECT * FROM reminders WHERE notified=0
+            SELECT * FROM reminders WHERE completed=0
             ORDER BY remind_at ASC
         """).fetchall()
         return [dict(r) for r in rows]
 
     def get_completed_reminders(self):
+        # Concluidos nas ultimas 24h
         rows = self.conn.execute("""
-            SELECT * FROM reminders WHERE notified=1
+            SELECT * FROM reminders WHERE completed=1
             AND remind_at >= ? ORDER BY remind_at DESC
         """, (time.time() - 86400,)).fetchall()
         return [dict(r) for r in rows]
@@ -617,6 +627,11 @@ class Database:
     def mark_reminder_notified(self, reminder_id):
         self.conn.execute(
             "UPDATE reminders SET notified=1 WHERE id=?", (reminder_id,))
+        self.conn.commit()
+
+    def mark_reminder_completed(self, reminder_id):
+        self.conn.execute(
+            "UPDATE reminders SET completed=1 WHERE id=?", (reminder_id,))
         self.conn.commit()
 
     def delete_reminder(self, reminder_id):
