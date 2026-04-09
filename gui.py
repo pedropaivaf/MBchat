@@ -8488,7 +8488,16 @@ class LanMessengerApp:
                 # Fallback final: messagebox
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
-                SoundPlayer.play_notification()
+                # Som de alerta mais forte que mensagem normal (toca 2x)
+                try:
+                    if platform.system() == 'Windows':
+                        import winsound
+                        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                        self.root.after(600, lambda: winsound.MessageBeep(winsound.MB_ICONEXCLAMATION))
+                    else:
+                        SoundPlayer.play_notification()
+                except Exception:
+                    SoundPlayer.play_notification()
                 # Pisca a janela principal na taskbar
                 try:
                     self._flash_window()
