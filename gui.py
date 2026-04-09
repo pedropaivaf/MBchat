@@ -5356,10 +5356,11 @@ class LanMessengerApp:
         self._transfers_window = None       # Referência à janela de Transferências (se aberta)
         self._tray_icon = None              # Ícone do system tray (pystray)
         self._last_notif_peer = None        # Último peer que gerou notificação (para clique no tray)
+        self._pending_flash_target = None   # Alvo pendente para abrir ao clicar no app piscando (peer_id, 'group:gid', '__reminders__')
 
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
-        self.root.bind('<FocusIn>', lambda e: self._stop_flash())
+        self.root.bind('<FocusIn>', self._on_main_focus)
 
         # Init pesado deferido: janela aparece rapido, depois carrega rede/DB/tray
         self.root.after_idle(self._deferred_init)
@@ -8339,7 +8340,9 @@ class LanMessengerApp:
         from_name = self.peer_info.get(from_uid, {}).get('display_name',
                                                           from_uid)
         gw.system_message(f'{from_name} criou este grupo.')
+        self._pending_flash_target = f'group:{group_id}'
         self._flash_window(gw)
+        self._flash_window()
         self._add_group_to_tree(group_id, group_name, group_type)
 
     def _on_group_message(self, group_id, from_uid, display_name,
@@ -8362,6 +8365,7 @@ class LanMessengerApp:
             try:
                 if not gw.focus_displayof():  # janela nao esta em foco (usuario nao esta vendo)?
                     self._show_group_toast(group_id, display_name, content)  # notificacao Windows
+                    self._pending_flash_target = f'group:{group_id}'
                     self._flash_window(gw)    # pisca janela do grupo na taskbar
                     self._flash_window()      # pisca tambem a janela principal
             except Exception:
@@ -8375,6 +8379,7 @@ class LanMessengerApp:
                  reply_to, mentions, msg_id))             # acumula para exibir quando abrir
             self._mark_group_unread(group_id)             # bold + contagem no TreeView
             self._show_group_toast(group_id, display_name, content)  # notificacao Windows
+            self._pending_flash_target = f'group:{group_id}'
             self._flash_window()      # pisca janela principal na taskbar
             try:
                 self.root.bell()  # toca o beep do sistema operacional
@@ -8541,6 +8546,7 @@ class LanMessengerApp:
                 # Pisca a janela principal na taskbar
                 if want_flash:
                     try:
+                        self._pending_flash_target = '__reminders__'
                         self._flash_window()
                     except Exception:
                         pass
@@ -8636,11 +8642,11 @@ class LanMessengerApp:
         elif is_overdue:
             bg = '#fef2f2'
         elif is_normal:
-            bg = '#fffbeb'
+            bg = '#eff6ff'
         else:
             bg = '#f7fafc'
         fg_text = '#6b7280' if completed else '#1a202c'
-        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#fde68a' if is_normal else '#e2e8f0'
+        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#bfdbfe' if is_normal else '#e2e8f0'
         row = tk.Frame(parent, bg=bg, highlightthickness=1,
                        highlightbackground=border_color)
         row.pack(fill='x', pady=3, padx=2)
@@ -9073,6 +9079,7 @@ class LanMessengerApp:
             try:
                 if not cw.focus_displayof():  # janela sem foco?
                     self._show_toast(from_user, content)  # mostra notificacao Windows
+                    self._pending_flash_target = from_user
                     self._flash_window(cw)
                     self._flash_window()
             except Exception:
@@ -9080,6 +9087,7 @@ class LanMessengerApp:
         else:
             self._mark_unread(from_user)
             self._show_toast(from_user, content)
+            self._pending_flash_target = from_user
             self._flash_window()
             try:
                 self.root.bell()
@@ -9098,6 +9106,7 @@ class LanMessengerApp:
                 try:
                     if not gw.focus_displayof():
                         self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
+                        self._pending_flash_target = f'group:{group_id}'
                         self._flash_window(gw)
                         self._flash_window()
                 except Exception:
@@ -9109,6 +9118,7 @@ class LanMessengerApp:
                     (display_name or from_user, f'[img]{image_path}', timestamp))
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
+                self._pending_flash_target = f'group:{group_id}'
                 self._flash_window()
         else:
             # Imagem individual
@@ -9118,6 +9128,7 @@ class LanMessengerApp:
                 try:
                     if not cw.focus_displayof():
                         self._show_toast(from_user, '[Imagem]')
+                        self._pending_flash_target = from_user
                         self._flash_window(cw)
                         self._flash_window()
                 except Exception:
@@ -9125,6 +9136,7 @@ class LanMessengerApp:
             else:
                 self._mark_unread(from_user)
                 self._show_toast(from_user, '[Imagem]')
+                self._pending_flash_target = from_user
                 self._flash_window()
                 try:
                     self.root.bell()
@@ -9314,6 +9326,22 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Callback do FocusIn da janela principal: para o flash e abre o alvo pendente.
+    def _on_main_focus(self, event=None):
+        self._stop_flash()
+        target = self._pending_flash_target
+        if target is None:
+            return
+        self._pending_flash_target = None
+        if target == '__reminders__':
+            self.root.after(100, self._show_reminders)
+        elif target.startswith('group:'):
+            gid = target[6:]
+            if gid in self.messenger._groups:
+                self.root.after(100, lambda: self._open_group(gid))
+        elif target in self.peer_info:
+            self.root.after(100, lambda: self._open_chat(target))
+
     # Mostra notificacao toast nativa do Windows (clicavel via winotify).
     def _show_toast(self, from_user, content):
         # Respeita configuracao de notificacao Windows
@@ -9425,8 +9453,9 @@ class LanMessengerApp:
     # Captura o ultimo peer que enviou notificacao e o passa para _restore_and_open.
     # Usa root.after(0) para executar na thread principal do tkinter (thread-safe).
     def _tray_show(self, icon=None, item=None):
-        peer = self._last_notif_peer    # pega o peer da ultima notificacao (pode ser None)
-        self._last_notif_peer = None    # limpa para nao reabrir na proxima vez
+        peer = self._pending_flash_target or self._last_notif_peer
+        self._pending_flash_target = None
+        self._last_notif_peer = None
         self.root.after(0, lambda: self._restore_and_open(peer))  # agenda na main thread
 
     # Restaura a janela principal do tray e abre chat/grupo se peer for fornecido.
