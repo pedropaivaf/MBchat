@@ -99,6 +99,7 @@ MT_GROUP_INV = 'group_invite'   # TCP: convite para entrar em grupo
 MT_GROUP_MSG = 'group_message'  # TCP: mensagem de texto em grupo (mesh)
 MT_GROUP_LEAVE = 'group_leave'  # TCP: notificacao de saida do grupo
 MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
+MT_IMAGE = 'image'              # TCP: imagem inline (clipboard, base64)
 
 
 # Detecta IP local da maquina na rede.

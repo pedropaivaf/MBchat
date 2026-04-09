@@ -23,6 +23,7 @@ from datetime import datetime, timedelta        # Formatar timestamps das mensag
 import calendar as cal_mod                      # Gerar o grid de dias no mini-calendário popup
 import logging                                  # Registrar erros em arquivo de log
 import re                                       # Detectar emojis Unicode via expressão regular
+import io                                       # BytesIO para compressao de imagens em memoria
 from pathlib import Path                        # Manipulação de caminhos de forma moderna
 
 # --- Logging ---
@@ -48,7 +49,7 @@ import updater
 # Pillow (PIL): suporte a avatares JPG/PNG e renderização de emojis coloridos.
 # Sem PIL: avatares usam canvas simples (texto sobre círculo colorido) e emojis ficam como texto.
 try:
-    from PIL import Image, ImageTk          # Image: manipulação; ImageTk: exibir no tkinter
+    from PIL import Image, ImageTk, ImageGrab  # Image: manipulação; ImageTk: exibir no tkinter; ImageGrab: clipboard
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -2432,12 +2433,15 @@ class ChatWindow(tk.Toplevel):
         # Enter envia (verificado em _on_enter); Shift+Enter insere nova linha
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
+        self.entry.bind('<Control-v>', self._on_paste)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         # Este é o único evento confiável para detectar emojis inseridos pelo Windows Emoji Picker
         self.entry.bind('<<Modified>>', self._on_modified)
         # <KeyRelease> usado apenas para o indicador de digitação (não para emojis)
         self.entry.bind('<KeyRelease>', self._on_key_typing)
         self.entry.focus_set()
+
+        self._image_cache = {}  # path -> PhotoImage para imagens no chat
 
         # Área de exibição das mensagens (chat_frame se expande para preencher o espaço restante)
         chat_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
@@ -3011,12 +3015,25 @@ class ChatWindow(tk.Toplevel):
                     continue
 
                 total += 1
-                line = f'[{ts_str}] {who}: {content}\n'
+                is_image = m.get('msg_type') == 'image'
+                display_content = '[Imagem]' if is_image else content
+                line = f'[{ts_str}] {who}: {display_content}\n'
                 start_idx = txt.index('end-1c')
                 txt.insert('end', f'[{ts_str}] ', 'ts')
                 who_tag = 'me' if m['is_sent'] else 'peer'
                 txt.insert('end', f'{who}: ', who_tag)
-                txt.insert('end', f'{content}\n')
+                if is_image:
+                    tag_img = f'hist_img_{total}'
+                    txt.insert('end', '[Imagem]\n', tag_img)
+                    txt.tag_config(tag_img, foreground='#1976d2', underline=True)
+                    txt.tag_bind(tag_img, '<Button-1>',
+                                 lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
+                    txt.tag_bind(tag_img, '<Enter>',
+                                 lambda e: txt.config(cursor='hand2'))
+                    txt.tag_bind(tag_img, '<Leave>',
+                                 lambda e: txt.config(cursor=''))
+                else:
+                    txt.insert('end', f'{content}\n')
 
                 # Highlight matches
                 if query:
@@ -3716,6 +3733,105 @@ class ChatWindow(tk.Toplevel):
         popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
         popup.focus_set()
 
+    # Ctrl+V — detecta imagem no clipboard e envia
+    def _on_paste(self, event):
+        if not HAS_PIL:
+            return  # sem PIL, deixa o paste padrao de texto funcionar
+        try:
+            img = ImageGrab.grabclipboard()
+            if img is not None:
+                self._send_clipboard_image(img)
+                return 'break'  # consome evento (nao cola texto)
+        except Exception:
+            pass  # nao e imagem — deixa o paste padrao funcionar
+
+    # Comprime e envia imagem do clipboard para o peer
+    def _send_clipboard_image(self, img):
+        # Redimensiona se muito grande
+        max_dim = 1920
+        if img.width > max_dim or img.height > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        # Converte RGBA -> RGB (JPEG nao suporta alpha)
+        if img.mode == 'RGBA':
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+        # Comprime como JPEG
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        image_bytes = buf.getvalue()
+        # Limite 2MB
+        if len(image_bytes) > 2 * 1024 * 1024:
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=60)
+            image_bytes = buf.getvalue()
+
+        def _do_send():
+            ok, path = self.messenger.send_image(self.peer_id, image_bytes)
+            if ok and path:
+                self.after(0, lambda: self._append_image(
+                    self.messenger.display_name, path, True))
+        threading.Thread(target=_do_send, daemon=True).start()
+
+    # Chamado quando uma imagem e recebida do peer
+    def receive_image(self, image_path, timestamp=None):
+        self._append_image(self.peer_name, image_path, False, timestamp=timestamp)
+        self.messenger.mark_as_read(self.peer_id)
+        if self.focus_get() is None:
+            self.bell()
+
+    # Renderiza imagem no chat (thumbnail clicavel)
+    def _append_image(self, sender, image_path, is_mine, timestamp=None):
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
+        self.chat_text.configure(state='normal')
+        style = self.messenger.db.get_setting('msg_style', 'bubble')
+
+        if style == 'bubble':
+            if is_mine:
+                name_tag, time_tag, msg_tag = 'my_bubble_name', 'my_bubble_time', 'my_bubble'
+            else:
+                name_tag, time_tag, msg_tag = 'peer_bubble_name', 'peer_bubble_time', 'peer_bubble'
+        else:
+            name_tag = 'my_name' if is_mine else 'peer_name'
+            time_tag = 'time'
+            msg_tag = 'msg'
+
+        self.chat_text.insert('end', f'{sender}', name_tag)
+        self.chat_text.insert('end', f'  {ts}\n', time_tag)
+
+        # Carrega e redimensiona imagem para thumbnail
+        try:
+            pil_img = Image.open(image_path)
+            max_w = 300
+            if pil_img.width > max_w:
+                ratio = max_w / pil_img.width
+                pil_img = pil_img.resize(
+                    (max_w, int(pil_img.height * ratio)), Image.LANCZOS)
+            tk_img = ImageTk.PhotoImage(pil_img)
+            self._image_cache[image_path] = tk_img  # evita garbage collection
+            self.chat_text.image_create('end', image=tk_img, padx=4, pady=2)
+            # Clique abre imagem no visualizador padrao do sistema
+            tag_name = f'img_{id(tk_img)}'
+            self.chat_text.tag_add(tag_name,
+                                   self.chat_text.index('end - 2 chars'),
+                                   self.chat_text.index('end - 1 chars'))
+            self.chat_text.tag_config(tag_name, underline=False)
+            self.chat_text.tag_bind(tag_name, '<Button-1>',
+                                    lambda e, p=image_path: os.startfile(p))
+            self.chat_text.tag_bind(tag_name, '<Enter>',
+                                    lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(tag_name, '<Leave>',
+                                    lambda e: self.chat_text.config(cursor=''))
+        except Exception:
+            self.chat_text.insert('end', '[Imagem indisponível]', msg_tag)
+
+        self.chat_text.insert('end', '\n', msg_tag)
+        self.chat_text.insert('end', '\n')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
             del self.app.chat_windows[self.peer_id]
@@ -3881,9 +3997,12 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
+        self.entry.bind('<Control-v>', self._on_paste)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         self.entry.bind('<<Modified>>', self._on_modified)
         self.entry.focus_set()
+
+        self._image_cache = {}  # path -> PhotoImage para imagens no chat
 
         # ===== Separator =====
         tk.Frame(self, bg='#e2e8f0', height=1).pack(side='bottom', fill='x')
@@ -4538,6 +4657,96 @@ class GroupChatWindow(tk.Toplevel):
                          args=(self.group_id, content),
                          daemon=True).start()
 
+    # Ctrl+V — detecta imagem no clipboard e envia para o grupo
+    def _on_paste(self, event):
+        if not HAS_PIL:
+            return
+        try:
+            img = ImageGrab.grabclipboard()
+            if img is not None:
+                self._send_clipboard_image(img)
+                return 'break'
+        except Exception:
+            pass
+
+    # Comprime e envia imagem do clipboard para todos os membros do grupo
+    def _send_clipboard_image(self, img):
+        max_dim = 1920
+        if img.width > max_dim or img.height > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        if img.mode == 'RGBA':
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        image_bytes = buf.getvalue()
+        if len(image_bytes) > 2 * 1024 * 1024:
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=60)
+            image_bytes = buf.getvalue()
+
+        def _do_send():
+            path = self.app.messenger.send_group_image(self.group_id, image_bytes)
+            if path:
+                self.after(0, lambda: self._append_image(
+                    self.app.messenger.display_name, path, True))
+        threading.Thread(target=_do_send, daemon=True).start()
+
+    # Chamado quando imagem e recebida de outro membro do grupo
+    def receive_image(self, display_name, image_path, timestamp=None):
+        self._append_image(display_name, image_path, False, timestamp=timestamp)
+
+    # Renderiza imagem no chat do grupo (thumbnail clicavel)
+    def _append_image(self, sender, image_path, is_mine, timestamp=None):
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
+        self.chat_text.configure(state='normal')
+        style = self.app.messenger.db.get_setting('msg_style', 'bubble')
+
+        if style == 'bubble':
+            if is_mine:
+                name_tag, time_tag, msg_tag = 'my_bubble_name', 'my_bubble_time', 'my_bubble'
+            else:
+                name_tag, time_tag, msg_tag = 'peer_bubble_name', 'peer_bubble_time', 'peer_bubble'
+        else:
+            name_tag = 'my_name' if is_mine else 'peer_name'
+            time_tag = 'time'
+            msg_tag = 'msg'
+
+        self.chat_text.insert('end', f'{sender}', name_tag)
+        self.chat_text.insert('end', f'  {ts}\n', time_tag)
+
+        try:
+            pil_img = Image.open(image_path)
+            max_w = 300
+            if pil_img.width > max_w:
+                ratio = max_w / pil_img.width
+                pil_img = pil_img.resize(
+                    (max_w, int(pil_img.height * ratio)), Image.LANCZOS)
+            tk_img = ImageTk.PhotoImage(pil_img)
+            self._image_cache[image_path] = tk_img
+            self.chat_text.image_create('end', image=tk_img, padx=4, pady=2)
+            tag_name = f'img_{id(tk_img)}'
+            self.chat_text.tag_add(tag_name,
+                                   self.chat_text.index('end - 2 chars'),
+                                   self.chat_text.index('end - 1 chars'))
+            self.chat_text.tag_config(tag_name, underline=False)
+            self.chat_text.tag_bind(tag_name, '<Button-1>',
+                                    lambda e, p=image_path: os.startfile(p))
+            self.chat_text.tag_bind(tag_name, '<Enter>',
+                                    lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(tag_name, '<Leave>',
+                                    lambda e: self.chat_text.config(cursor=''))
+        except Exception:
+            self.chat_text.insert('end', '[Imagem indisponível]', msg_tag)
+
+        self.chat_text.insert('end', '\n', msg_tag)
+        self.chat_text.insert('end', '\n')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
     # Confirmação para sair de grupo fixo.
     def _confirm_leave(self):
         if messagebox.askyesno('Sair do Grupo',
@@ -4716,6 +4925,7 @@ class LanMessengerApp:
             on_group_message=self._safe(self._on_group_message),
             on_group_leave=self._safe(self._on_group_leave),
             on_group_join=self._safe(self._on_group_join),
+            on_image=self._safe(self._on_image),
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
@@ -6490,7 +6700,10 @@ class LanMessengerApp:
         # Exibe mensagens pendentes acumuladas enquanto a janela estava fechada
         pending = self._pending_group_msgs.pop(group_id, [])  # remove do buffer pendente
         for dname, content, ts in pending:       # entrega cada mensagem acumulada
-            gw.receive_message(dname, content, ts)
+            if isinstance(content, str) and content.startswith('[img]'):
+                gw.receive_image(dname, content[5:], ts)
+            else:
+                gw.receive_message(dname, content, ts)
         self._clear_group_unread(group_id)       # limpa o indicador bold/contagem no TreeView
         # Coloca o foco no campo de texto para o usuario poder digitar imediatamente
         try:
@@ -6571,7 +6784,10 @@ class LanMessengerApp:
             unread = self.messenger.db.get_unread_messages(
                 self.messenger.user_id, peer_id)
             for msg in unread:
-                cw.receive_message(msg['content'], msg['timestamp'])
+                if msg.get('msg_type') == 'image':
+                    cw.receive_image(msg['content'], msg['timestamp'])
+                else:
+                    cw.receive_message(msg['content'], msg['timestamp'])
         except Exception:
             pass
         self._clear_unread(peer_id)           # remove marcacao de nao lido
@@ -6837,7 +7053,18 @@ class LanMessengerApp:
                     msg_text.insert('end', f'  [{ts}] ', 'ts')
                     who_tag = 'me' if m['is_sent'] else 'peer_tag'
                     msg_text.insert('end', f'{who}: ', who_tag)
-                    msg_text.insert('end', f'{content}\n')
+                    if m.get('msg_type') == 'image':
+                        gtag = f'gimg_{match_count}'
+                        msg_text.insert('end', '[Imagem]\n', gtag)
+                        msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
+                        msg_text.tag_bind(gtag, '<Button-1>',
+                                          lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
+                        msg_text.tag_bind(gtag, '<Enter>',
+                                          lambda e: msg_text.config(cursor='hand2'))
+                        msg_text.tag_bind(gtag, '<Leave>',
+                                          lambda e: msg_text.config(cursor=''))
+                    else:
+                        msg_text.insert('end', f'{content}\n')
 
                     if query_lower:
                         line_start = start_idx
@@ -7742,6 +7969,51 @@ class LanMessengerApp:
                 self.root.bell()
             except Exception:
                 pass
+
+    # Callback: imagem recebida via TCP (MT_IMAGE).
+    def _on_image(self, from_user, image_path, msg_id, timestamp,
+                  group_id=None, display_name=None):
+        SoundPlayer.play_notification()
+        if group_id:
+            # Imagem de grupo
+            if group_id in self.group_windows:
+                gw = self.group_windows[group_id]
+                gw.receive_image(display_name or from_user, image_path, timestamp)
+                try:
+                    if not gw.focus_displayof():
+                        self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
+                        self._flash_window(gw)
+                        self._flash_window()
+                except Exception:
+                    pass
+            else:
+                if group_id not in self._pending_group_msgs:
+                    self._pending_group_msgs[group_id] = []
+                self._pending_group_msgs[group_id].append(
+                    (display_name or from_user, f'[img]{image_path}', timestamp))
+                self._mark_group_unread(group_id)
+                self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
+                self._flash_window()
+        else:
+            # Imagem individual
+            if from_user in self.chat_windows:
+                cw = self.chat_windows[from_user]
+                cw.receive_image(image_path, timestamp)
+                try:
+                    if not cw.focus_displayof():
+                        self._show_toast(from_user, '[Imagem]')
+                        self._flash_window(cw)
+                        self._flash_window()
+                except Exception:
+                    pass
+            else:
+                self._mark_unread(from_user)
+                self._show_toast(from_user, '[Imagem]')
+                self._flash_window()
+                try:
+                    self.root.bell()
+                except Exception:
+                    pass
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #

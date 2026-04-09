@@ -16,6 +16,7 @@ import time       # Timestamps para mensagens
 import uuid       # IDs unicos para mensagens e transferencias
 import os         # Caminhos de arquivos e diretorios
 import threading  # Lock para contadores thread-safe
+import base64     # Codificacao de imagens para envio via TCP
 
 # Importa componentes de rede e constantes
 from network import (
@@ -23,7 +24,8 @@ from network import (
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
-    MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, TCP_PORT
+    MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
+    MT_IMAGE, TCP_PORT
 )
 from database import Database  # Banco de dados local
 
@@ -49,13 +51,14 @@ class Messenger:
     # on_group_message: Callback(group_id, from_uid, name, content, ts) - msg grupo
     # on_group_leave: Callback(group_id, uid, name) - membro saiu do grupo
     # on_group_join: Callback(group_id, uid, name) - membro entrou no grupo
+    # on_image: Callback(from_user, image_path, msg_id, timestamp) - imagem recebida
     def __init__(self, display_name=None, on_user_found=None,
                  on_user_lost=None, on_message=None, on_status=None,
                  on_typing=None, on_file_incoming=None,
                  on_file_progress=None, on_file_complete=None,
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
-                 on_group_join=None):
+                 on_group_join=None, on_image=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -76,6 +79,7 @@ class Messenger:
         self.on_group_message = on_group_message  # Mensagem de grupo
         self.on_group_leave = on_group_leave    # Membro saiu do grupo
         self.on_group_join = on_group_join      # Membro entrou no grupo
+        self.on_image = on_image                # Imagem recebida
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -251,6 +255,41 @@ class Messenger:
         elif msg_type == MT_ACK:
             pass  # Pode ser usado para marcar entrega (nao implementado)
 
+        # --- Imagem inline (clipboard) ---
+        elif msg_type == MT_IMAGE:
+            msg_id = msg.get('msg_id', str(uuid.uuid4()))
+            timestamp = msg.get('timestamp', time.time())
+            b64 = msg.get('image_data', '')
+            group_id = msg.get('group_id')
+
+            try:
+                image_bytes = base64.b64decode(b64)
+            except Exception:
+                return
+            image_path = self._save_image_to_disk(image_bytes, msg_id)
+
+            if group_id:
+                # Imagem de grupo — notifica via on_group_message com marcador especial
+                display_name = msg.get('display_name', from_user)
+                if self.on_image:
+                    self.on_image(from_user, image_path, msg_id, timestamp,
+                                  group_id=group_id, display_name=display_name)
+            else:
+                # Imagem individual
+                self.db.save_message(msg_id, from_user, self.user_id,
+                                    image_path, 'image', is_sent=False,
+                                    timestamp=timestamp)
+                # ACK
+                contact = self.db.get_contact(from_user)
+                if contact:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_ACK,
+                        'from_user': self.user_id,
+                        'msg_id': msg_id
+                    })
+                if self.on_image:
+                    self.on_image(from_user, image_path, msg_id, timestamp)
+
         # --- Convite para grupo ---
         elif msg_type == MT_GROUP_INV:
             group_id = msg.get('group_id')
@@ -361,6 +400,70 @@ class Messenger:
             'content': content,
             'timestamp': timestamp
         })
+
+    # Envia imagem (bytes JPEG) para um peer
+    # image_bytes: bytes JPEG da imagem ja comprimida
+    # Retorna (success, image_path) — image_path e o caminho salvo localmente
+    def send_image(self, to_user_id, image_bytes):
+        contact = self.db.get_contact(to_user_id)
+        if not contact:
+            return False, None
+
+        msg_id = self._next_msg_id()
+        timestamp = time.time()
+        image_path = self._save_image_to_disk(image_bytes, msg_id)
+        b64 = base64.b64encode(image_bytes).decode('ascii')
+
+        self.db.save_message(msg_id, self.user_id, to_user_id,
+                            image_path, 'image', is_sent=True,
+                            timestamp=timestamp)
+
+        ok = TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+            'type': MT_IMAGE,
+            'from_user': self.user_id,
+            'to_user': to_user_id,
+            'display_name': self.display_name,
+            'msg_id': msg_id,
+            'image_data': b64,
+            'timestamp': timestamp
+        })
+        return ok, image_path
+
+    # Envia imagem para todos os membros de um grupo (mesh)
+    def send_group_image(self, group_id, image_bytes):
+        group = self._groups.get(group_id)
+        if not group:
+            return None
+        msg_id = self._next_msg_id()
+        timestamp = time.time()
+        image_path = self._save_image_to_disk(image_bytes, msg_id)
+        b64 = base64.b64encode(image_bytes).decode('ascii')
+
+        for member in group['members']:
+            uid = member['uid']
+            if uid == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_IMAGE,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'group_id': group_id,
+                'msg_id': msg_id,
+                'image_data': b64,
+                'timestamp': timestamp,
+            })
+        return image_path
+
+    # Salva bytes de imagem em disco (%APPDATA%/.mbchat/images/)
+    def _save_image_to_disk(self, image_bytes, msg_id):
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+        img_dir = os.path.join(base, '.mbchat', 'images')
+        os.makedirs(img_dir, exist_ok=True)
+        filename = f'{msg_id}.jpg'
+        path = os.path.join(img_dir, filename)
+        with open(path, 'wb') as f:
+            f.write(image_bytes)
+        return path
 
     # Envia indicador de digitacao para um peer
     def send_typing(self, to_user_id, is_typing=True):
