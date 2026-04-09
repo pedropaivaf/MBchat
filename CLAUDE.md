@@ -224,10 +224,25 @@ SEMPRE que eu pedir qualquer mudanca, seguir estes passos automaticamente:
 - Se der erro, corrigir imediatamente sem perguntar
 - Mostrar resumo do que foi feito (quais arquivos, quantas linhas)
 
-### 4. BUILD + RELEASE (se a mudanca afetar funcionalidade)
-- Rodar `python build.py --version X.Y.Z --release` para gerar MBChat.exe + instalador + GitHub Release
-- Se der erro de build, corrigir e rodar de novo
-- SEMPRE criar GitHub Release com assets (zip + instalador) quando subir versao — sem release o auto-update nao funciona
+### 4. BUILD + RELEASE (OBRIGATORIO quando subir versao)
+
+**PIPELINE COMPLETO — executar TODOS os passos em sequencia, sem parar no meio:**
+
+1. `python build.py --version X.Y.Z --release`
+   - Atualiza version.py + installer.iss + docs/index.html
+   - Gera MBChat.exe via PyInstaller --onedir
+   - Gera MBChat_update.zip (usado pelo auto-update)
+   - Compila MBChat_Setup.exe via Inno Setup
+   - Cria/atualiza GitHub Release vX.Y.Z com zip + instalador como assets
+2. `git add` dos arquivos modificados
+3. `git commit` com mensagem descritiva (SEM Co-Authored-By, SEM mencao a AI)
+4. `git push origin main`
+
+**IMPORTANTE**: Sem o GitHub Release com assets, o auto-update dos 30+ PCs NAO funciona. NUNCA fazer apenas commit+push sem o release. O comando `python build.py --version X.Y.Z --release` faz tudo automaticamente.
+
+**Gatilhos**: Executar este pipeline sempre que o usuario pedir qualquer variacao de: "subir versao", "enviar ao github", "sobe pro github", "push", "bump de versao", "atualiza", "manda pro github", "release", "publica". Na duvida, executar o pipeline completo.
+
+Se der erro de build, corrigir e rodar de novo.
 
 ### Regras gerais
 - Ser o MAIS AUTONOMO possivel. Fazer tudo sem perguntar, sem esperar confirmacao
@@ -235,5 +250,4 @@ SEMPRE que eu pedir qualquer mudanca, seguir estes passos automaticamente:
 - NUNCA explicar o que VAI fazer em 10 paragrafos — faz e mostra o resumo depois
 - Respostas curtas e diretas, sem enrolacao
 - Se eu mandar screenshot de erro, corrigir direto sem pedir mais contexto
-- Quando pedir pra subir versao: bump version + build + release + commit + push — tudo de uma vez, sem parar no meio
 - NUNCA adicionar "Co-Authored-By" ou qualquer referencia a Claude/AI nos commits, PRs, releases ou qualquer parte do projeto. Autoria e exclusivamente de Pedro Paiva (pedropaivaf). Nenhuma menção a assistente de IA em nenhum lugar.
