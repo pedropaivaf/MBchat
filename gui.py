@@ -4151,7 +4151,7 @@ class ChatWindow(tk.Toplevel):
                                    self.chat_text.index('end - 1 chars'))
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
-                                    lambda e, p=image_path: os.startfile(p))
+                                    lambda e, p=image_path: self._open_image_file(p))
             self.chat_text.tag_bind(tag_name, '<Button-3>',
                                     lambda e, p=image_path: self._show_image_ctx(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
@@ -4166,10 +4166,21 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
-    # Menu de contexto para imagens no chat (Abrir / Salvar como / Copiar)
+    def _open_image_file(self, image_path):
+        if not os.path.exists(image_path):
+            return
+        try:
+            os.startfile(image_path)
+        except Exception:
+            try:
+                import subprocess
+                subprocess.Popen(['explorer', image_path])
+            except Exception:
+                log.exception('Erro ao abrir imagem')
+
     def _show_image_ctx(self, event, image_path):
         m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        m.add_command(label='Abrir', command=lambda: os.startfile(image_path))
+        m.add_command(label='Abrir', command=lambda: self._open_image_file(image_path))
         m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
         m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
         m.tk_popup(event.x_root, event.y_root)
@@ -4186,29 +4197,45 @@ class ChatWindow(tk.Toplevel):
                 import shutil
                 shutil.copy2(image_path, dest)
             except Exception:
-                pass
+                log.exception('Erro ao salvar imagem')
 
     def _copy_image_to_clipboard(self, image_path):
         try:
+            import ctypes
             img = Image.open(image_path).convert('RGB')
             buf = io.BytesIO()
             img.save(buf, format='BMP')
-            bmp_data = buf.getvalue()[14:]  # remove BMP file header (14 bytes)
-            import ctypes
+            bmp_bytes = buf.getvalue()
+            dib_data = bmp_bytes[14:]  # remove BMP file header (14 bytes)
             u32 = ctypes.windll.user32
             k32 = ctypes.windll.kernel32
             CF_DIB = 8
-            u32.OpenClipboard(0)
-            u32.EmptyClipboard()
-            h = k32.GlobalAlloc(0x0002, len(bmp_data))  # GMEM_MOVEABLE
-            k32.GlobalLock.restype = ctypes.c_void_p
-            ptr = k32.GlobalLock(h)
-            ctypes.memmove(ptr, bmp_data, len(bmp_data))
-            k32.GlobalUnlock(h)
-            u32.SetClipboardData(CF_DIB, h)
-            u32.CloseClipboard()
+            GMEM_MOVEABLE = 0x0002
+            if not u32.OpenClipboard(0):
+                log.warning('Copiar imagem: OpenClipboard falhou')
+                return
+            try:
+                u32.EmptyClipboard()
+                size = len(dib_data)
+                h = k32.GlobalAlloc(GMEM_MOVEABLE, size)
+                if not h:
+                    log.warning('Copiar imagem: GlobalAlloc falhou')
+                    return
+                k32.GlobalLock.restype = ctypes.c_void_p
+                ptr = k32.GlobalLock(h)
+                if not ptr:
+                    log.warning('Copiar imagem: GlobalLock falhou')
+                    return
+                try:
+                    ctypes.memmove(ptr, dib_data, size)
+                finally:
+                    k32.GlobalUnlock(h)
+                u32.SetClipboardData(CF_DIB, h)
+            finally:
+                u32.CloseClipboard()
+            log.debug('Imagem copiada para clipboard (%d bytes)', len(dib_data))
         except Exception:
-            pass
+            log.exception('Erro ao copiar imagem para clipboard')
 
     def _on_close(self):
         if self.peer_id in self.app.chat_windows:
@@ -5486,7 +5513,7 @@ class GroupChatWindow(tk.Toplevel):
                                    self.chat_text.index('end - 1 chars'))
             self.chat_text.tag_config(tag_name, underline=False)
             self.chat_text.tag_bind(tag_name, '<Button-1>',
-                                    lambda e, p=image_path: os.startfile(p))
+                                    lambda e, p=image_path: self._open_image_file(p))
             self.chat_text.tag_bind(tag_name, '<Button-3>',
                                     lambda e, p=image_path: self._show_image_ctx(e, p))
             self.chat_text.tag_bind(tag_name, '<Enter>',
@@ -5501,10 +5528,21 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
 
-    # Menu de contexto para imagens no chat (Abrir / Salvar como / Copiar)
+    def _open_image_file(self, image_path):
+        if not os.path.exists(image_path):
+            return
+        try:
+            os.startfile(image_path)
+        except Exception:
+            try:
+                import subprocess
+                subprocess.Popen(['explorer', image_path])
+            except Exception:
+                log.exception('Erro ao abrir imagem')
+
     def _show_image_ctx(self, event, image_path):
         m = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        m.add_command(label='Abrir', command=lambda: os.startfile(image_path))
+        m.add_command(label='Abrir', command=lambda: self._open_image_file(image_path))
         m.add_command(label='Salvar como...', command=lambda: self._save_image_as(image_path))
         m.add_command(label='Copiar imagem', command=lambda: self._copy_image_to_clipboard(image_path))
         m.tk_popup(event.x_root, event.y_root)
@@ -5521,29 +5559,45 @@ class GroupChatWindow(tk.Toplevel):
                 import shutil
                 shutil.copy2(image_path, dest)
             except Exception:
-                pass
+                log.exception('Erro ao salvar imagem')
 
     def _copy_image_to_clipboard(self, image_path):
         try:
+            import ctypes
             img = Image.open(image_path).convert('RGB')
             buf = io.BytesIO()
             img.save(buf, format='BMP')
-            bmp_data = buf.getvalue()[14:]
-            import ctypes
+            bmp_bytes = buf.getvalue()
+            dib_data = bmp_bytes[14:]
             u32 = ctypes.windll.user32
             k32 = ctypes.windll.kernel32
             CF_DIB = 8
-            u32.OpenClipboard(0)
-            u32.EmptyClipboard()
-            h = k32.GlobalAlloc(0x0002, len(bmp_data))
-            k32.GlobalLock.restype = ctypes.c_void_p
-            ptr = k32.GlobalLock(h)
-            ctypes.memmove(ptr, bmp_data, len(bmp_data))
-            k32.GlobalUnlock(h)
-            u32.SetClipboardData(CF_DIB, h)
-            u32.CloseClipboard()
+            GMEM_MOVEABLE = 0x0002
+            if not u32.OpenClipboard(0):
+                log.warning('Copiar imagem: OpenClipboard falhou')
+                return
+            try:
+                u32.EmptyClipboard()
+                size = len(dib_data)
+                h = k32.GlobalAlloc(GMEM_MOVEABLE, size)
+                if not h:
+                    log.warning('Copiar imagem: GlobalAlloc falhou')
+                    return
+                k32.GlobalLock.restype = ctypes.c_void_p
+                ptr = k32.GlobalLock(h)
+                if not ptr:
+                    log.warning('Copiar imagem: GlobalLock falhou')
+                    return
+                try:
+                    ctypes.memmove(ptr, dib_data, size)
+                finally:
+                    k32.GlobalUnlock(h)
+                u32.SetClipboardData(CF_DIB, h)
+            finally:
+                u32.CloseClipboard()
+            log.debug('Imagem copiada para clipboard (%d bytes)', len(dib_data))
         except Exception:
-            pass
+            log.exception('Erro ao copiar imagem para clipboard')
 
     # Confirmação para sair de grupo fixo.
     def _confirm_leave(self):
