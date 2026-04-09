@@ -224,14 +224,16 @@ SEMPRE que eu pedir qualquer mudanca, seguir estes passos automaticamente:
 - Se der erro, corrigir imediatamente sem perguntar
 - Mostrar resumo do que foi feito (quais arquivos, quantas linhas)
 
-### 4. BUILD (se a mudanca afetar funcionalidade)
-- Rodar `python build.py` para gerar MBChat.exe
+### 4. BUILD + RELEASE (se a mudanca afetar funcionalidade)
+- Rodar `python build.py --version X.Y.Z --release` para gerar MBChat.exe + instalador + GitHub Release
 - Se der erro de build, corrigir e rodar de novo
+- SEMPRE criar GitHub Release com assets (zip + instalador) quando subir versao — sem release o auto-update nao funciona
 
 ### Regras gerais
+- Ser o MAIS AUTONOMO possivel. Fazer tudo sem perguntar, sem esperar confirmacao
 - NUNCA perguntar "quer que eu faca X?" — ja faz
 - NUNCA explicar o que VAI fazer em 10 paragrafos — faz e mostra o resumo depois
 - Respostas curtas e diretas, sem enrolacao
 - Se eu mandar screenshot de erro, corrigir direto sem pedir mais contexto
-- Commits so quando eu pedir explicitamente
+- Quando pedir pra subir versao: bump version + build + release + commit + push — tudo de uma vez, sem parar no meio
 - NUNCA adicionar "Co-Authored-By" ou qualquer referencia a Claude/AI nos commits, PRs, releases ou qualquer parte do projeto. Autoria e exclusivamente de Pedro Paiva (pedropaivaf). Nenhuma menção a assistente de IA em nenhum lugar.
