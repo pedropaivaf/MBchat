@@ -432,6 +432,7 @@ class UDPDiscovery:
                 'note': pkt.get('note', ''),
                 'avatar_index': pkt.get('avatar_index', 0),
                 'avatar_data': pkt.get('avatar_data', ''),
+                'department': pkt.get('department', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
                 'last_seen': time.time()  # Marca momento do recebimento
             }
