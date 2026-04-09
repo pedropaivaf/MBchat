@@ -1004,6 +1004,14 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('sound_online', '1') == '1')
         self.var_flash_taskbar = tk.BooleanVar(
             value=db.get_setting('flash_taskbar', '1') == '1')
+        self.var_notif_windows = tk.BooleanVar(
+            value=db.get_setting('notif_windows', '1') == '1')
+        self.var_sound_reminder = tk.BooleanVar(
+            value=db.get_setting('sound_reminder', '1') == '1')
+        self.var_notif_reminder = tk.BooleanVar(
+            value=db.get_setting('notif_reminder', '1') == '1')
+        self.var_flash_reminder = tk.BooleanVar(
+            value=db.get_setting('flash_reminder', '1') == '1')
         self.var_save_history = tk.BooleanVar(value=True)
         self.var_history_path = tk.StringVar(
             value=db.get_setting('history_path',
@@ -1204,7 +1212,7 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(dept_row, text='Departamento:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
-                                         values=['Fiscal', 'Contábil', 'TI',
+                                         values=['(Nenhum)', 'Fiscal', 'Contábil', 'TI',
                                                  'Comercial', 'DP', 'SC',
                                                  'Marketing', 'Recepção'])
         self._dept_combo.set(self.messenger.db.get_setting('department', ''))
@@ -1306,26 +1314,43 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(parent, text='Alertas', font=FONT_SECTION,
                  bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
 
-        lf = tk.LabelFrame(parent, text='Sons', font=FONT,
+        # --- Mensagens ---
+        lf = tk.LabelFrame(parent, text='Mensagens', font=FONT,
                             bg=BG_WINDOW, padx=10, pady=5)
         lf.pack(fill='x', padx=10, pady=(0, 8))
-
-        tk.Checkbutton(lf, text='Ativar sons de notificação',
-                       variable=self.var_sound, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
         tk.Checkbutton(lf, text='Som ao receber mensagem',
                        variable=self.var_sound_msg, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf, text='Som quando alguém ficar online',
-                       variable=self.var_sound_online, font=FONT,
+        tk.Checkbutton(lf, text='Notificação do Windows (toast)',
+                       variable=self.var_notif_windows, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf, text='Piscar barra de tarefas',
+                       variable=self.var_flash_taskbar, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
-        lf2 = tk.LabelFrame(parent, text='Visual', font=FONT,
+        # --- Lembretes ---
+        lf2 = tk.LabelFrame(parent, text='Lembretes', font=FONT,
                              bg=BG_WINDOW, padx=10, pady=5)
         lf2.pack(fill='x', padx=10, pady=(0, 8))
+        tk.Checkbutton(lf2, text='Som de alerta ao disparar lembrete',
+                       variable=self.var_sound_reminder, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Notificação do Windows (toast)',
+                       variable=self.var_notif_reminder, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Piscar barra de tarefas',
+                       variable=self.var_flash_reminder, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
 
-        tk.Checkbutton(lf2, text='Piscar barra de tarefas ao receber mensagem',
-                       variable=self.var_flash_taskbar, font=FONT,
+        # --- Geral ---
+        lf3 = tk.LabelFrame(parent, text='Geral', font=FONT,
+                             bg=BG_WINDOW, padx=10, pady=5)
+        lf3.pack(fill='x', padx=10, pady=(0, 8))
+        tk.Checkbutton(lf3, text='Ativar sons de notificação (mestre)',
+                       variable=self.var_sound, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf3, text='Som quando alguém ficar online',
+                       variable=self.var_sound_online, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
     # ----- REDE -----
@@ -1493,6 +1518,14 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_sound_online.get() else '0')
         db.set_setting('flash_taskbar',
                        '1' if self.var_flash_taskbar.get() else '0')
+        db.set_setting('notif_windows',
+                       '1' if self.var_notif_windows.get() else '0')
+        db.set_setting('sound_reminder',
+                       '1' if self.var_sound_reminder.get() else '0')
+        db.set_setting('notif_reminder',
+                       '1' if self.var_notif_reminder.get() else '0')
+        db.set_setting('flash_reminder',
+                       '1' if self.var_flash_reminder.get() else '0')
         db.set_setting('save_history',
                        '1' if self.var_save_history.get() else '0')
         db.set_setting('history_path', self.var_history_path.get())
@@ -1568,6 +1601,10 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_msg.set(True)
             self.var_sound_online.set(True)
             self.var_flash_taskbar.set(True)
+            self.var_notif_windows.set(True)
+            self.var_sound_reminder.set(True)
+            self.var_notif_reminder.set(True)
+            self.var_flash_reminder.set(True)
             self.var_tray_icon.set(True)
             self.var_balloon.set(True)
             self.var_save_history.set(True)
@@ -1749,6 +1786,8 @@ class AccountWindow(tk.Toplevel):
         # Save department
         if hasattr(self, '_dept_combo'):
             dept = self._dept_combo.get().strip()
+            if dept == '(Nenhum)':
+                dept = ''
             db.set_setting('department', dept)
             self.messenger.discovery.department = dept
         self.destroy()
@@ -8457,16 +8496,22 @@ class LanMessengerApp:
     # Checa lembretes pendentes e dispara notificacao
     def _check_reminders(self):
         try:
-            pending = self.messenger.db.get_pending_reminders()
+            db = self.messenger.db
+            pending = db.get_pending_reminders()
+            want_notif = db.get_setting('notif_reminder', '1') == '1'
+            want_sound = db.get_setting('sound_reminder', '1') == '1'
+            want_flash = db.get_setting('flash_reminder', '1') == '1'
+            # Mestre de som global
+            sound_master = db.get_setting('sound', '1') == '1'
             for rem in pending:
-                self.messenger.db.mark_reminder_notified(rem['id'])
+                db.mark_reminder_notified(rem['id'])
                 text = rem.get('text', 'Lembrete')
                 remind_at = datetime.fromtimestamp(rem['remind_at'])
                 time_str = remind_at.strftime('%H:%M')
                 title = f'\u23f0 Lembrete ({time_str})'
                 notified = False
-                # Notificacao Windows via winotify (mesmo padrao do _show_toast)
-                if HAS_WINOTIFY:
+                # Notificacao Windows via winotify
+                if want_notif and HAS_WINOTIFY:
                     try:
                         n = WinNotification(
                             app_id='MB Chat',
@@ -8479,30 +8524,32 @@ class LanMessengerApp:
                     except Exception:
                         log.exception('Erro winotify lembrete')
                 # Fallback: balloon tip via pystray
-                if not notified and self._tray_icon is not None:
+                if want_notif and not notified and self._tray_icon is not None:
                     try:
                         self._tray_icon.notify(text, title=title)
                         notified = True
                     except Exception:
                         pass
-                # Fallback final: messagebox
+                # Fallback final: messagebox (sempre, se nenhuma notif funcionou)
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
-                # Som de alerta mais forte que mensagem normal (toca 2x)
-                try:
-                    if platform.system() == 'Windows':
-                        import winsound
-                        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-                        self.root.after(600, lambda: winsound.MessageBeep(winsound.MB_ICONEXCLAMATION))
-                    else:
-                        SoundPlayer.play_notification()
-                except Exception:
-                    SoundPlayer.play_notification()
+                # Som de alerta (toca 2x)
+                if want_sound and sound_master:
+                    try:
+                        if platform.system() == 'Windows':
+                            import winsound
+                            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                            self.root.after(600, lambda: winsound.MessageBeep(winsound.MB_ICONEXCLAMATION))
+                        else:
+                            SoundPlayer.play_notification()
+                    except Exception:
+                        pass
                 # Pisca a janela principal na taskbar
-                try:
-                    self._flash_window()
-                except Exception:
-                    pass
+                if want_flash:
+                    try:
+                        self._flash_window()
+                    except Exception:
+                        pass
             # Atualiza janela de lembretes se estiver aberta
             if pending and hasattr(self, '_reminders_list_frame'):
                 try:
@@ -9217,6 +9264,9 @@ class LanMessengerApp:
 
     # Mostra notificacao toast nativa do Windows (clicavel via winotify).
     def _show_toast(self, from_user, content):
+        # Respeita configuracao de notificacao Windows
+        if self.messenger.db.get_setting('notif_windows', '1') != '1':
+            return
         self._last_notif_peer = from_user  # guarda quem enviou (para abrir ao clicar)
         name = self.peer_info.get(from_user, {}).get('display_name', 'Mensagem')  # nome do remetente
         preview = content[:120] + '...' if len(content) > 120 else content  # trunca em 120 chars
