@@ -592,36 +592,38 @@ class Database:
     # REMINDERS — Lembretes
     # ========================================
 
-    def add_reminder(self, text, remind_at):
+    def add_reminder(self, text, remind_at=0):
         self.conn.execute("""
-            INSERT INTO reminders (text, remind_at, created_at)
-            VALUES (?, ?, ?)
-        """, (text, remind_at, time.time()))
+            INSERT INTO reminders (text, remind_at, created_at, notified)
+            VALUES (?, ?, ?, ?)
+        """, (text, remind_at, time.time(), 1 if remind_at == 0 else 0))
         self.conn.commit()
 
     def get_pending_reminders(self):
         now = time.time()
         rows = self.conn.execute("""
             SELECT * FROM reminders
-            WHERE notified=0 AND remind_at <= ?
+            WHERE notified=0 AND remind_at > 0 AND remind_at <= ?
             ORDER BY remind_at ASC
         """, (now,)).fetchall()
         return [dict(r) for r in rows]
 
     def get_all_reminders(self):
-        # Pendentes: nao concluidos pelo usuario
+        # Pendentes: nao concluidos pelo usuario. Normais (remind_at=0) primeiro, depois por data
         rows = self.conn.execute("""
             SELECT * FROM reminders WHERE completed=0
-            ORDER BY remind_at ASC
+            ORDER BY (CASE WHEN remind_at=0 THEN 0 ELSE 1 END), remind_at ASC
         """).fetchall()
         return [dict(r) for r in rows]
 
     def get_completed_reminders(self):
-        # Concluidos nas ultimas 24h
+        # Concluidos nas ultimas 24h (normais usam created_at como referencia)
+        cutoff = time.time() - 86400
         rows = self.conn.execute("""
             SELECT * FROM reminders WHERE completed=1
-            AND remind_at >= ? ORDER BY remind_at DESC
-        """, (time.time() - 86400,)).fetchall()
+            AND (CASE WHEN remind_at=0 THEN created_at ELSE remind_at END) >= ?
+            ORDER BY created_at DESC
+        """, (cutoff,)).fetchall()
         return [dict(r) for r in rows]
 
     def mark_reminder_notified(self, reminder_id):

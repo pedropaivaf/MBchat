@@ -8569,10 +8569,15 @@ class LanMessengerApp:
         hdr.pack(fill='x')
         tk.Label(hdr, text='\u23f0 Lembretes', font=('Segoe UI', 12, 'bold'),
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=10, side='left')
+        def _show_new_menu():
+            menu = tk.Menu(win, tearoff=0, font=('Segoe UI', 10))
+            menu.add_command(label='\U0001f4cc  Normal', command=lambda: self._new_simple_reminder_dialog(win, list_frame))
+            menu.add_command(label='\u23f0  Programado', command=lambda: self._new_reminder_dialog(win, list_frame))
+            menu.tk_popup(btn_novo.winfo_rootx(), btn_novo.winfo_rooty() + btn_novo.winfo_height())
         btn_novo = tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
                   bg='#2563eb', fg='#ffffff', relief='flat', bd=0,
                   padx=14, pady=4, cursor='hand2',
-                  command=lambda: self._new_reminder_dialog(win, list_frame))
+                  command=_show_new_menu)
         btn_novo.pack(side='right', padx=10, pady=8)
         _add_hover(btn_novo, '#2563eb', '#1d4ed8')
 
@@ -8622,16 +8627,19 @@ class LanMessengerApp:
             self._render_reminder_row(parent, rem, completed=True)
 
     def _render_reminder_row(self, parent, rem, completed=False):
-        is_overdue = not completed and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
+        is_normal = rem.get('remind_at', 0) == 0  # lembrete normal (sem data)
+        is_overdue = not completed and not is_normal and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
         is_notified = rem.get('notified', 0) == 1
         if completed:
             bg = '#f0fdf4'
         elif is_overdue:
             bg = '#fef2f2'
+        elif is_normal:
+            bg = '#fffbeb'
         else:
             bg = '#f7fafc'
         fg_text = '#6b7280' if completed else '#1a202c'
-        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#e2e8f0'
+        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#fde68a' if is_normal else '#e2e8f0'
         row = tk.Frame(parent, bg=bg, highlightthickness=1,
                        highlightbackground=border_color)
         row.pack(fill='x', pady=3, padx=2)
@@ -8657,23 +8665,29 @@ class LanMessengerApp:
         if completed:
             lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
         lbl_text.pack(anchor='w')
-        remind_at = datetime.fromtimestamp(rem['remind_at'])
-        now = datetime.now()
-        # Formato relativo amigavel
-        if remind_at.date() == now.date():
-            time_str = 'Hoje ' + remind_at.strftime('%H:%M')
-        elif remind_at.date() == (now + timedelta(days=1)).date():
-            time_str = 'Amanha ' + remind_at.strftime('%H:%M')
+        if is_normal:
+            # Lembrete normal: mostra data de criacao
+            created = datetime.fromtimestamp(rem.get('created_at', 0))
+            time_str = '\U0001f4cc Criado em ' + created.strftime('%d/%m %H:%M')
+            fg_time = '#718096'
         else:
-            time_str = remind_at.strftime('%d/%m/%Y %H:%M')
-        # Se ja passou e nao concluido, destacar em vermelho
-        fg_time = '#718096'
-        if not completed and is_overdue:
-            fg_time = '#ef4444'
-            if is_notified:
-                time_str = '\U0001f514 ' + time_str + ' (notificado)'
+            remind_at = datetime.fromtimestamp(rem['remind_at'])
+            now = datetime.now()
+            # Formato relativo amigavel
+            if remind_at.date() == now.date():
+                time_str = 'Hoje ' + remind_at.strftime('%H:%M')
+            elif remind_at.date() == (now + timedelta(days=1)).date():
+                time_str = 'Amanha ' + remind_at.strftime('%H:%M')
             else:
-                time_str = '\u26a0 ' + time_str + ' (atrasado)'
+                time_str = remind_at.strftime('%d/%m/%Y %H:%M')
+            # Se ja passou e nao concluido, destacar em vermelho
+            fg_time = '#718096'
+            if not completed and is_overdue:
+                fg_time = '#ef4444'
+                if is_notified:
+                    time_str = '\U0001f514 ' + time_str + ' (notificado)'
+                else:
+                    time_str = '\u26a0 ' + time_str + ' (atrasado)'
         tk.Label(info, text=time_str, font=('Segoe UI', 8),
                  bg=bg, fg=fg_time, anchor='w').pack(anchor='w')
         # Botao X (deletar)
@@ -8685,6 +8699,48 @@ class LanMessengerApp:
                                 self._refresh_reminders_list(p)))
         del_btn.pack(side='right', padx=(0, 4))
         _add_hover(del_btn, bg, '#fef2f2')
+
+    # Dialogo simples para lembrete normal (sem data, so texto)
+    def _new_simple_reminder_dialog(self, parent_win, list_frame):
+        dlg = tk.Toplevel(parent_win)
+        dlg.title('Lembrete Normal')
+        dlg.transient(parent_win)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 340, 180)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='\U0001f4cc Lembrete Normal', font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
+
+        body = tk.Frame(dlg, bg='#ffffff')
+        body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        tk.Label(body, text='Texto:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w')
+        txt_entry = tk.Entry(body, font=('Segoe UI', 11), relief='flat',
+                             bg='#f7fafc', highlightthickness=1,
+                             highlightbackground='#cbd5e1')
+        txt_entry.pack(fill='x', pady=(4, 12), ipady=4)
+        txt_entry.focus_set()
+
+        def _create():
+            text = txt_entry.get().strip()
+            if not text:
+                return
+            self.messenger.db.add_reminder(text, remind_at=0)
+            self._refresh_reminders_list(list_frame)
+            dlg.destroy()
+
+        txt_entry.bind('<Return>', lambda e: _create())
+        btn = tk.Button(body, text='Criar', font=('Segoe UI', 10, 'bold'),
+                        bg='#2563eb', fg='#ffffff', relief='flat', bd=0,
+                        padx=20, pady=6, cursor='hand2', command=_create)
+        btn.pack()
+        _add_hover(btn, '#2563eb', '#1d4ed8')
 
     # Dialogo para criar novo lembrete com calendario e campos de tempo
     def _new_reminder_dialog(self, parent_win, list_frame):
