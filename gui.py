@@ -8518,7 +8518,8 @@ class LanMessengerApp:
                             title=title,
                             msg=text,
                             icon=self._icon_path or '')
-                        n.launch = 'mbchat://reminders'
+                        n.launch = 'mbchat://open/__reminders__'
+                        n.add_actions(label='Ver Lembretes', launch='mbchat://open/__reminders__')
                         n.set_audio(wn_audio.Default, loop=False)
                         n.show()
                         notified = True
@@ -9441,7 +9442,9 @@ class LanMessengerApp:
         self.root.attributes('-topmost', True)            # temporariamente na frente de tudo
         self.root.after(200, lambda: self.root.attributes('-topmost', False))  # remove apos 200ms
         if peer and hasattr(self, 'messenger'):  # tem peer para abrir e messenger inicializado?
-            if peer.startswith('group:'):          # e um grupo? (prefixo group:)
+            if peer == '__reminders__':             # comando especial para abrir lembretes
+                self.root.after(100, self._show_reminders)
+            elif peer.startswith('group:'):          # e um grupo? (prefixo group:)
                 gid = peer[6:]                     # extrai o group_id sem o prefixo
                 if gid in self.messenger._groups:  # grupo existe?
                     self._open_group(gid)          # abre/exibe a janela de grupo
@@ -9616,9 +9619,6 @@ def _start_instance_listener(app):
                 if data.startswith('OPEN:'):  # comando para abrir chat/grupo especifico
                     peer_id = data[5:].strip()  # extrai uid ou group:gid
                     app.root.after(0, lambda p=peer_id: app._restore_and_open(p))  # main thread
-                elif data == 'REMINDERS':  # comando para abrir tela de lembretes
-                    app.root.after(0, app._restore_and_open)  # restaura janela primeiro
-                    app.root.after(100, app._show_reminders)   # abre lembretes apos restaurar
                 elif data == 'SHOW':  # comando para apenas mostrar a janela
                     app.root.after(0, app._restore_and_open)  # restaura na main thread
             except socket.timeout:
@@ -9663,14 +9663,12 @@ def main():
                 peer_id = f'group:{gid}'                   # formato: group:GID
             elif '/open/' in arg:        # e uma URL de chat (mbchat://open/UID)?
                 peer_id = arg.split('/open/')[-1].strip('/')  # extrai o uid
-            elif '/reminders' in arg:   # e uma URL de lembretes (mbchat://reminders)?
-                peer_id = '__reminders__'  # comando especial para abrir lembretes
             try:
                 # Envia comando para a instancia ja em execucao via loopback
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(0.5)  # loopback e rapido, 500ms basta
                 sock.connect(('127.0.0.1', SINGLE_INSTANCE_PORT))  # conecta na instancia
-                cmd = 'REMINDERS' if peer_id == '__reminders__' else (f'OPEN:{peer_id}' if peer_id else 'SHOW')
+                cmd = f'OPEN:{peer_id}' if peer_id else 'SHOW'
                 sock.sendall(cmd.encode())  # envia o comando
                 sock.close()
             except Exception:
