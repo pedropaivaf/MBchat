@@ -89,7 +89,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 
 ## Funcionalidades principais
 
-- **Colar imagem do clipboard (Ctrl+V)** — captura via PIL ImageGrab, comprime JPEG quality=85, envia base64 via MT_IMAGE (TCP), receptor salva em %APPDATA%/.mbchat/images/, exibe thumbnail 300px clicavel no chat. Funciona em chat individual e grupo. Historico mostra [Imagem] clicavel.
+- **Colar imagem do clipboard (Ctrl+V)** — captura via PIL ImageGrab + fallback ctypes CF_DIBV5/CF_DIB (Win10 compat), comprime JPEG quality=85, mostra preview bar acima do input antes de enviar. Envia base64 via MT_IMAGE (TCP), receptor salva em %APPDATA%/.mbchat/images/, exibe thumbnail 300px clicavel no chat (abre no visualizador do Windows via thread background). Funciona em chat individual e grupo. Historico mostra [Imagem] clicavel. Clique na imagem no chat NAO dispara menu "Responder/Copiar" (flag `_img_click_handled`).
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
 - Nota pessoal visivel para todos em tempo real (emojis coloridos via tk.Text, persistida no banco local, sincronizada via UDP)
   - Emoji picker completo com 6 categorias, busca por nome em PT e scroll (mesmo do chat)
@@ -109,6 +109,7 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Transferencia de arquivos ponto-a-ponto e para grupos (ate 100MB, chunks 256KB, temp file)
   - Dialogo de transferencia com progresso em MB, velocidade, estado visual
   - Quem envia ve "Envio concluido"; quem recebe ve "Abrir Pasta" + "Fechar"
+  - "Mostrar Pasta" usa `explorer /select, filepath` via subprocess.Popen (nao os.startfile)
 - Historico com busca em tempo real (tipo Ctrl+F, highlight amarelo) e filtro por data De/Até (dd/mm/aaaa)
   - Chat individual: busca dentro da conversa com o contato
   - Global (menu Ferramentas): busca em TODOS os chats de uma vez, resultados agrupados por contato
@@ -120,20 +121,19 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Notificacoes Windows clicaveis (winotify) para chats individuais e grupos
   - Chat individual: `mbchat://open/{peer_id}` — abre chat com mensagens nao lidas do banco
   - Grupo: `mbchat://group/{group_id}` — abre grupo com msgs pendentes
-- **Preferencias > Alertas** — 3 secoes: Mensagens (notif_windows, sound, flash), Lembretes (notif_reminder, sound_reminder, flash_reminder), Geral (sound master on/off)
+- **Preferencias** — Categorias: Conta, Aparencia, Alertas, Rede. Aba Historico removida (sem opcoes). Alertas tem 3 secoes: Mensagens (notif_windows, sound, flash), Lembretes (notif_reminder, sound_reminder, flash_reminder), Geral (sound master on/off)
 - System tray, instancia unica, auto-start
 - Popups e todas as janelas de Chat/Grupos fecham com a tecla Escape chamando logicamente _on_close() para limpeza de estado
 - Emoji pickers fecham ao clicar fora
 - Scroll dinamico global no listbox ignorando interceptacao de widgets
 - Chat individual abre limpo (sem mensagens), mas carrega mensagens nao lidas do banco ao abrir via notificacao. Historico acessivel via botao History. Mensagens novas aparecem em tempo real via receive_message()
 - Filtro de contatos respeita UDP announce: _add_contact() verifica busca ativa e re-detacha contatos que nao batem
-- **Responder mensagem (Reply/Quote)** — clique direito na mensagem > "Responder", mostra barra de preview acima do input com a mensagem referenciada. Quote aparece no chat com fundo destacado. Funciona em chat individual e grupo. Campo `reply_to_id` no banco, `reply_to` no payload de rede.
+- **Responder mensagem (Reply/Quote)** — clique direito na mensagem > "Responder", mostra barra de preview acima do input com nome do remetente (azul negrito) + texto da mensagem (estilo WhatsApp). Quote aparece no chat com fundo destacado. Funciona em chat individual e grupo. Campo `reply_to_id` no banco, `reply_to` no payload de rede.
 - **Mencoes em grupo (@fulano)** — digitar @ no input de grupo abre popup com lista de membros. Selecionar insere @Nome. Mencoes destacadas em azul negrito no chat. Lista de `mentions` (UIDs) no payload MT_GROUP_MSG.
 - **Enquete em grupo** — botao na toolbar do grupo abre dialogo para criar enquete (pergunta + opcoes). Exibe no chat com botoes clicaveis para votar. Contagem atualiza em tempo real via MT_POLL_VOTE. Tabelas `polls` e `poll_votes` no banco.
 - **Lembretes** — menu Ferramentas > Lembretes. Dois tipos: Normal (sem data, fica na lista ate excluir/concluir, fundo amarelo) e Programado (com calendario e hora, dispara notificacao Windows). Timer de 10s verifica pendentes. Notificacao via winotify com fallback pystray/messagebox. Configuracoes individuais em Preferencias > Alertas (notif_reminder, sound_reminder, flash_reminder). Tabela `reminders` no banco (remind_at=0 para normais). BUG PENDENTE: clicar na notificacao Windows nao abre a tela de lembretes (protocolo mbchat://open/__reminders__ registrado mas nao funciona — investigar).
 - **Drag & Drop de arquivos** — arrastar arquivo para janela de chat ou grupo inicia transferencia automaticamente. Usa biblioteca `windnd` para detectar drop no Windows.
-- **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento. Opcoes: (Nenhum), Fiscal, Contabil, TI, Comercial, DP, SC, Marketing, Recepcao. Contatos agrupados por departamento no TreeView (nodes dinamicos). Campo `department` no UDP announce e na tabela `contacts`.
-- **Notas privadas nos contatos** — clique direito no contato > "Nota Privada..." abre dialogo para adicionar nota visivel apenas localmente. Coluna `private_note` na tabela `contacts`. Nota aparece no dialogo de informacoes do contato.
+- **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento. Opcoes: (Nenhum), Fiscal, Contabil, TI, Comercial, DP, SC, Marketing, Recepcao. Departamento exibido como badge `[Setor]` em azul ao lado do nome no TreeView. Campo `department` no UDP announce (enviado E recebido) e na tabela `contacts`.
 - Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback)
   - App consulta GitHub Releases API no startup (2s delay), compara tag_name com APP_VERSION
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
@@ -157,13 +157,16 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - Avatares: `_make_circular_avatar()` (module-level) recorta foto para circulo com antialias 2x. `_create_contact_avatar()` usa avatar_data do peer via rede.
 - Emojis coloridos: usar `_render_color_emoji()` (module-level) ou `_render_emoji_image()` (ChatWindow/GroupChatWindow). Sempre strip `\ufe0f` (variation selector) antes de medir bbox — PIL dobra a largura com ele.
   - Tamanhos: lista de contatos 20px, nota pessoal 14px (limite do tk.Text height=1), chat 20px, input 18px.
-- Lista de contatos: `_render_contact_display()` gera imagem PIL composta (avatar + nome + nota com emojis coloridos) para cada item do TreeView. Fallback para texto plano se PIL indisponivel.
+- Lista de contatos: `_render_contact_display()` gera imagem PIL composta (avatar + nome + badge departamento + nota com emojis coloridos) para cada item do TreeView. Param `dept` para badge `[Setor]` em azul. Fallback para texto plano se PIL indisponivel.
 - Icones MDL2: usar `_create_mdl2_icon_static()` (module-level) para icones Segoe MDL2 Assets.
 - Nota pessoal: salva no DB local (update_local_note), sincroniza via campo `note` no UDP announce. Usa tk.Text(height=1) para permitir suporte a imagens de emojis coloridos inline. Emoji picker completo com categorias/busca/scroll (mesmo do ChatWindow).
 - Hover effects: usar `_add_hover(widget, normal_bg, hover_bg)` helper.
 - Bordas modernas: Frame-in-Frame pattern (outer bg=border_color, inner padx/pady=1).
 - Bordas arredondadas: usar `_apply_rounded_corners(win)` apos `_center_window()` em toda Toplevel.
-- Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow.
+- Layout GroupChatWindow: btn_frame (toolbar+enviar) e input_outer (texto) packam com side='bottom' ANTES do PanedWindow, mesmo padrao do ChatWindow. `self._input_outer` salvo como atributo de instancia para referencia no pack de barras dinamicas (reply bar, image preview).
+- Barras dinamicas (reply, image preview): usar `pack(fill='x', side='bottom', after=self._input_outer)` para posicionar acima do input. Com `side='bottom'`, `after=widget` coloca visualmente ACIMA.
+- Imagens no chat: `os.startfile()` DEVE rodar em `threading.Thread(daemon=True)` — pode travar/crashar tkinter na main thread. Clique em imagem usa flag `_img_click_handled` para impedir menu "Responder/Copiar" (tkinter tag_bind NAO propaga `return 'break'` de lambdas).
+- Clipboard paste (Ctrl+V): bindar AMBOS `<Control-v>` e `<Control-V>` (CapsLock). `_grab_clipboard_image()` tenta PIL ImageGrab, depois CF_DIBV5 (format 17), depois CF_DIB (format 8) com header BMP de 14 bytes prepended.
 - Comentarios no codigo: usar apenas `#` (inline comments), NUNCA `"""docstrings"""`. Docstrings poluem o sistema (help(), __doc__, error traces).
 - Auto-update: `updater.py` usa only stdlib (shutil, subprocess, os, zipfile, json, urllib). GitHub Releases como fonte primaria, share como fallback. GUI checa no startup via `check_update_async()` em thread, resultado marshaled via `root.after(0, cb)`. Script PowerShell com retry loop remove `_internal/`, copia novos arquivos e reabre via `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3. NUNCA colocar messagebox entre `apply_update()` e `os._exit()` — o script roda em paralelo e falha se o exe estiver travado.
 - Versionamento: `version.py` contem `APP_VERSION = "X.Y.Z"`. `build.py` atualiza via `--version` flag ou menu interativo. `_set_version()` sincroniza version.py + installer.iss + docs/index.html. Versao exibida no titulo da janela e no "Sobre".
@@ -203,8 +206,7 @@ Sem suite de testes automatizados. Testar manualmente:
 17. Enquete: criar enquete em grupo, votar, contagem atualiza
 18. Lembretes: criar, notificacao Windows dispara no horario
 19. Drag & Drop: arrastar arquivo para chat e grupo, transferencia inicia
-20. Departamentos: configurar em Preferencias, contatos agrupados no TreeView
-21. Nota Privada: clique direito no contato, adicionar/editar nota, visivel no Info
+20. Departamentos: configurar em Preferencias, badge [Setor] visivel no TreeView de todos os peers
 
 ## Workflow obrigatorio para TODA alteracao
 

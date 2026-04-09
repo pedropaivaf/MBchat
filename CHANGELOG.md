@@ -5,11 +5,34 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.4.20] - 2026-04-09
+
+### Fixed
+- Departamento nao exibido no TreeView — campo `department` faltava no parse do UDP announce recebido
+
+## [1.4.19] - 2026-04-09
+
 ### Added
-- **Colar imagem do clipboard (Ctrl+V)** — captura via PIL ImageGrab, comprime JPEG, envia base64 via MT_IMAGE
-- Imagens no chat individual e grupo (thumbnail 300px clicavel, abre no visualizador do Windows)
-- Historico individual e global mostra [Imagem] clicavel
-- Barra verde "Atualização concluída" apos auto-update (compara versao no banco)
+- Badge `[Setor]` em azul ao lado do nome no TreeView (departamento visivel para todos os peers)
+- Barra de reply estilo WhatsApp: nome do remetente (azul negrito) + preview da mensagem acima do input
+- Preview de imagem antes de enviar (Ctrl+V mostra barra com thumbnail + botoes Enviar/Cancelar)
+- Fallback clipboard CF_DIBV5/CF_DIB via ctypes para compatibilidade Win10
+
+### Fixed
+- Ctrl+V com imagem do clipboard nao funcionava (Win10 e Win11)
+- Departamento nao salvava ao clicar OK nas Preferencias (faltava em `_save_all()`)
+- Abrir imagem no chat crashava o app (`os.startfile` bloqueava main thread — movido para thread)
+- "Mostrar Pasta" em transferencias nao abria Explorer (`explorer /select,` via subprocess.Popen)
+- Menu "Responder/Copiar" aparecia ao clicar em imagem no chat (flag `_img_click_handled`)
+- Handler para MT_FILE_DEC e MT_FILE_CANCEL no messenger (cancelava sender corretamente)
+
+### Removed
+- "Nota Privada" do menu de clique direito nos contatos
+- Aba "Historico" vazia das Preferencias
+- Botao "Copiar imagem" do chat
+
+### Changed
+- Barra verde "Atualizacao concluida" apos auto-update (compara versao no banco)
 - Autostart respeita escolha do instalador na primeira execucao
 
 ## [1.3.1] - 2026-04-08
