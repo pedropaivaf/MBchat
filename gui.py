@@ -1204,7 +1204,7 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(dept_row, text='Departamento:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
-                                         values=['', 'Fiscal', 'Contábil', 'TI',
+                                         values=['Fiscal', 'Contábil', 'TI',
                                                  'Comercial', 'DP', 'SC',
                                                  'Marketing', 'Recepção'])
         self._dept_combo.set(self.messenger.db.get_setting('department', ''))
@@ -8415,17 +8415,25 @@ class LanMessengerApp:
         if last and last != APP_VERSION:
             self.root.after(500, lambda: self._show_post_update_bar(last))
 
-    # Barra verde "Atualizacao concluida" que some apos 8 segundos ou clicando X.
+    # Barra verde "Atualizacao concluida" que some apos 12 segundos ou clicando X.
     def _show_post_update_bar(self, old_ver):
         bar = tk.Frame(self.root, bg='#d4edda', bd=0)
-        bar.pack(fill='x', before=self.root.winfo_children()[1] if len(self.root.winfo_children()) > 1 else None)
-        tk.Label(bar, text=f'Atualização concluída! {old_ver} → v{APP_VERSION}',
-                 font=('Segoe UI', 9), bg='#d4edda', fg='#155724'
-                 ).pack(side='left', padx=(10, 5), pady=4)
+        children = self.root.winfo_children()
+        # Posiciona apos o header (user_frame) mas antes do conteudo
+        try:
+            if len(children) > 1:
+                bar.pack(fill='x', before=children[1])
+            else:
+                bar.pack(fill='x')
+        except Exception:
+            bar.pack(fill='x')
+        tk.Label(bar, text=f'\u2714  Atualização concluída!  {old_ver} \u2192 v{APP_VERSION}',
+                 font=('Segoe UI', 9, 'bold'), bg='#d4edda', fg='#155724'
+                 ).pack(side='left', padx=(10, 5), pady=6)
         tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg='#d4edda',
                   fg='#155724', bd=0, cursor='hand2',
-                  command=bar.destroy).pack(side='right', padx=(0, 10), pady=4)
-        self.root.after(8000, lambda: bar.destroy() if bar.winfo_exists() else None)
+                  command=bar.destroy).pack(side='right', padx=(0, 10), pady=6)
+        self.root.after(12000, lambda: bar.destroy() if bar.winfo_exists() else None)
 
     # Verifica update no startup (chamado no _deferred_init em background).
     def _check_update_startup(self):
@@ -8587,14 +8595,14 @@ class LanMessengerApp:
         del_btn.pack(side='right', padx=(0, 4))
         _add_hover(del_btn, bg, '#fef2f2')
 
-    # Dialogo para criar novo lembrete
+    # Dialogo para criar novo lembrete com calendario e campos de tempo
     def _new_reminder_dialog(self, parent_win, list_frame):
         dlg = tk.Toplevel(parent_win)
         dlg.title('Novo Lembrete')
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 380, 360)
+        _center_window(dlg, 360, 480)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
@@ -8615,118 +8623,163 @@ class LanMessengerApp:
         txt_entry.pack(fill='x')
         txt_entry.focus_set()
 
-        # Quando?
-        tk.Label(body, text='Quando:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(12, 4))
-
-        mode_var = tk.StringVar(value='minutes')
-
-        # Aba de selecao de modo
-        tab_frame = tk.Frame(body, bg='#ffffff')
-        tab_frame.pack(fill='x', pady=(0, 6))
-        tab_btns = {}
-        def _select_tab(mode):
-            mode_var.set(mode)
-            for m, b in tab_btns.items():
-                if m == mode:
-                    b.configure(bg='#0f2a5c', fg='#ffffff')
-                else:
-                    b.configure(bg='#e2e8f0', fg='#4a5568')
-            for f in (frame_min, frame_hours, frame_date):
-                f.pack_forget()
-            if mode == 'minutes':
-                frame_min.pack(fill='x')
-            elif mode == 'hours':
-                frame_hours.pack(fill='x')
-            elif mode == 'date':
-                frame_date.pack(fill='x')
-        for label, mode in [('Minutos', 'minutes'), ('Horas', 'hours'), ('Data', 'date')]:
-            b = tk.Button(tab_frame, text=label, font=('Segoe UI', 9),
-                          relief='flat', bd=0, padx=12, pady=3, cursor='hand2',
-                          command=lambda m=mode: _select_tab(m))
-            b.pack(side='left', padx=(0, 4))
-            tab_btns[mode] = b
-
-        # Frame minutos
-        frame_min = tk.Frame(body, bg='#ffffff')
-        quick_min_frame = tk.Frame(frame_min, bg='#ffffff')
-        quick_min_frame.pack(fill='x', pady=(0, 4))
-        min_entry = tk.Entry(frame_min, font=('Segoe UI', 10), width=8,
-                              relief='flat', bg='#f7fafc',
-                              highlightthickness=1, highlightbackground='#cbd5e1')
-        for val in ['5', '15', '30', '60']:
-            qb = tk.Button(quick_min_frame, text=f'{val} min', font=('Segoe UI', 8),
-                           relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
-                           padx=8, pady=2, cursor='hand2',
-                           command=lambda v=val: (min_entry.delete(0, 'end'), min_entry.insert(0, v)))
-            qb.pack(side='left', padx=(0, 4))
-            _add_hover(qb, '#eef2ff', '#c7d2fe')
-        min_row = tk.Frame(frame_min, bg='#ffffff')
-        min_row.pack(fill='x')
-        tk.Label(min_row, text='Em', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-        min_entry.pack(in_=min_row, side='left', padx=6)
-        min_entry.insert(0, '30')
-        tk.Label(min_row, text='minutos', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-
-        # Frame horas (hoje)
-        frame_hours = tk.Frame(body, bg='#ffffff')
-        quick_h_frame = tk.Frame(frame_hours, bg='#ffffff')
-        quick_h_frame.pack(fill='x', pady=(0, 4))
-        hour_entry = tk.Entry(frame_hours, font=('Segoe UI', 10), width=6,
-                               relief='flat', bg='#f7fafc',
-                               highlightthickness=1, highlightbackground='#cbd5e1')
-        for val in ['1', '2', '4', '8']:
-            qb = tk.Button(quick_h_frame, text=f'{val}h', font=('Segoe UI', 8),
-                           relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
-                           padx=8, pady=2, cursor='hand2',
-                           command=lambda v=val: (hour_entry.delete(0, 'end'), hour_entry.insert(0, v)))
-            qb.pack(side='left', padx=(0, 4))
-            _add_hover(qb, '#eef2ff', '#c7d2fe')
-        h_row = tk.Frame(frame_hours, bg='#ffffff')
-        h_row.pack(fill='x')
-        tk.Label(h_row, text='Em', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-        hour_entry.pack(in_=h_row, side='left', padx=6)
-        hour_entry.insert(0, '1')
-        tk.Label(h_row, text='horas', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-
-        # Frame data (calendario simples)
-        frame_date = tk.Frame(body, bg='#ffffff')
-        date_row1 = tk.Frame(frame_date, bg='#ffffff')
-        date_row1.pack(fill='x', pady=(0, 4))
-        # Botoes rapidos de dias
-        days_entry = tk.Entry(frame_date, font=('Segoe UI', 10), width=12,
-                               relief='flat', bg='#f7fafc',
-                               highlightthickness=1, highlightbackground='#cbd5e1')
+        # Atalhos rapidos
+        tk.Label(body, text='Atalhos:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(10, 4))
+        quick_frame = tk.Frame(body, bg='#ffffff')
+        quick_frame.pack(fill='x', pady=(0, 6))
         now = datetime.now()
-        for label, days in [('Amanha', 1), ('3 dias', 3), ('1 semana', 7)]:
-            target = now + timedelta(days=days)
-            ds = target.strftime('%d/%m/%Y')
-            qb = tk.Button(date_row1, text=label, font=('Segoe UI', 8),
+        # Estado do calendario e hora selecionada
+        sel_date = [now.year, now.month, now.day]
+        sel_hour = [now.hour]
+        sel_min = [now.minute]
+
+        def _set_quick(minutes=0, days=0, hour=9, minute=0):
+            if minutes:
+                target = now + timedelta(minutes=minutes)
+            elif days:
+                target = now.replace(hour=hour, minute=minute, second=0) + timedelta(days=days)
+            else:
+                return
+            sel_date[0], sel_date[1], sel_date[2] = target.year, target.month, target.day
+            sel_hour[0] = target.hour
+            sel_min[0] = target.minute
+            _refresh_cal()
+            hour_spin.delete(0, 'end')
+            hour_spin.insert(0, f'{target.hour:02d}')
+            min_spin.delete(0, 'end')
+            min_spin.insert(0, f'{target.minute:02d}')
+
+        for label, kw in [('15 min', dict(minutes=15)), ('30 min', dict(minutes=30)),
+                           ('1h', dict(minutes=60)), ('2h', dict(minutes=120)),
+                           ('Amanhã', dict(days=1)), ('3 dias', dict(days=3))]:
+            qb = tk.Button(quick_frame, text=label, font=('Segoe UI', 8),
                            relief='flat', bd=0, bg='#eef2ff', fg='#3730a3',
                            padx=8, pady=2, cursor='hand2',
-                           command=lambda d=ds: (days_entry.delete(0, 'end'), days_entry.insert(0, d)))
+                           command=lambda k=kw: _set_quick(**k))
             qb.pack(side='left', padx=(0, 4))
             _add_hover(qb, '#eef2ff', '#c7d2fe')
-        d_row = tk.Frame(frame_date, bg='#ffffff')
-        d_row.pack(fill='x')
-        tk.Label(d_row, text='Data:', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-        days_entry.pack(in_=d_row, side='left', padx=6)
-        days_entry.insert(0, (now + timedelta(days=1)).strftime('%d/%m/%Y'))
-        tk.Label(d_row, text='Hora:', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left', padx=(8, 0))
-        time_entry = tk.Entry(frame_date, font=('Segoe UI', 10), width=6,
-                               relief='flat', bg='#f7fafc',
-                               highlightthickness=1, highlightbackground='#cbd5e1')
-        time_entry.pack(in_=d_row, side='left', padx=6)
-        time_entry.insert(0, '09:00')
 
-        # Mostra frame de minutos por padrao
-        _select_tab('minutes')
+        # Separador
+        tk.Frame(body, bg='#e2e8f0', height=1).pack(fill='x', pady=8)
+
+        # Calendario
+        tk.Label(body, text='Data e Hora:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
+
+        cal_state = [now.year, now.month]  # ano, mes exibido no calendario
+
+        cal_frame = tk.Frame(body, bg='#ffffff')
+        cal_frame.pack(fill='x')
+
+        # Nav do calendario: < Mes Ano >
+        nav = tk.Frame(cal_frame, bg='#ffffff')
+        nav.pack(fill='x')
+        month_label = tk.Label(nav, font=('Segoe UI', 10, 'bold'),
+                               bg='#ffffff', fg='#1a202c')
+        MONTH_NAMES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                       'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+        btn_prev = tk.Button(nav, text='\u25c0', font=('Segoe UI', 9),
+                             bg='#ffffff', fg='#64748b', relief='flat', bd=0,
+                             cursor='hand2', command=lambda: _nav_month(-1))
+        btn_prev.pack(side='left')
+        month_label.pack(side='left', expand=True)
+        btn_next = tk.Button(nav, text='\u25b6', font=('Segoe UI', 9),
+                             bg='#ffffff', fg='#64748b', relief='flat', bd=0,
+                             cursor='hand2', command=lambda: _nav_month(1))
+        btn_next.pack(side='right')
+
+        # Grid de dias
+        grid_frame = tk.Frame(cal_frame, bg='#ffffff')
+        grid_frame.pack(fill='x', pady=(2, 0))
+        # Cabecalho dias da semana
+        for i, d in enumerate(['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']):
+            fg = '#ef4444' if i >= 5 else '#64748b'
+            tk.Label(grid_frame, text=d, font=('Segoe UI', 8), width=4,
+                     bg='#ffffff', fg=fg).grid(row=0, column=i)
+        day_buttons = []
+        for r in range(6):
+            row_btns = []
+            for c in range(7):
+                b = tk.Button(grid_frame, text='', font=('Segoe UI', 9),
+                              width=3, relief='flat', bd=0, bg='#ffffff',
+                              fg='#1a202c', cursor='hand2',
+                              command=lambda rr=r, cc=c: _select_day(rr, cc))
+                b.grid(row=r + 1, column=c, pady=1)
+                row_btns.append(b)
+            day_buttons.append(row_btns)
+
+        def _nav_month(delta):
+            cal_state[1] += delta
+            if cal_state[1] > 12:
+                cal_state[1] = 1
+                cal_state[0] += 1
+            elif cal_state[1] < 1:
+                cal_state[1] = 12
+                cal_state[0] -= 1
+            _refresh_cal()
+
+        def _select_day(r, c):
+            txt = day_buttons[r][c].cget('text')
+            if not txt:
+                return
+            sel_date[2] = int(txt)
+            sel_date[0] = cal_state[0]
+            sel_date[1] = cal_state[1]
+            _refresh_cal()
+
+        def _refresh_cal():
+            month_label.config(text=f'{MONTH_NAMES[cal_state[1]]} {cal_state[0]}')
+            first_weekday, days_in = cal_mod.monthrange(cal_state[0], cal_state[1])
+            today = datetime.now()
+            for r in range(6):
+                for c in range(7):
+                    day_num = r * 7 + c - first_weekday + 1
+                    b = day_buttons[r][c]
+                    if 1 <= day_num <= days_in:
+                        b.config(text=str(day_num), state='normal')
+                        is_selected = (day_num == sel_date[2] and
+                                       cal_state[1] == sel_date[1] and
+                                       cal_state[0] == sel_date[0])
+                        is_today = (day_num == today.day and
+                                    cal_state[1] == today.month and
+                                    cal_state[0] == today.year)
+                        if is_selected:
+                            b.config(bg='#0f2a5c', fg='#ffffff')
+                        elif is_today:
+                            b.config(bg='#e0e7ff', fg='#1e40af')
+                        else:
+                            fg = '#ef4444' if c >= 5 else '#1a202c'
+                            b.config(bg='#ffffff', fg=fg)
+                    else:
+                        b.config(text='', state='disabled', bg='#ffffff',
+                                 disabledforeground='#ffffff')
+
+        _refresh_cal()
+
+        # Hora: HH : MM spinboxes
+        time_frame = tk.Frame(body, bg='#ffffff')
+        time_frame.pack(fill='x', pady=(8, 0))
+        tk.Label(time_frame, text='Hora:', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left')
+        hour_spin = tk.Spinbox(time_frame, from_=0, to=23, width=3, wrap=True,
+                                font=('Segoe UI', 11), format='%02.0f',
+                                relief='flat', bg='#f7fafc',
+                                highlightthickness=1, highlightbackground='#cbd5e1',
+                                justify='center')
+        hour_spin.pack(side='left', padx=(8, 0))
+        hour_spin.delete(0, 'end')
+        hour_spin.insert(0, f'{now.hour:02d}')
+        tk.Label(time_frame, text=':', font=('Segoe UI', 11, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(side='left', padx=2)
+        min_spin = tk.Spinbox(time_frame, from_=0, to=59, width=3, wrap=True,
+                               font=('Segoe UI', 11), format='%02.0f',
+                               relief='flat', bg='#f7fafc',
+                               highlightthickness=1, highlightbackground='#cbd5e1',
+                               justify='center', increment=5)
+        min_spin.pack(side='left')
+        min_spin.delete(0, 'end')
+        min_spin.insert(0, f'{(now.minute // 5 + 1) * 5 % 60:02d}')
 
         def _create():
             text = txt_entry.get().strip()
@@ -8734,23 +8787,13 @@ class LanMessengerApp:
                 messagebox.showwarning('Lembrete', 'Insira o texto do lembrete.',
                                         parent=dlg)
                 return
-            mode = mode_var.get()
             try:
-                if mode == 'minutes':
-                    minutes = int(min_entry.get().strip())
-                    remind_at = time.time() + minutes * 60
-                elif mode == 'hours':
-                    hours = float(hour_entry.get().strip())
-                    remind_at = time.time() + hours * 3600
-                elif mode == 'date':
-                    date_str = days_entry.get().strip()
-                    time_str_val = time_entry.get().strip()
-                    dt = datetime.strptime(f'{date_str} {time_str_val}', '%d/%m/%Y %H:%M')
-                    remind_at = dt.timestamp()
-                else:
-                    return
+                h = int(hour_spin.get())
+                m = int(min_spin.get())
+                dt = datetime(sel_date[0], sel_date[1], sel_date[2], h, m)
+                remind_at = dt.timestamp()
             except (ValueError, OverflowError):
-                messagebox.showwarning('Lembrete', 'Valor de tempo invalido.',
+                messagebox.showwarning('Lembrete', 'Data/hora invalida.',
                                         parent=dlg)
                 return
             self.messenger.db.add_reminder(text, remind_at)
