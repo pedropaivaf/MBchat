@@ -443,63 +443,70 @@ def _grab_clipboard_image():
         clip = ImageGrab.grabclipboard()
         if clip is not None:
             if isinstance(clip, Image.Image):
+                log.debug('Clipboard: PIL ImageGrab retornou Image %s', clip.size)
                 return clip
             # Win10: pode retornar lista de file paths
             if isinstance(clip, list):
                 for p in clip:
                     if isinstance(p, str) and os.path.isfile(p):
                         try:
-                            return Image.open(p)
+                            img = Image.open(p)
+                            log.debug('Clipboard: PIL abriu arquivo %s', p)
+                            return img
                         except Exception:
                             continue
-    except Exception:
-        pass
-    # Tentativa 2: win32 clipboard CF_DIB via ctypes (fallback Win10)
+        log.debug('Clipboard: PIL ImageGrab retornou %s', type(clip))
+    except Exception as e:
+        log.debug('Clipboard: PIL ImageGrab falhou: %s', e)
+    # Tentativa 2: win32 clipboard via ctypes
     try:
-        import ctypes
+        import ctypes, struct
         u32 = ctypes.windll.user32
         k32 = ctypes.windll.kernel32
-        CF_DIB = 8
-        if not u32.OpenClipboard(0):
-            return None
-        try:
-            if not u32.IsClipboardFormatAvailable(CF_DIB):
-                return None
-            h = u32.GetClipboardData(CF_DIB)
-            if not h:
-                return None
-            k32.GlobalLock.restype = ctypes.c_void_p
-            ptr = k32.GlobalLock(h)
-            if not ptr:
+        # Tenta CF_DIBV5 primeiro (mais completo), depois CF_DIB
+        for cf_fmt in (17, 8):
+            if not u32.OpenClipboard(0):
+                log.debug('Clipboard: OpenClipboard falhou')
                 return None
             try:
-                size = k32.GlobalSize(h)
-                dib_data = ctypes.string_at(ptr, size)
-                # CF_DIB nao tem BMP file header — PIL precisa dele
-                import struct
-                # header_size = primeiros 4 bytes do DIB (BITMAPINFOHEADER=40, V4=108, V5=124)
-                hdr_size = struct.unpack_from('<I', dib_data, 0)[0]
-                # bits per pixel nos bytes 14-15 do DIB header
-                bpp = struct.unpack_from('<H', dib_data, 14)[0]
-                # cores na tabela de cores
-                if bpp <= 8:
-                    clr_used = struct.unpack_from('<I', dib_data, 32)[0]
-                    if clr_used == 0:
-                        clr_used = 1 << bpp
-                    palette_size = clr_used * 4
-                else:
-                    palette_size = 0
-                pixel_offset = 14 + hdr_size + palette_size
-                file_size = 14 + size
-                bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, pixel_offset)
-                bmp_data = bmp_header + dib_data
-                return Image.open(io.BytesIO(bmp_data))
+                if not u32.IsClipboardFormatAvailable(cf_fmt):
+                    continue
+                h = u32.GetClipboardData(cf_fmt)
+                if not h:
+                    continue
+                k32.GlobalLock.restype = ctypes.c_void_p
+                ptr = k32.GlobalLock(h)
+                if not ptr:
+                    continue
+                try:
+                    size = k32.GlobalSize(h)
+                    if size < 40:
+                        continue
+                    dib_data = ctypes.string_at(ptr, size)
+                    hdr_size = struct.unpack_from('<I', dib_data, 0)[0]
+                    bpp = struct.unpack_from('<H', dib_data, 14)[0]
+                    if bpp <= 8:
+                        clr_used = struct.unpack_from('<I', dib_data, 32)[0]
+                        if clr_used == 0:
+                            clr_used = 1 << bpp
+                        palette_size = clr_used * 4
+                    else:
+                        palette_size = 0
+                    pixel_offset = 14 + hdr_size + palette_size
+                    file_size = 14 + size
+                    bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, pixel_offset)
+                    bmp_data = bmp_header + dib_data
+                    img = Image.open(io.BytesIO(bmp_data))
+                    log.debug('Clipboard: ctypes CF_%d ok, size=%s', cf_fmt, img.size)
+                    return img
+                finally:
+                    k32.GlobalUnlock(h)
             finally:
-                k32.GlobalUnlock(h)
-        finally:
-            u32.CloseClipboard()
-    except Exception:
-        return None
+                u32.CloseClipboard()
+    except Exception as e:
+        log.debug('Clipboard: ctypes falhou: %s', e)
+    log.debug('Clipboard: nenhuma imagem encontrada')
+    return None
 
 #     size: Tamanho final do avatar em pixels (quadrado NxN).
 #     antialias: Fator de superamostragem (2 = dobro da resolução final).
@@ -2556,8 +2563,9 @@ class ChatWindow(tk.Toplevel):
 
         # Campo de entrada: Frame externo cria a borda sutil (bg = cor da borda)
         # O Text interno tem padx=1,pady=1 para revelar o Frame como borda de 1px
-        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(fill='x', side='bottom', padx=8, pady=(4, 2))
+        self._input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        self._input_outer.pack(fill='x', side='bottom', padx=8, pady=(4, 2))
+        input_outer = self._input_outer
 
         # tk.Text é usado (não tk.Entry) para suportar múltiplas linhas e imagens (emojis)
         self.entry = tk.Text(input_outer, font=('Segoe UI', 10),
@@ -4025,29 +4033,29 @@ class ChatWindow(tk.Toplevel):
 
     # Mostra preview da imagem colada antes de enviar
     def _show_image_preview(self, img):
-        self._cancel_image_preview()
-        self._pending_image = img
-        # Outer: borda azul esquerda
-        outer = tk.Frame(self, bg='#2451a0')
-        outer.pack(fill='x', side='bottom', padx=8, pady=(2, 0))
-        bar = tk.Frame(outer, bg='#e2e8f0')
-        bar.pack(fill='both', expand=True, padx=(3, 0))
-        # Thumbnail 80px
-        thumb = img.copy()
-        thumb.thumbnail((80, 80), Image.LANCZOS)
-        tk_thumb = ImageTk.PhotoImage(thumb)
-        self._preview_thumb_ref = tk_thumb
-        tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
-        tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
-                 font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
-                 anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
-        tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
-                  bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
-                  cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
-        self._image_preview_bar = outer
-        self.entry.focus_set()
+        try:
+            self._cancel_image_preview()
+            self._pending_image = img
+            outer = tk.Frame(self, bg='#2451a0')
+            outer.pack(fill='x', side='bottom', before=self._input_outer, padx=8, pady=(2, 0))
+            bar = tk.Frame(outer, bg='#e2e8f0')
+            bar.pack(fill='both', expand=True, padx=(3, 0))
+            thumb = img.copy()
+            thumb.thumbnail((80, 80), Image.LANCZOS)
+            tk_thumb = ImageTk.PhotoImage(thumb)
+            self._preview_thumb_ref = tk_thumb
+            tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
+            tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
+                     font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
+                     anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
+            tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                      bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
+                      cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
+            self._image_preview_bar = outer
+            self.entry.focus_set()
+        except Exception:
+            log.exception('Erro em _show_image_preview')
 
-    # Cancela preview de imagem pendente
     def _cancel_image_preview(self):
         self._pending_image = None
         self._preview_thumb_ref = None
@@ -4055,14 +4063,16 @@ class ChatWindow(tk.Toplevel):
             self._image_preview_bar.destroy()
             self._image_preview_bar = None
 
-    # Ctrl+V — detecta imagem no clipboard e mostra preview
     def _on_paste(self, event):
         if not HAS_PIL:
             return
-        img = _grab_clipboard_image()
-        if img is not None:
-            self._show_image_preview(img)
-            return 'break'
+        try:
+            img = _grab_clipboard_image()
+            if img is not None:
+                self._show_image_preview(img)
+                return 'break'
+        except Exception:
+            log.exception('Erro em _on_paste')
 
     # Comprime e envia imagem do clipboard para o peer
     def _send_clipboard_image(self, img):
@@ -4362,8 +4372,9 @@ class GroupChatWindow(tk.Toplevel):
         _Tooltip(btn_poll, 'Criar Enquete')
 
         # ===== Input area =====
-        input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
-        input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
+        self._input_outer = tk.Frame(self, bg=t.get('input_border', '#e2e8f0'))
+        self._input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
+        input_outer = self._input_outer
 
         self.entry = tk.Text(input_outer, font=('Segoe UI', 11),
                              bg=t.get('bg_input', '#f7fafc'),
@@ -5365,31 +5376,30 @@ class GroupChatWindow(tk.Toplevel):
         if pending_img:
             self._send_clipboard_image(pending_img)
 
-    # Mostra preview da imagem colada antes de enviar
     def _show_image_preview(self, img):
-        self._cancel_image_preview()
-        self._pending_image = img
-        # Outer: borda azul esquerda
-        outer = tk.Frame(self, bg='#2451a0')
-        outer.pack(fill='x', side='bottom', padx=6, pady=(2, 0))
-        bar = tk.Frame(outer, bg='#e2e8f0')
-        bar.pack(fill='both', expand=True, padx=(3, 0))
-        # Thumbnail 80px
-        thumb = img.copy()
-        thumb.thumbnail((80, 80), Image.LANCZOS)
-        tk_thumb = ImageTk.PhotoImage(thumb)
-        self._preview_thumb_ref = tk_thumb
-        tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
-        tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
-                 font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
-                 anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
-        tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
-                  bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
-                  cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
-        self._image_preview_bar = outer
-        self.entry.focus_set()
+        try:
+            self._cancel_image_preview()
+            self._pending_image = img
+            outer = tk.Frame(self, bg='#2451a0')
+            outer.pack(fill='x', side='bottom', before=self._input_outer, padx=6, pady=(2, 0))
+            bar = tk.Frame(outer, bg='#e2e8f0')
+            bar.pack(fill='both', expand=True, padx=(3, 0))
+            thumb = img.copy()
+            thumb.thumbnail((80, 80), Image.LANCZOS)
+            tk_thumb = ImageTk.PhotoImage(thumb)
+            self._preview_thumb_ref = tk_thumb
+            tk.Label(bar, image=tk_thumb, bg='#e2e8f0').pack(side='left', padx=6, pady=4)
+            tk.Label(bar, text='Imagem pronta para enviar\nEnter para enviar',
+                     font=('Segoe UI', 8), bg='#e2e8f0', fg='#4a5568',
+                     anchor='w', justify='left').pack(side='left', fill='x', expand=True, padx=4)
+            tk.Button(bar, text='\u2715', font=('Segoe UI', 8, 'bold'),
+                      bg='#e2e8f0', fg='#718096', relief='flat', bd=0,
+                      cursor='hand2', command=self._cancel_image_preview).pack(side='right', padx=4)
+            self._image_preview_bar = outer
+            self.entry.focus_set()
+        except Exception:
+            log.exception('Erro em _show_image_preview')
 
-    # Cancela preview de imagem pendente
     def _cancel_image_preview(self):
         self._pending_image = None
         self._preview_thumb_ref = None
@@ -5397,14 +5407,16 @@ class GroupChatWindow(tk.Toplevel):
             self._image_preview_bar.destroy()
             self._image_preview_bar = None
 
-    # Ctrl+V — detecta imagem no clipboard e mostra preview
     def _on_paste(self, event):
         if not HAS_PIL:
             return
-        img = _grab_clipboard_image()
-        if img is not None:
-            self._show_image_preview(img)
-            return 'break'
+        try:
+            img = _grab_clipboard_image()
+            if img is not None:
+                self._show_image_preview(img)
+                return 'break'
+        except Exception:
+            log.exception('Erro em _on_paste')
 
     # Comprime e envia imagem do clipboard para todos os membros do grupo
     def _send_clipboard_image(self, img):
