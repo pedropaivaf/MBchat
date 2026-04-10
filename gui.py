@@ -2875,12 +2875,13 @@ class ChatWindow(tk.Toplevel):
         return 'break'  # consome o evento para não propagar
 
     # Retorna imagem do emoji do cache, ou renderiza e cacheia.
-    def _get_chat_emoji(self, emoji_char):
-        if emoji_char in self._chat_emoji_cache:
-            return self._chat_emoji_cache[emoji_char]
-        img = self._render_emoji_image(emoji_char, size=20)
+    def _get_chat_emoji(self, emoji_char, bg_color=None):
+        cache_key = f'{emoji_char}_{bg_color}' if bg_color else emoji_char
+        if cache_key in self._chat_emoji_cache:
+            return self._chat_emoji_cache[cache_key]
+        img = self._render_emoji_image(emoji_char, size=20, bg_color=bg_color)
         if img:
-            self._chat_emoji_cache[emoji_char] = img
+            self._chat_emoji_cache[cache_key] = img
         return img
 
     # Retorna imagem do emoji para o input (tamanho 18px), cacheada.
@@ -2925,13 +2926,16 @@ class ChatWindow(tk.Toplevel):
     def _insert_text_with_emojis(self, text, tag):
         parts = _EMOJI_RE.split(text)    # fragmentos de texto entre os emojis
         emojis = _EMOJI_RE.findall(text)  # lista dos emojis encontrados
+        bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
         for i, part in enumerate(parts):
             if part:
                 self.chat_text.insert('end', part, tag)  # texto puro com estilo da tag
             if i < len(emojis):
-                img = self._get_chat_emoji(emojis[i])  # busca imagem colorida no cache
+                img = self._get_chat_emoji(emojis[i], bg_color=bg)
                 if img:
-                    self.chat_text.image_create('end', image=img, padx=1)  # emoji como imagem
+                    mark = self.chat_text.index('end-1c')
+                    self.chat_text.image_create('end', image=img, padx=1)
+                    self.chat_text.tag_add(tag, mark, 'end-1c')
                 else:
                     self.chat_text.insert('end', emojis[i], tag)  # fallback texto
 
@@ -3587,7 +3591,7 @@ class ChatWindow(tk.Toplevel):
     # Versão de instância usada por _get_chat_emoji() e _get_entry_emoji() com
     # cache por janela. Usa seguiemj.ttf com embedded_color=True para renderizar
     # os emojis com suas cores reais (tecnologia COLR/CPAL da fonte Segoe UI Emoji).
-    def _render_emoji_image(self, emoji_char, size=28):
+    def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
         try:
@@ -3602,7 +3606,12 @@ class ChatWindow(tk.Toplevel):
             bbox = d.textbbox((0, 0), clean, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             canvas_sz = size + 4
-            img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
+            if bg_color:
+                r, g, b = self._hex_to_rgb(bg_color)
+                bg = (r, g, b, 255)
+            else:
+                bg = (255, 255, 255, 0)
+            img = Image.new('RGBA', (canvas_sz, canvas_sz), bg)
             draw = ImageDraw.Draw(img)
             x = (canvas_sz - tw) // 2 - bbox[0]
             y = (canvas_sz - th) // 2 - bbox[1]
@@ -3611,6 +3620,11 @@ class ChatWindow(tk.Toplevel):
         except Exception:
             log.exception('Erro ao renderizar emoji')
             return None
+
+    @staticmethod
+    def _hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
     # Cria o popup do seletor de emojis com grade clicável e campo de busca.
     #
@@ -4816,7 +4830,7 @@ class GroupChatWindow(tk.Toplevel):
     # ===== Emoji — renderização e cache de emojis coloridos =====
     # Renderiza um emoji Unicode como imagem colorida (PIL + seguiemj.ttf).
     # Igual à versão module-level _render_color_emoji(), mas como método de instância.
-    def _render_emoji_image(self, emoji_char, size=28):
+    def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
         try:
@@ -4831,7 +4845,12 @@ class GroupChatWindow(tk.Toplevel):
             bbox = d.textbbox((0, 0), clean, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             canvas_sz = size + 4
-            img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
+            if bg_color:
+                r, g, b = self._hex_to_rgb(bg_color)
+                bg = (r, g, b, 255)
+            else:
+                bg = (255, 255, 255, 0)
+            img = Image.new('RGBA', (canvas_sz, canvas_sz), bg)
             draw = ImageDraw.Draw(img)
             x = (canvas_sz - tw) // 2 - bbox[0]
             y = (canvas_sz - th) // 2 - bbox[1]
@@ -4840,13 +4859,19 @@ class GroupChatWindow(tk.Toplevel):
         except Exception:
             return None
 
+    @staticmethod
+    def _hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
     # Retorna emoji renderizado para a área de chat (20px), com cache.
-    def _get_chat_emoji(self, emoji_char):
-        if emoji_char in self._chat_emoji_cache:
-            return self._chat_emoji_cache[emoji_char]  # Já renderizado antes
-        img = self._render_emoji_image(emoji_char, size=20)
+    def _get_chat_emoji(self, emoji_char, bg_color=None):
+        cache_key = f'{emoji_char}_{bg_color}' if bg_color else emoji_char
+        if cache_key in self._chat_emoji_cache:
+            return self._chat_emoji_cache[cache_key]
+        img = self._render_emoji_image(emoji_char, size=20, bg_color=bg_color)
         if img:
-            self._chat_emoji_cache[emoji_char] = img  # Salva no cache
+            self._chat_emoji_cache[cache_key] = img
         return img
 
     # Retorna emoji renderizado para o campo de entrada (18px), com cache.
@@ -4887,13 +4912,16 @@ class GroupChatWindow(tk.Toplevel):
     def _insert_text_with_emojis(self, text, tag):
         parts = _EMOJI_RE.split(text)    # Partes de texto entre emojis
         emojis = _EMOJI_RE.findall(text)  # Lista de emojis encontrados
+        bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
         for i, part in enumerate(parts):
             if part:
                 self.chat_text.insert('end', part, tag)  # Insere texto
             if i < len(emojis):
-                img = self._get_chat_emoji(emojis[i])
+                img = self._get_chat_emoji(emojis[i], bg_color=bg)
                 if img:
-                    self.chat_text.image_create('end', image=img, padx=1)  # Insere emoji como imagem
+                    mark = self.chat_text.index('end-1c')
+                    self.chat_text.image_create('end', image=img, padx=1)
+                    self.chat_text.tag_add(tag, mark, 'end-1c')
                 else:
                     self.chat_text.insert('end', emojis[i], tag)  # Fallback: emoji como texto
 
@@ -8734,7 +8762,7 @@ class LanMessengerApp:
             )
             self._file_dialogs[fid] = dlg
             self._add_transfer_entry(fid, fname, name, 'send', fsize,
-                                      'pending')
+                                      'pending', peer_id=peer_id)
 
     # Envia arquivo para todos os membros de um grupo (chamado pelo DnD)
     def _start_group_file_send(self, group_id, filepath):
@@ -8878,7 +8906,7 @@ class LanMessengerApp:
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=10, side='left')
         def _show_new_menu():
             menu = tk.Menu(win, tearoff=0, font=('Segoe UI', 10))
-            menu.add_command(label='\U0001f4cc  Normal', command=lambda: self._new_simple_reminder_dialog(win, list_frame))
+            menu.add_command(label='\U0001f4cc  Simples', command=lambda: self._new_simple_reminder_dialog(win, list_frame))
             menu.add_command(label='\u23f0  Programado', command=lambda: self._new_reminder_dialog(win, list_frame))
             menu.tk_popup(btn_novo.winfo_rootx(), btn_novo.winfo_rooty() + btn_novo.winfo_height())
         btn_novo = tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
@@ -9010,7 +9038,7 @@ class LanMessengerApp:
     # Dialogo simples para lembrete normal (sem data, so texto)
     def _new_simple_reminder_dialog(self, parent_win, list_frame):
         dlg = tk.Toplevel(parent_win)
-        dlg.title('Lembrete Normal')
+        dlg.title('Lembrete Simples')
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
@@ -9020,7 +9048,7 @@ class LanMessengerApp:
 
         hdr = tk.Frame(dlg, bg='#0f2a5c')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\U0001f4cc Lembrete Normal', font=('Segoe UI', 11, 'bold'),
+        tk.Label(hdr, text='\U0001f4cc Lembrete Simples', font=('Segoe UI', 11, 'bold'),
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
 
         body = tk.Frame(dlg, bg='#ffffff')
@@ -9486,7 +9514,7 @@ class LanMessengerApp:
         )
         self._file_dialogs[file_id] = dlg
         self._add_transfer_entry(file_id, filename, display_name,
-                                  'receive', filesize, 'pending')
+                                  'receive', filesize, 'pending', peer_id=from_user)
         self._flash_window()
         SoundPlayer.play_notification()
 
@@ -9504,29 +9532,72 @@ class LanMessengerApp:
     # Notifica o dialogo ativo (exibe botao Abrir Pasta para receptor)
     # e marca o status como 'concluido' no historico.
     def _on_file_complete(self, file_id, filepath):
-        if file_id in self._file_dialogs:                                              # dialogo aberto?
-            self._file_dialogs[file_id].finish(success=True, filepath=filepath)  # marca sucesso
-        self._update_transfer_entry(file_id, 'completed', filepath=filepath)     # atualiza historico
+        if file_id in self._file_dialogs:
+            self._file_dialogs[file_id].finish(success=True, filepath=filepath)
+        self._update_transfer_entry(file_id, 'completed', filepath=filepath)
+        self._save_file_chat_message(file_id, 'completed')
 
     # Callback: transferencia de arquivo falhou ou foi cancelada.
-    #
-    # Notifica o dialogo ativo sobre o erro, remove-o do dicionario ativo
-    # e marca o status como 'erro' no historico.
     def _on_file_error(self, file_id, error):
-        if file_id in self._file_dialogs:                          # dialogo aberto?
-            self._file_dialogs[file_id].finish(success=False)  # exibe erro no dialogo
-            del self._file_dialogs[file_id]                    # remove do dicionario ativo
-        self._update_transfer_entry(file_id, 'error')          # registra erro no historico
+        if file_id in self._file_dialogs:
+            self._file_dialogs[file_id].finish(success=False)
+            del self._file_dialogs[file_id]
+        self._update_transfer_entry(file_id, 'error')
+        status = 'declined' if 'recus' in str(error).lower() else 'cancelled'
+        self._save_file_chat_message(file_id, status)
+
+    def _save_file_chat_message(self, file_id, status):
+        entry = None
+        for e in self._transfer_history:
+            if e['file_id'] == file_id:
+                entry = e
+                break
+        if not entry or not entry.get('peer_id'):
+            return
+        fname = entry['filename']
+        fsize = self._format_filesize(entry.get('filesize', 0))
+        if status == 'completed':
+            if entry['direction'] == 'send':
+                text = f'\U0001f4ce {fname} ({fsize}) \u2014 Enviado'
+            else:
+                text = f'\U0001f4ce {fname} ({fsize}) \u2014 Recebido'
+        elif status == 'declined':
+            text = f'\U0001f4ce {fname} \u2014 Recusado'
+        else:
+            text = f'\U0001f4ce {fname} \u2014 Cancelado'
+        is_sent = entry['direction'] == 'send'
+        peer_id = entry['peer_id']
+        import uuid as _uuid
+        msg_id = str(_uuid.uuid4())
+        self.messenger.db.save_message(
+            msg_id, self.messenger.user_id if is_sent else peer_id,
+            peer_id if is_sent else self.messenger.user_id,
+            text, msg_type='file', is_sent=is_sent)
+        if peer_id in self.chat_windows:
+            ts = time.strftime('%H:%M')
+            name = 'Você' if is_sent else entry.get('peer_name', '')
+            self.chat_windows[peer_id]._append_message(
+                name, text, ts, is_mine=is_sent)
+
+    @staticmethod
+    def _format_filesize(size):
+        if size < 1024:
+            return f'{size} B'
+        elif size < 1024 * 1024:
+            return f'{size / 1024:.1f} KB'
+        else:
+            return f'{size / (1024 * 1024):.1f} MB'
 
     def _add_transfer_entry(self, file_id, filename, peer_name,
-                             direction, filesize, status):
+                             direction, filesize, status, peer_id=''):
         # Adiciona nova entrada no historico de transferencias e atualiza a janela de transfers.
         #
         # Cria um dicionario com todos os dados da transferencia e o append em
         # self._transfer_history. Se a janela de transfers estiver aberta, atualiza ela.
         entry = {'file_id': file_id, 'filename': filename,  # dicionario com dados da transferencia
                  'peer_name': peer_name, 'direction': direction,
-                 'filesize': filesize, 'status': status, 'filepath': ''}
+                 'filesize': filesize, 'status': status, 'filepath': '',
+                 'peer_id': peer_id}
         self._transfer_history.append(entry)
         if self._transfers_window:
             try:

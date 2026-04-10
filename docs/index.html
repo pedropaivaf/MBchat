@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MB Chat — Mensageiro LAN para Escritórios</title>
-    <meta name="description" content="Comunicação instantânea na rede local. Sem servidor, sem internet, sem complicação. Feito para escritórios.">
+    <meta name="description" content="Comunicação instantânea na rede local. Leve, prático e direto ao ponto. Feito para escritórios.">
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -98,7 +98,6 @@
             overflow: hidden;
         }
 
-        /* Diagonal vermelho — estilo MB Contabilidade */
         .hero::before {
             content: '';
             position: absolute;
@@ -123,7 +122,6 @@
             opacity: 0.08;
         }
 
-        /* Faixa lateral vermelha */
         .hero-stripe {
             position: absolute;
             left: 0;
@@ -249,7 +247,6 @@
             position: relative;
         }
 
-        /* Linha vermelha separadora */
         #features::before {
             content: '';
             position: absolute;
@@ -287,10 +284,7 @@
         }
 
         .feature-item:last-child { border-bottom: none; }
-
-        .feature-item:hover {
-            padding-left: 0.5rem;
-        }
+        .feature-item:hover { padding-left: 0.5rem; }
 
         .feature-marker {
             width: 3px;
@@ -362,10 +356,90 @@
             font-size: 0.9rem;
         }
 
+        /* ── Docs ── */
+        #docs {
+            padding: 5rem 2rem;
+            position: relative;
+        }
+
+        #docs::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: var(--red);
+        }
+
+        .docs-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .docs-section {
+            margin-bottom: 2.5rem;
+        }
+
+        .docs-section h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .docs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+
+        .docs-table th {
+            text-align: left;
+            padding: 0.6rem 1rem;
+            background: var(--navy-800);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--gray-300);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .docs-table td {
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-400);
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            vertical-align: top;
+        }
+
+        .docs-table code {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            background: rgba(255,255,255,0.06);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            color: #f87171;
+            word-break: break-all;
+        }
+
+        .docs-note {
+            background: rgba(212, 32, 48, 0.08);
+            border-left: 3px solid var(--red);
+            padding: 0.75rem 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-300);
+            margin-top: 1rem;
+        }
+
+        .docs-note strong { color: var(--white); }
+
         /* ── Download ── */
         #download {
             padding: 5rem 2rem;
             text-align: center;
+            background: var(--navy-800);
             position: relative;
         }
 
@@ -385,7 +459,7 @@
             margin: 2rem auto 0;
             border: 1px solid rgba(255,255,255,0.08);
             padding: 2.5rem;
-            background: var(--navy-800);
+            background: var(--navy-900);
         }
 
         .download-box h3 {
@@ -458,6 +532,8 @@
             .nav-links a:not(.nav-btn) { display: none; }
             .hero { padding: 6rem 1.5rem 3rem; min-height: auto; }
             .steps { flex-direction: column; gap: 2rem; }
+            .docs-table { font-size: 0.8rem; }
+            .docs-table th, .docs-table td { padding: 0.4rem 0.6rem; }
         }
     </style>
 </head>
@@ -471,6 +547,7 @@
     <div class="nav-links">
         <a href="#features">Recursos</a>
         <a href="#install">Instalação</a>
+        <a href="#docs">Docs</a>
         <a href="#download" class="nav-btn">Download</a>
     </div>
 </nav>
@@ -483,7 +560,7 @@
             Open Source &middot; Gratuito
         </div>
         <h1>Comunicação <span class="highlight">instantânea</span> na sua rede local</h1>
-        <p>Mensageiro LAN para escritórios. Sem servidor, sem internet, sem complicação.</p>
+        <p>Mensageiro LAN para escritórios. Leve, prático e direto ao ponto.</p>
         <div class="hero-actions">
             <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe" class="btn btn-primary">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -494,7 +571,7 @@
                 GitHub
             </a>
         </div>
-        <p class="hero-version">v1.4.22 &middot; Windows 10/11 &middot; ~20 MB</p>
+        <p class="hero-version">v1.4.23 &middot; Windows 10/11 &middot; ~20 MB</p>
     </div>
 </section>
 
@@ -540,7 +617,7 @@
             <div class="feature-marker"></div>
             <div>
                 <h3>100% Local</h3>
-                <p>Nenhum dado sai da sua rede. Sem servidor central, sem nuvem.</p>
+                <p>Nenhum dado sai da sua rede. Comunicação direta entre máquinas, sem intermediários.</p>
             </div>
         </div>
         <div class="feature-item fade-in">
@@ -574,6 +651,188 @@
     </div>
 </section>
 
+<section id="docs">
+    <h2 class="section-title fade-in">Documentação</h2>
+    <div class="docs-container">
+
+        <div class="docs-section fade-in">
+            <h3>Estrutura de Arquivos</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Caminho</th>
+                        <th>Descrição</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>%LOCALAPPDATA%\Programs\MBChat\</code></td>
+                        <td>Pasta de instalação (MBChat.exe + _internal/)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\</code></td>
+                        <td>Dados do usuário (banco, imagens, configurações)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\mbchat.db</code></td>
+                        <td>Banco de dados SQLite (mensagens, contatos, grupos, lembretes)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\images\</code></td>
+                        <td>Imagens recebidas no chat (clipboard paste)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\MBChat\mbchat.log</code></td>
+                        <td>Log de erros e debug</td>
+                    </tr>
+                    <tr>
+                        <td><code>%USERPROFILE%\LanMessenger_Files\</code></td>
+                        <td>Arquivos recebidos via transferência (padrão, configurável)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in">
+            <h3>Banco de Dados</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Tabela</th>
+                        <th>Conteúdo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>messages</code></td>
+                        <td>Histórico de mensagens (texto, imagens, arquivos)</td>
+                    </tr>
+                    <tr>
+                        <td><code>contacts</code></td>
+                        <td>Contatos conhecidos (nome, IP, status, departamento)</td>
+                    </tr>
+                    <tr>
+                        <td><code>groups</code></td>
+                        <td>Grupos criados (nome, tipo, membros)</td>
+                    </tr>
+                    <tr>
+                        <td><code>group_members</code></td>
+                        <td>Membros de cada grupo</td>
+                    </tr>
+                    <tr>
+                        <td><code>reminders</code></td>
+                        <td>Lembretes (simples e programados)</td>
+                    </tr>
+                    <tr>
+                        <td><code>file_transfers</code></td>
+                        <td>Histórico de transferências de arquivos</td>
+                    </tr>
+                    <tr>
+                        <td><code>settings</code></td>
+                        <td>Configurações do usuário (tema, alertas, rede)</td>
+                    </tr>
+                    <tr>
+                        <td><code>polls / poll_votes</code></td>
+                        <td>Enquetes de grupo e votos</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in">
+            <h3>Portas de Rede</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Porta</th>
+                        <th>Protocolo</th>
+                        <th>Uso</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>50100</code></td>
+                        <td>UDP</td>
+                        <td>Discovery (multicast + broadcast)</td>
+                    </tr>
+                    <tr>
+                        <td><code>50101</code></td>
+                        <td>TCP</td>
+                        <td>Mensagens, convites de grupo, enquetes</td>
+                    </tr>
+                    <tr>
+                        <td><code>50102</code></td>
+                        <td>TCP</td>
+                        <td>Transferência de arquivos</td>
+                    </tr>
+                    <tr>
+                        <td><code>50199</code></td>
+                        <td>TCP</td>
+                        <td>Lock de instância única (loopback)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in">
+            <h3>Desinstalação Completa</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O desinstalador (Painel de Controle > Desinstalar) remove o executável e oferece a opção de manter ou apagar o histórico. Para limpeza total manual, remova os seguintes itens:
+            </p>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>O que remover</th>
+                        <th>Caminho</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Aplicação</td>
+                        <td><code>%LOCALAPPDATA%\Programs\MBChat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Banco de dados e imagens</td>
+                        <td><code>%APPDATA%\.mbchat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Log</td>
+                        <td><code>%APPDATA%\MBChat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Arquivos recebidos</td>
+                        <td><code>%USERPROFILE%\LanMessenger_Files\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Atalho Desktop</td>
+                        <td><code>%USERPROFILE%\Desktop\MB Chat.lnk</code></td>
+                    </tr>
+                    <tr>
+                        <td>Atalho Iniciar com Windows</td>
+                        <td><code>%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\MB Chat.lnk</code></td>
+                    </tr>
+                    <tr>
+                        <td>Menu Iniciar</td>
+                        <td><code>%APPDATA%\Microsoft\Windows\Start Menu\Programs\MB Chat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Registro (auto-start)</td>
+                        <td><code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\MBChat</code></td>
+                    </tr>
+                    <tr>
+                        <td>Registro (protocolo URL)</td>
+                        <td><code>HKCU\Software\Classes\mbchat\</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="docs-note">
+                <strong>Dica:</strong> Ao desinstalar pelo Painel de Controle, escolha "SIM" para manter o histórico ou "NÃO" para apagar tudo automaticamente. A limpeza manual só é necessária se a desinstalação falhar ou se quiser remover absolutamente todos os rastros.
+            </div>
+        </div>
+
+    </div>
+</section>
+
 <section id="download">
     <h2 class="section-title fade-in">Download</h2>
     <div class="download-box fade-in">
@@ -591,7 +850,7 @@
         <img src="icon.png" alt="MB Chat">
         <span>Chat</span>
     </div>
-    <p><a href="https://github.com/pedropaivaf" target="_blank">MB Contabilidade</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
+    <p><a href="https://github.com/pedropaivaf" target="_blank">Autor - pedropaivaf</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
 </footer>
 
 <script>
