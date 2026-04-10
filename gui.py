@@ -1097,7 +1097,7 @@ class PreferencesWindow(tk.Toplevel):
                                  os.path.join(os.path.expanduser('~'),
                                               'MB_Chat_Files')))
         self.var_auto_accept = tk.BooleanVar(
-            value=db.get_setting('auto_accept_files', '0') == '1')
+            value=db.get_setting('auto_accept_files', '1') == '1')
         self.var_udp_port = tk.StringVar(
             value=db.get_setting('udp_port', '50000'))
         self.var_tcp_port = tk.StringVar(
@@ -1691,6 +1691,7 @@ class PreferencesWindow(tk.Toplevel):
             self.var_download_dir.set(
                 os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
             self.var_avatar_index.set(0)
+            self.var_auto_accept.set(True)
             self.var_custom_avatar.set('')
 
 
@@ -8794,6 +8795,7 @@ class LanMessengerApp:
             self._mark_group_unread(group_id)             # bold + contagem no TreeView
             self._show_group_toast(group_id, display_name, content)  # notificacao Windows
             self._pending_flash_target = f'group:{group_id}'
+            self._ensure_taskbar_visible()
             self._flash_window()      # pisca janela principal na taskbar
             try:
                 self.root.bell()  # toca o beep do sistema operacional
@@ -9630,16 +9632,11 @@ class LanMessengerApp:
             except Exception:
                 pass
         else:
-            # Auto-abre janela de chat (como LAN Messenger)
-            self._open_chat(from_user)
-            if from_user in self.chat_windows:
-                self.chat_windows[from_user].receive_message(
-                    content, timestamp, reply_to=reply_to, msg_id=msg_id)
+            self._mark_unread(from_user)
             self._show_toast(from_user, content)
             self._pending_flash_target = from_user
+            self._ensure_taskbar_visible()
             self._flash_window()
-            if from_user in self.chat_windows:
-                self._flash_window(self.chat_windows[from_user])
 
     # Callback: imagem recebida via TCP (MT_IMAGE).
     def _on_image(self, from_user, image_path, msg_id, timestamp,
@@ -9666,6 +9663,7 @@ class LanMessengerApp:
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                 self._pending_flash_target = f'group:{group_id}'
+                self._ensure_taskbar_visible()
                 self._flash_window()
         else:
             # Imagem individual
@@ -9681,19 +9679,11 @@ class LanMessengerApp:
                 except Exception:
                     pass
             else:
-                # Auto-abre janela de chat (como LAN Messenger)
-                self._open_chat(from_user)
-                if from_user in self.chat_windows:
-                    self.chat_windows[from_user].receive_image(image_path, timestamp)
+                self._mark_unread(from_user)
                 self._show_toast(from_user, '[Imagem]')
                 self._pending_flash_target = from_user
+                self._ensure_taskbar_visible()
                 self._flash_window()
-                if from_user in self.chat_windows:
-                    self._flash_window(self.chat_windows[from_user])
-                try:
-                    self.root.bell()
-                except Exception:
-                    pass
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
     def _on_poll(self, group_id, poll_data):
@@ -9861,6 +9851,20 @@ class LanMessengerApp:
             except tk.TclError:
                 self._transfers_window = None
         self._transfers_window = FileTransfersWindow(self)
+
+    # Garante que a janela principal apareca na barra de tarefas para poder piscar.
+    # Se estava no tray (withdrawn), restaura minimizada sem dar foco.
+    def _ensure_taskbar_visible(self):
+        try:
+            if self.root.state() == 'withdrawn':
+                import ctypes
+                self.root.deiconify()
+                self.root.update_idletasks()
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                SW_SHOWMINNOACTIVE = 7
+                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+        except Exception:
+            pass
 
     # Pisca o ícone na barra de tarefas (Windows FlashWindowEx).
     def _flash_window(self, widget=None):
