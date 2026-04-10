@@ -82,7 +82,7 @@ APP_NAME = 'MB Chat'                        # Nome do aplicativo exibido nos tí
 # Usada em _insert_text_with_emojis() para substituir cada emoji por uma imagem colorida
 # renderizada via PIL com a fonte seguiemj.ttf (Segoe UI Emoji da Microsoft).
 _EMOJI_RE = re.compile(
-    r'('
+    r'(?:'
     r'[\U0001f600-\U0001f64f]'  # emoticons (rostos, pessoas, gestos)
     r'|[\U0001f300-\U0001f5ff]' # símbolos e pictogramas
     r'|[\U0001f680-\U0001f6ff]' # transporte e mapas
@@ -9758,9 +9758,8 @@ class LanMessengerApp:
     # Captura o ultimo peer que enviou notificacao e o passa para _restore_and_open.
     # Usa root.after(0) para executar na thread principal do tkinter (thread-safe).
     def _tray_show(self, icon=None, item=None):
-        peer = self._pending_flash_target or self._last_notif_peer
+        peer = self._pending_flash_target
         self._pending_flash_target = None
-        self._last_notif_peer = None
         self.root.after(0, lambda: self._restore_and_open(peer))  # agenda na main thread
 
     # Restaura a janela principal do tray e abre chat/grupo se peer for fornecido.
@@ -9773,6 +9772,10 @@ class LanMessengerApp:
         self.root.state('normal')                         # restaura tamanho normal (nao minimizado)
         self.root.lift()                                  # traz para frente
         self.root.focus_force()                           # forca o foco do sistema
+        try:
+            self.tree.selection_remove(*self.tree.selection())
+        except Exception:
+            pass
         self.root.attributes('-topmost', True)            # temporariamente na frente de tudo
         self.root.after(200, lambda: self.root.attributes('-topmost', False))  # remove apos 200ms
         if peer and hasattr(self, 'messenger'):  # tem peer para abrir e messenger inicializado?
