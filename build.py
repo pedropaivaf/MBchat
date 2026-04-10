@@ -72,18 +72,8 @@ def _update_iss_version(version):
 
 
 def _update_landing_version(version):
-    landing = os.path.join(HERE, 'docs', 'index.html')
-    if not os.path.isfile(landing):
-        return
-    with open(landing, 'r', encoding='utf-8') as f:
-        content = f.read()
-    content = re.sub(
-        r'v[\d.]+(\s*&middot;\s*Windows)',
-        f'v{version}\\1',
-        content)
-    with open(landing, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f'Landing page atualizada para v{version}')
+    # Versao removida do hero badge da landing page (so aparece em Ajuda > Sobre)
+    pass
 
 
 def _deploy(deploy_path, version):

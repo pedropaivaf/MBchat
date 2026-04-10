@@ -765,6 +765,7 @@ def _apply_rounded_corners(win):
         pass  # Windows 10 ou anterior — API não disponível, ignorar silenciosamente
 
 
+
 # Formata automaticamente um campo de entrada como dd/mm/aaaa durante a digitação.
 # Intercepta cada tecla liberada, extrai apenas os dígitos e reinsere o texto
 # formatado com as barras nos lugares corretos. Teclas de navegação são ignoradas
@@ -1059,16 +1060,7 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('autostart', '0') == '1')
         self.var_show_main = tk.BooleanVar(
             value=db.get_setting('show_main_on_start', '1') == '1')
-        self.var_tray_icon = tk.BooleanVar(
-            value=db.get_setting('tray_icon', '1') == '1')
-        self.var_minimize_tray = tk.BooleanVar(
-            value=db.get_setting('minimize_to_tray', '0') == '1')
-        self.var_single_click_tray = tk.BooleanVar(
-            value=db.get_setting('single_click_tray', '0') == '1')
-        self.var_balloon = tk.BooleanVar(
-            value=db.get_setting('balloon_notify', '1') == '1')
-        self.var_minimize_close = tk.BooleanVar(
-            value=db.get_setting('minimize_on_close', '0') == '1')
+        # Tray: sempre ativo (sem opcoes configuráveis)
         self.var_language = tk.StringVar(
             value=db.get_setting('language', 'Português'))
         self.var_sound = tk.BooleanVar(
@@ -1164,26 +1156,7 @@ class PreferencesWindow(tk.Toplevel):
                        variable=self.var_show_main, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
-        # Bandeja
-        lf2 = tk.LabelFrame(parent, text='Bandeja do Sistema', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=5)
-        lf2.pack(fill='x', padx=10, pady=(0, 8))
-
-        tk.Checkbutton(lf2, text='Mostrar ícone na bandeja do sistema',
-                       variable=self.var_tray_icon, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Minimizar janela principal para a bandeja do sistema',
-                       variable=self.var_minimize_tray, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Um clique no ícone da bandeja para abrir',
-                       variable=self.var_single_click_tray, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Mostrar balões de notificações na bandeja',
-                       variable=self.var_balloon, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Minimizar janela principal usando o ícone da bandeja',
-                       variable=self.var_minimize_close, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
+        # Bandeja do Sistema: todas as opcoes sao fixas (sempre ativas)
 
         # Idioma
         lf3 = tk.LabelFrame(parent, text='Idioma', font=FONT,
@@ -1571,16 +1544,7 @@ class PreferencesWindow(tk.Toplevel):
         db.set_setting('autostart', '1' if self.var_autostart.get() else '0')
         db.set_setting('show_main_on_start',
                        '1' if self.var_show_main.get() else '0')
-        db.set_setting('tray_icon',
-                       '1' if self.var_tray_icon.get() else '0')
-        db.set_setting('minimize_to_tray',
-                       '1' if self.var_minimize_tray.get() else '0')
-        db.set_setting('single_click_tray',
-                       '1' if self.var_single_click_tray.get() else '0')
-        db.set_setting('balloon_notify',
-                       '1' if self.var_balloon.get() else '0')
-        db.set_setting('minimize_on_close',
-                       '1' if self.var_minimize_close.get() else '0')
+        # Tray: settings fixas (sempre ativas), nao salva no banco
         db.set_setting('language', self.var_language.get())
         db.set_setting('sound', '1' if self.var_sound.get() else '0')
         db.set_setting('sound_message',
@@ -1684,8 +1648,7 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_reminder.set(True)
             self.var_notif_reminder.set(True)
             self.var_flash_reminder.set(True)
-            self.var_tray_icon.set(True)
-            self.var_balloon.set(True)
+            # Tray: sempre ativo, sem reset
             self.var_save_history.set(True)
             self.var_download_dir.set(
                 os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
@@ -1906,8 +1869,6 @@ class FileTransferDialog(tk.Toplevel):
         self.peer_name = peer_name
         self.direction = direction
         self._on_cancel = on_cancel
-        self._on_accept = on_accept
-        self._on_decline = on_decline
         self._filesize = filesize
         self._start_time = time.time()
         self._last_transferred = 0
@@ -1922,11 +1883,11 @@ class FileTransferDialog(tk.Toplevel):
         self.configure(bg='#ffffff')
         self.transient(parent)
 
-        # Status label
+        # Status label — envio direto (sem aceitar/recusar)
         if direction == 'send':
             status = f"Enviando '{filename}' para {peer_name}..."
         else:
-            status = f"{peer_name} envia um arquivo para você:"
+            status = f"Recebendo '{filename}' de {peer_name}..."
         self._lbl_status = tk.Label(self, text=status,
                                      font=FONT, bg='#ffffff', fg='#000000',
                                      wraplength=390, anchor='w', justify='left')
@@ -1940,7 +1901,7 @@ class FileTransferDialog(tk.Toplevel):
                                    wraplength=390, anchor='w')
         self._lbl_file.pack(padx=15, anchor='w')
 
-        # Progress bar (hidden initially for receive)
+        # Progress bar — visivel imediatamente (envio direto)
         self._progress_frame = tk.Frame(self, bg='#ffffff')
         self.progress = ttk.Progressbar(self._progress_frame, length=385,
                                          mode='determinate',
@@ -1952,70 +1913,14 @@ class FileTransferDialog(tk.Toplevel):
                                   font=('Segoe UI', 8), bg='#ffffff',
                                   fg='#718096', anchor='w')
         self._lbl_info.pack(anchor='w')
+        self._progress_frame.pack(padx=15, fill='x')
 
         # Action buttons frame
         self._btn_frame = tk.Frame(self, bg='#ffffff')
         self._btn_frame.pack(padx=15, pady=(6, 10), anchor='w')
 
-        if direction == 'send':
-            # Sender: show progress immediately
-            self._progress_frame.pack(padx=15, fill='x')
-            self._lbl_state = tk.Label(self._btn_frame,
-                                        text='Aguardando aceitação...',
-                                        font=('Segoe UI', 8, 'italic'),
-                                        bg='#ffffff', fg='#b07d10')
-            self._lbl_state.pack(side='left')
-            cancel_lbl = tk.Label(self._btn_frame, text='Cancelar',
-                                  font=('Segoe UI', 8, 'underline'),
-                                  fg='#cc0000', bg='#ffffff', cursor='hand2')
-            cancel_lbl.pack(side='left', padx=(12, 0))
-            cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
-            self._cancel_lbl = cancel_lbl
-        else:
-            # Receiver: show accept/decline buttons
-            self._lbl_state = None
-            btn_accept = tk.Button(self._btn_frame, text='  Aceitar  ',
-                                    font=('Segoe UI', 9, 'bold'),
-                                    bg='#2b8a3e', fg='#ffffff',
-                                    relief='flat', bd=0, cursor='hand2',
-                                    padx=10, pady=3,
-                                    activebackground='#237032',
-                                    command=self._accept)
-            btn_accept.pack(side='left')
-            _add_hover(btn_accept, '#2b8a3e', '#237032')
-
-            btn_decline = tk.Button(self._btn_frame, text='  Declinar  ',
-                                     font=('Segoe UI', 9),
-                                     bg='#e2e8f0', fg='#4a5568',
-                                     relief='flat', bd=0, cursor='hand2',
-                                     padx=10, pady=3,
-                                     activebackground='#cbd5e0',
-                                     command=self._decline)
-            btn_decline.pack(side='left', padx=(8, 0))
-            _add_hover(btn_decline, '#e2e8f0', '#cbd5e0')
-            self._cancel_lbl = None
-
-        self.protocol('WM_DELETE_WINDOW', self._cancel)
-
-        ico = _get_icon_path()
-        if ico:
-            try:
-                self.iconbitmap(ico)
-            except Exception:
-                pass
-
-    # Receiver aceita o arquivo.
-    def _accept(self):
-        if self._on_accept:
-            self._on_accept(self.file_id)
-        # Rebuild UI for receiving
-        for w in self._btn_frame.winfo_children():
-            w.destroy()
-        self._progress_frame.pack(padx=15, fill='x',
-                                  before=self._btn_frame)
-        self._lbl_status.config(
-            text=f"Recebendo '{self.filename}' de {self.peer_name}...")
-        self._lbl_state = tk.Label(self._btn_frame, text='Transferindo...',
+        self._lbl_state = tk.Label(self._btn_frame,
+                                    text='Transferindo...',
                                     font=('Segoe UI', 8, 'italic'),
                                     bg='#ffffff', fg='#2b8a3e')
         self._lbl_state.pack(side='left')
@@ -2026,21 +1931,14 @@ class FileTransferDialog(tk.Toplevel):
         cancel_lbl.bind('<Button-1>', lambda e: self._cancel())
         self._cancel_lbl = cancel_lbl
 
-    # Receiver declina o arquivo.
-    def _decline(self):
-        if self._on_decline:
-            self._on_decline(self.file_id)
-        self._finished = True
-        self._safe_destroy()
+        self.protocol('WM_DELETE_WINDOW', self._cancel)
 
-    # Chamado no sender quando receiver aceita.
-    def set_accepted(self):
-        try:
-            if self._lbl_state:
-                self._lbl_state.config(text='Aceito! Transferindo...',
-                                        fg='#2b8a3e')
-        except tk.TclError:
-            pass
+        ico = _get_icon_path()
+        if ico:
+            try:
+                self.iconbitmap(ico)
+            except Exception:
+                pass
 
     # Atualiza a barra de progresso e o label de velocidade/tamanho.
     #
@@ -2071,9 +1969,7 @@ class FileTransferDialog(tk.Toplevel):
                 info += f'  —  {speed_txt}'
             self._lbl_info.config(text=info)
 
-            # Quando o primeiro byte chega no sender, significa que foi aceito
-            if self.direction == 'send' and transferred > 0:
-                self.set_accepted()
+            pass
         except tk.TclError:
             pass
 
@@ -2094,9 +1990,9 @@ class FileTransferDialog(tk.Toplevel):
             if success:
                 self._lbl_status.config(fg='#2b8a3e')
                 if self.direction == 'send':
-                    self._lbl_status.config(text=f"'{self.filename}' enviado para {self.peer_name} — Completo!")
+                    self._lbl_status.config(text=f"'{self.filename}' enviado com sucesso!")
                 else:
-                    self._lbl_status.config(text=f"'{self.filename}' recebido de {self.peer_name} — Completo!")
+                    self._lbl_status.config(text=f"'{self.filename}' recebido de {self.peer_name}")
                 self.progress['value'] = self.progress['maximum']
                 self.update_idletasks()
                 self._lbl_info.config(text=_format_size(self._filesize))
@@ -4236,6 +4132,14 @@ class ChatWindow(tk.Toplevel):
                 log.exception('Erro ao salvar imagem')
 
     def _on_close(self):
+        # Cancela timer de typing e notifica que parou de digitar
+        if self._typing_timer:
+            self.after_cancel(self._typing_timer)
+            self._typing_timer = None
+        if self._was_typing:
+            self._was_typing = False
+            threading.Thread(target=self.messenger.send_typing,
+                             args=(self.peer_id, False), daemon=True).start()
         if self.peer_id in self.app.chat_windows:
             del self.app.chat_windows[self.peer_id]
         self.destroy()
@@ -5357,41 +5261,159 @@ class GroupChatWindow(tk.Toplevel):
                   padx=12, pady=4, cursor='hand2',
                   command=dlg.destroy).pack(side='right', padx=(0, 6))
 
-    # Exibe enquete no chat
+    # Exibe enquete no chat como card estilo WhatsApp/Google Forms
     def _display_poll(self, question, options, creator, poll_id):
+        # Busca votos atuais do banco
+        votes = self.app.messenger.db.get_poll_votes(poll_id)
+        vote_counts = {}
+        my_vote = None
+        my_uid = self.app.messenger.user_id
+        for v in votes:
+            idx = v['option_index']
+            vote_counts[idx] = vote_counts.get(idx, 0) + 1
+            if v['voter_uid'] == my_uid:
+                my_vote = idx
+        total_votes = sum(vote_counts.values())
+
+        # Cria o card como widget Frame embutido no chat_text
         self.chat_text.configure(state='normal')
-        self.chat_text.insert('end', f'\U0001f4ca Enquete de {creator}\n', 'quote_name')
-        self.chat_text.insert('end', f'{question}\n\n', 'msg')
-        for i, opt in enumerate(options):
-            tag_name = f'poll_{poll_id}_{i}'
-            self.chat_text.tag_configure(tag_name,
-                                         foreground='#2451a0',
-                                         font=('Segoe UI', 10),
-                                         underline=True)
-            self.chat_text.insert('end', f'  {i+1}. {opt}\n', tag_name)
-            self.chat_text.tag_bind(tag_name, '<Button-1>',
-                                     lambda e, pi=poll_id, oi=i: self._vote_poll(pi, oi))
-            self.chat_text.tag_bind(tag_name, '<Enter>',
-                                     lambda e: self.chat_text.config(cursor='hand2'))
-            self.chat_text.tag_bind(tag_name, '<Leave>',
-                                     lambda e: self.chat_text.config(cursor='arrow'))
+        self.chat_text.insert('end', '\n')
+
+        card = tk.Frame(self.chat_text, bg='#ffffff', relief='solid', bd=1,
+                        highlightthickness=1, highlightbackground='#e2e8f0')
+
+        # Header
+        hdr = tk.Frame(card, bg='#f0f4ff')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text=f'\U0001f4ca  Enquete', font=('Segoe UI', 9, 'bold'),
+                 bg='#f0f4ff', fg='#3b5998').pack(side='left', padx=10, pady=6)
+        tk.Label(hdr, text=f'por {creator}', font=('Segoe UI', 8),
+                 bg='#f0f4ff', fg='#718096').pack(side='right', padx=10, pady=6)
+
+        # Pergunta
+        tk.Label(card, text=question, font=('Segoe UI', 11, 'bold'),
+                 bg='#ffffff', fg='#1a202c', wraplength=350,
+                 justify='left', anchor='w').pack(fill='x', padx=12, pady=(10, 6))
+
+        # Opcoes com barras de progresso
+        opts_frame = tk.Frame(card, bg='#ffffff')
+        opts_frame.pack(fill='x', padx=12, pady=(0, 6))
+
+        # Guarda refs para atualizar votos depois
+        if not hasattr(self, '_poll_widgets'):
+            self._poll_widgets = {}
+        self._poll_widgets[poll_id] = {'opts_frame': opts_frame, 'options': options,
+                                        'card': card, 'question': question, 'creator': creator}
+
+        self._render_poll_options(poll_id, opts_frame, options, vote_counts, total_votes, my_vote)
+
+        # Footer com total de votos
+        footer = tk.Frame(card, bg='#f8f9fa')
+        footer.pack(fill='x')
+        lbl_total = tk.Label(footer, text=f'{total_votes} voto{"s" if total_votes != 1 else ""}',
+                             font=('Segoe UI', 8), bg='#f8f9fa', fg='#718096')
+        lbl_total.pack(side='left', padx=10, pady=4)
+        if not hasattr(self, '_poll_total_labels'):
+            self._poll_total_labels = {}
+        self._poll_total_labels[poll_id] = lbl_total
+
+        self.chat_text.window_create('end', window=card, padx=10, pady=4)
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
+
+    def _render_poll_options(self, poll_id, parent, options, vote_counts, total_votes, my_vote):
+        for w in parent.winfo_children():
+            w.destroy()
+        colors = ['#4285f4', '#ea4335', '#fbbc04', '#34a853', '#ff6d01', '#46bdc6',
+                  '#7b61ff', '#f538a0']
+        for i, opt in enumerate(options):
+            count = vote_counts.get(i, 0)
+            pct = int((count / total_votes * 100) if total_votes > 0 else 0)
+            color = colors[i % len(colors)]
+            is_mine = (my_vote == i)
+
+            opt_frame = tk.Frame(parent, bg='#ffffff', cursor='hand2')
+            opt_frame.pack(fill='x', pady=2)
+
+            # Barra de progresso com canvas
+            bar_h = 32
+            bar_canvas = tk.Canvas(opt_frame, height=bar_h, bg='#f0f2f5',
+                                   highlightthickness=0, bd=0)
+            bar_canvas.pack(fill='x')
+
+            def _draw_bar(canvas=bar_canvas, p=pct, c=color, mine=is_mine,
+                          text=opt, cnt=count):
+                canvas.update_idletasks()
+                w = canvas.winfo_width()
+                if w < 10:
+                    w = 340
+                # Fundo
+                canvas.create_rectangle(0, 0, w, bar_h, fill='#f0f2f5', outline='')
+                # Barra preenchida
+                if p > 0:
+                    fill_w = max(int(w * p / 100), 4)
+                    canvas.create_rectangle(0, 0, fill_w, bar_h, fill=c,
+                                            outline='', stipple='' if mine else 'gray50')
+                # Texto da opcao (esquerda)
+                prefix = '\u2714 ' if mine else ''
+                canvas.create_text(10, bar_h // 2, text=f'{prefix}{text}',
+                                   anchor='w', font=('Segoe UI', 9, 'bold' if mine else ''),
+                                   fill='#1a202c')
+                # Percentual e contagem (direita)
+                canvas.create_text(w - 10, bar_h // 2, text=f'{p}% ({cnt})',
+                                   anchor='e', font=('Segoe UI', 8, 'bold' if mine else ''),
+                                   fill='#4a5568')
+
+            bar_canvas.bind('<Configure>', lambda e, db=_draw_bar: db())
+            bar_canvas.after(50, _draw_bar)
+
+            # Click para votar
+            def _on_click(e, pi=poll_id, oi=i):
+                self._vote_poll(pi, oi)
+            bar_canvas.bind('<Button-1>', _on_click)
 
     # Vota numa opcao da enquete
     def _vote_poll(self, poll_id, option_index):
         def _do():
             self.app.messenger.vote_poll(self.group_id, poll_id, option_index)
-            self.after(0, lambda: self._show_vote_confirmation(poll_id, option_index))
+            self.after(0, lambda: self._refresh_poll_ui(poll_id))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _show_vote_confirmation(self, poll_id, option_index):
-        self.chat_text.configure(state='normal')
-        self.chat_text.insert('end',
-            f'\u2714 Voce votou na opcao {option_index + 1}\n\n', 'sys_msg')
-        self.chat_text.configure(state='disabled')
-        self.chat_text.see('end')
+    # Atualiza a UI do poll apos voto (proprio ou de outro membro)
+    def _refresh_poll_ui(self, poll_id):
+        if not hasattr(self, '_poll_widgets') or poll_id not in self._poll_widgets:
+            return
+        pw = self._poll_widgets[poll_id]
+        opts_frame = pw['opts_frame']
+        options = pw['options']
+        try:
+            if not opts_frame.winfo_exists():
+                return
+        except Exception:
+            return
+
+        votes = self.app.messenger.db.get_poll_votes(poll_id)
+        vote_counts = {}
+        my_vote = None
+        my_uid = self.app.messenger.user_id
+        for v in votes:
+            idx = v['option_index']
+            vote_counts[idx] = vote_counts.get(idx, 0) + 1
+            if v['voter_uid'] == my_uid:
+                my_vote = idx
+        total_votes = sum(vote_counts.values())
+
+        self._render_poll_options(poll_id, opts_frame, options, vote_counts, total_votes, my_vote)
+
+        # Atualiza label de total
+        if hasattr(self, '_poll_total_labels') and poll_id in self._poll_total_labels:
+            try:
+                lbl = self._poll_total_labels[poll_id]
+                if lbl.winfo_exists():
+                    lbl.config(text=f'{total_votes} voto{"s" if total_votes != 1 else ""}')
+            except Exception:
+                pass
 
     # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
@@ -5634,7 +5656,7 @@ class GroupChatWindow(tk.Toplevel):
 class LanMessengerApp:
     def __init__(self):
         self.root = tk.Tk()                  # Janela principal tkinter
-        self.root.title(f'{APP_NAME} v{APP_VERSION}')            # "MB Chat" na barra de título
+        self.root.title(APP_NAME)            # "MB Chat" na barra de título
         self.root.minsize(260, 450)          # Tamanho mínimo
         self.root.geometry('280x520')        # Tamanho inicial
         self.root.configure(bg=BG_WINDOW)
@@ -5767,7 +5789,7 @@ class LanMessengerApp:
         )
         self.messenger.start()
         self.lbl_username.config(text=f' {self.messenger.display_name}')
-        self.root.title(f'{APP_NAME} v{APP_VERSION}')
+        self.root.title(APP_NAME)
         self._update_avatar()
         self._start_reminder_timer()
 
@@ -6305,9 +6327,9 @@ class LanMessengerApp:
         # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui
         self.group_groups = self.tree.insert('', 'end', text='Grupos',
                                              open=True, tags=('group',))
-        # Cria o nó raiz "Offline" — começa recolhido, mostra contagem
-        self.group_offline = self.tree.insert('', 'end', text='Offline (0)',
-                                              open=False, tags=('group',))
+        # Offline: contatos offline nao aparecem no TreeView (sao detachados)
+        # group_offline mantido como atributo mas sem no visivel
+        self.group_offline = None
         # Dicionário que mapeia group_id -> iid do item no TreeView
         self._group_tree_items = {}  # group_id -> tree item id
         # Configura visual do cabeçalho de seção (cinza, bold, menor)
@@ -6453,9 +6475,9 @@ class LanMessengerApp:
         emoji_size = 20
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
-            name_font = ImageFont.truetype(font_name, 14)
-            note_font = ImageFont.truetype('segoeui.ttf', 12)
-            dept_font = ImageFont.truetype('segoeui.ttf', 11)
+            name_font = ImageFont.truetype(font_name, 16)
+            note_font = ImageFont.truetype('segoeui.ttf', 13)
+            dept_font = ImageFont.truetype('segoeui.ttf', 12)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
             emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
@@ -6522,7 +6544,7 @@ class LanMessengerApp:
         av_size = 36
         gap = 10
         total_w = av_size + gap + name_w + dept_w + total_note_w + 10
-        height = 42
+        height = 46
 
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
 
@@ -6534,7 +6556,7 @@ class LanMessengerApp:
             img.paste(avatar_pil, (0, av_y), avatar_pil)
 
         draw = ImageDraw.Draw(img)
-        text_y = (height - 16) // 2  # centro vertical para texto ~14px
+        text_y = (height - 18) // 2  # centro vertical para texto ~16px
 
         # Nome
         x = av_size + gap
@@ -6617,7 +6639,19 @@ class LanMessengerApp:
             dept = c.get('department', '')
             avatar = self._create_contact_avatar(uid, name, tag)
             row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
-            parent = self.group_general if tag != 'offline' else self.group_offline
+            # Offline nao aparece no TreeView — salva info mas nao insere
+            if tag == 'offline':
+                self.peer_info[uid] = {
+                    'display_name': name,
+                    'ip': c.get('ip_address', ''),
+                    'hostname': c.get('hostname', ''),
+                    'status': status,
+                    'note': note,
+                }
+                continue
+            parent = self.group_general
+            if dept:
+                parent = self._get_dept_node(dept)
             if row_img:
                 iid = self.tree.insert(parent, 'end', text='', tags=(tag,), image=row_img)
             else:
@@ -6633,9 +6667,7 @@ class LanMessengerApp:
                 'status': status,
                 'note': note,
             }
-        self._update_offline_count()
         self._sort_tree_children(self.group_general)
-        self._sort_tree_children(self.group_offline)
 
     # --- Avatar ---
     # Desenha avatar padrao (circulo colorido com letra U) no canvas do header.
@@ -6724,20 +6756,34 @@ class LanMessengerApp:
     def _filter_contacts(self, *args):
         query = self._search_var.get().strip().lower()  # texto de busca em minusculas
         if query == 'buscar contatos...' or not query:  # busca vazia ou placeholder
-            # Restaurar todos os contatos nos grupos corretos (online->Geral, offline->Offline)
+            # Restaurar todos os contatos online nos grupos corretos
             for uid, iid in self.peer_items.items():
-                tags = self.tree.item(iid, 'tags')  # tags do item (online, offline, etc)
-                parent = self.group_offline if 'offline' in tags else self.group_general
-                self.tree.reattach(iid, parent, 'end')  # reinsere no grupo correto
-            return  # nao precisa filtrar
-        for uid, iid in self.peer_items.items():  # percorre todos os contatos
+                tags = self.tree.item(iid, 'tags')
+                if 'offline' in tags:
+                    continue  # offline permanece escondido
+                info = self.peer_info.get(uid, {})
+                dept = info.get('department', '')
+                parent = self._get_dept_node(dept) if dept else self.group_general
+                cur_parent = self.tree.parent(iid)
+                if not cur_parent:
+                    # Item estava detachado (filtrado), reattach na posicao correta
+                    self.tree.reattach(iid, parent, 'end')
+                # Se ja esta no parent correto, nao move (evita pipocar)
+            return
+        for uid, iid in self.peer_items.items():
+            tags = self.tree.item(iid, 'tags')
+            if 'offline' in tags:
+                continue  # offline permanece escondido
             info = self.peer_info.get(uid, {})
             name = info.get('display_name', '').lower()
             note = info.get('note', '').lower()
-            if query in name or query in note:  # nome ou nota contem o texto buscado?
-                tags = self.tree.item(iid, 'tags')
-                parent = self.group_offline if 'offline' in tags else self.group_general
-                self.tree.reattach(iid, parent, 'end')
+            if query in name or query in note:
+                # Match: garantir que esta visivel sem mover de posicao
+                cur_parent = self.tree.parent(iid)
+                if not cur_parent:
+                    dept = info.get('department', '')
+                    parent = self._get_dept_node(dept) if dept else self.group_general
+                    self.tree.reattach(iid, parent, 'end')
             else:
                 self.tree.detach(iid)
 
@@ -7267,7 +7313,7 @@ class LanMessengerApp:
         if not sel:
             return None
         item = sel[0]
-        if item in (self.group_general, self.group_offline, self.group_groups):
+        if item in (self.group_general, self.group_groups):
             return None  # clicou em um header de secao, nao em um contato
         if item in self._dept_nodes.values():
             return None  # clicou em header de departamento
@@ -7318,8 +7364,8 @@ class LanMessengerApp:
     def _get_dept_node(self, dept_name):
         if dept_name in self._dept_nodes:
             return self._dept_nodes[dept_name]
-        # Cria no de departamento antes do Offline
-        node = self.tree.insert('', self.tree.index(self.group_offline),
+        # Cria no de departamento antes do Grupos
+        node = self.tree.insert('', self.tree.index(self.group_groups),
                                 text=dept_name, open=True, tags=('group',))
         self._dept_nodes[dept_name] = node
         return node
@@ -7331,9 +7377,9 @@ class LanMessengerApp:
         note = info.get('note', '')
         dept = info.get('department', '')
 
-        # Determina o grupo pai correto (departamento > Geral > Offline)
+        # Determina o grupo pai correto (departamento > Geral; offline = detach)
         if tag == 'offline':
-            parent = self.group_offline
+            parent = None  # offline nao aparece no TreeView
         elif dept:
             parent = self._get_dept_node(dept)
         else:
@@ -7354,22 +7400,31 @@ class LanMessengerApp:
 
         if uid in self.peer_items:
             iid = self.peer_items[uid]
-            old_tags = self.tree.item(iid, 'tags')
             old_parent = self.tree.parent(iid)
 
             # Sempre atualiza (nota/status podem mudar)
             self.tree.item(iid, text=display, tags=(tag,), image=image)
 
-            if old_parent != parent:
+            if parent is None:
+                # Offline: esconde do TreeView
+                self.tree.detach(iid)
+            elif old_parent != parent:
                 self.tree.move(iid, parent, 'end')
-
-            self._sort_tree_children(parent)
+                self._sort_tree_children(parent)
+            else:
+                self._sort_tree_children(parent)
         else:
-            iid = self.tree.insert(parent, 'end',
-                                   text=display, tags=(tag,),
-                                   image=image)
-            self.peer_items[uid] = iid
-            self._sort_tree_children(parent)
+            if parent is None:
+                # Offline novo: insere em Geral e detacha (precisa existir para referencia)
+                iid = self.tree.insert(self.group_general, 'end',
+                                       text=display, tags=(tag,), image=image)
+                self.peer_items[uid] = iid
+                self.tree.detach(iid)
+            else:
+                iid = self.tree.insert(parent, 'end',
+                                       text=display, tags=(tag,), image=image)
+                self.peer_items[uid] = iid
+                self._sort_tree_children(parent)
 
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
 
@@ -7379,31 +7434,17 @@ class LanMessengerApp:
             if query not in name.lower() and query not in note.lower():
                 self.tree.detach(iid)
 
-        self._update_offline_count()  # recalcula contagem na secao Offline
         # Atualiza a nota do contato em todas as janelas de grupo que ele participa
         for gw in self.group_windows.values():   # percorre janelas de grupo abertas
             if uid in gw._members:               # este contato esta no grupo?
                 gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
-    # Marca peer como offline e move para seção Offline.
+    # Marca peer como offline e esconde do TreeView.
     def _remove_contact(self, uid):
         if uid in self.peer_items:
-            name = self.peer_info.get(uid, {}).get('display_name', 'Unknown')
-            avatar = self._create_contact_avatar(uid, name, 'offline')
-            row_img = self._render_contact_display(uid, name, '', 'offline')
-            if row_img:
-                self.tree.item(self.peer_items[uid], text='', tags=('offline',), image=row_img)
-            else:
-                self.tree.item(self.peer_items[uid], text=f'  {name}', tags=('offline',), image=avatar)
-            if self.tree.parent(self.peer_items[uid]) != self.group_offline:
-                self.tree.move(self.peer_items[uid], self.group_offline, 'end')
-            self._sort_tree_children(self.group_offline)
-            self._update_offline_count()
-
-    # Atualiza texto do grupo Offline com contagem.
-    def _update_offline_count(self):
-        children = self.tree.get_children(self.group_offline)
-        self.tree.item(self.group_offline, text=f'Offline ({len(children)})')
+            iid = self.peer_items[uid]
+            self.tree.item(iid, tags=('offline',))
+            self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
@@ -7579,6 +7620,13 @@ class LanMessengerApp:
             mid = item[5] if len(item) > 5 else ''
             if isinstance(content, str) and content.startswith('[img]'):
                 gw.receive_image(dname, content[5:], ts)
+            elif isinstance(content, str) and content.startswith('[poll]'):
+                pid = content[6:]
+                poll = self.messenger.db.get_poll(pid)
+                if poll:
+                    import json
+                    opts = poll['options'] if isinstance(poll['options'], list) else json.loads(poll['options'])
+                    gw._display_poll(poll['question'], opts, dname, pid)
             else:
                 gw.receive_message(dname, content, ts,
                                    reply_to=rto, mentions=ment,
@@ -7604,7 +7652,7 @@ class LanMessengerApp:
     def _on_tree_right(self, e):
         item = self.tree.identify_row(e.y)  # identifica o item na posicao Y do mouse
         # Ignora nos de secao (Geral, Offline, Grupos, departamentos)
-        section_nodes = {self.group_general, self.group_offline, self.group_groups}
+        section_nodes = {self.group_general, self.group_groups}
         section_nodes.update(self._dept_nodes.values())
         if item and item not in section_nodes:
             # Block right-click on offline contacts
@@ -8837,7 +8885,10 @@ class LanMessengerApp:
             # Mestre de som global
             sound_master = db.get_setting('sound', '1') == '1'
             for rem in pending:
-                db.mark_reminder_notified(rem['id'])
+                if rem.get('is_recurring') and rem.get('is_active'):
+                    db.reschedule_recurring_reminder(rem['id'])
+                else:
+                    db.mark_reminder_notified(rem['id'])
                 text = rem.get('text', 'Lembrete')
                 remind_at = datetime.fromtimestamp(rem['remind_at'])
                 time_str = remind_at.strftime('%H:%M')
@@ -8908,6 +8959,7 @@ class LanMessengerApp:
             menu = tk.Menu(win, tearoff=0, font=('Segoe UI', 10))
             menu.add_command(label='\U0001f4cc  Simples', command=lambda: self._new_simple_reminder_dialog(win, list_frame))
             menu.add_command(label='\u23f0  Programado', command=lambda: self._new_reminder_dialog(win, list_frame))
+            menu.add_command(label='\U0001f504  Recorrente', command=lambda: self._new_recurring_reminder_dialog(win, list_frame))
             menu.tk_popup(btn_novo.winfo_rootx(), btn_novo.winfo_rooty() + btn_novo.winfo_height())
         btn_novo = tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
                   bg='#2563eb', fg='#ffffff', relief='flat', bd=0,
@@ -8961,25 +9013,63 @@ class LanMessengerApp:
         for rem in completed:
             self._render_reminder_row(parent, rem, completed=True)
 
+    def _format_interval(self, seconds):
+        h = int(seconds) // 3600
+        m = (int(seconds) % 3600) // 60
+        s = int(seconds) % 60
+        parts = []
+        if h > 0:
+            parts.append(f'{h}h')
+        if m > 0:
+            parts.append(f'{m}min')
+        if s > 0:
+            parts.append(f'{s}s')
+        return ' '.join(parts) if parts else '0s'
+
     def _render_reminder_row(self, parent, rem, completed=False):
         is_normal = rem.get('remind_at', 0) == 0  # lembrete normal (sem data)
-        is_overdue = not completed and not is_normal and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
+        is_recurring = rem.get('is_recurring', 0) == 1
+        is_active = rem.get('is_active', 1) == 1
+        is_overdue = not completed and not is_normal and not is_recurring and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
         is_notified = rem.get('notified', 0) == 1
         if completed:
             bg = '#f0fdf4'
+        elif is_recurring:
+            bg = '#f0e6ff' if is_active else '#f3f4f6'
         elif is_overdue:
             bg = '#fef2f2'
         elif is_normal:
             bg = '#eff6ff'
         else:
             bg = '#f7fafc'
-        fg_text = '#6b7280' if completed else '#1a202c'
-        border_color = '#bbf7d0' if completed else '#fecaca' if is_overdue else '#bfdbfe' if is_normal else '#e2e8f0'
+        fg_text = '#6b7280' if completed or (is_recurring and not is_active) else '#1a202c'
+        if is_recurring:
+            border_color = '#d8b4fe' if is_active else '#d1d5db'
+        elif completed:
+            border_color = '#bbf7d0'
+        elif is_overdue:
+            border_color = '#fecaca'
+        elif is_normal:
+            border_color = '#bfdbfe'
+        else:
+            border_color = '#e2e8f0'
         row = tk.Frame(parent, bg=bg, highlightthickness=1,
                        highlightbackground=border_color)
         row.pack(fill='x', pady=3, padx=2)
-        # Botao check (concluir)
-        if not completed:
+        # Botao check/toggle
+        if is_recurring and not completed:
+            # Toggle ativar/desativar para recorrentes
+            toggle_txt = '\u25c9' if is_active else '\u25cb'
+            toggle_fg = '#7c3aed' if is_active else '#9ca3af'
+            toggle_btn = tk.Button(row, text=toggle_txt, font=('Segoe UI', 12),
+                                   bg=bg, fg=toggle_fg, relief='flat', bd=0,
+                                   cursor='hand2', width=2,
+                                   command=lambda rid=rem['id'], p=parent: (
+                                       self.messenger.db.toggle_reminder_active(rid),
+                                       self._refresh_reminders_list(p)))
+            toggle_btn.pack(side='left', padx=(4, 0))
+            _add_hover(toggle_btn, bg, '#ede9fe')
+        elif not completed:
             check_btn = tk.Button(row, text='\u25cb', font=('Segoe UI', 12),
                                   bg=bg, fg='#22c55e', relief='flat', bd=0,
                                   cursor='hand2', width=2,
@@ -9000,7 +9090,13 @@ class LanMessengerApp:
         if completed:
             lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
         lbl_text.pack(anchor='w')
-        if is_normal:
+        if is_recurring:
+            interval = rem.get('recurrence_interval_seconds', 0)
+            interval_str = self._format_interval(interval)
+            status_str = 'Ativo' if is_active else 'Pausado'
+            time_str = f'\U0001f504 A cada {interval_str} — {status_str}'
+            fg_time = '#7c3aed' if is_active else '#9ca3af'
+        elif is_normal:
             # Lembrete normal: mostra data de criacao
             created = datetime.fromtimestamp(rem.get('created_at', 0))
             time_str = '\U0001f4cc Criado em ' + created.strftime('%d/%m %H:%M')
@@ -9076,6 +9172,84 @@ class LanMessengerApp:
                         padx=20, pady=6, cursor='hand2', command=_create)
         btn.pack()
         _add_hover(btn, '#2563eb', '#1d4ed8')
+
+    # Dialogo para criar lembrete recorrente (a cada X tempo)
+    def _new_recurring_reminder_dialog(self, parent_win, list_frame):
+        dlg = tk.Toplevel(parent_win)
+        dlg.title('Lembrete Recorrente')
+        dlg.transient(parent_win)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 360, 280)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='\U0001f504 Lembrete Recorrente', font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
+
+        body = tk.Frame(dlg, bg='#ffffff')
+        body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w')
+        txt_entry = tk.Entry(body, font=('Segoe UI', 11), relief='flat',
+                             bg='#f7fafc', highlightthickness=1,
+                             highlightbackground='#cbd5e1')
+        txt_entry.pack(fill='x', pady=(4, 12), ipady=4)
+        txt_entry.focus_set()
+
+        tk.Label(body, text='Repetir a cada:', font=('Segoe UI', 10, 'bold'),
+                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(4, 2))
+
+        interval_frame = tk.Frame(body, bg='#ffffff')
+        interval_frame.pack(anchor='w', pady=(0, 12))
+
+        h_var = tk.StringVar(value='0')
+        m_var = tk.StringVar(value='10')
+        s_var = tk.StringVar(value='0')
+
+        for label, var, max_val in [('Horas', h_var, 99), ('Min', m_var, 59), ('Seg', s_var, 59)]:
+            f = tk.Frame(interval_frame, bg='#ffffff')
+            f.pack(side='left', padx=(0, 10))
+            sp = tk.Spinbox(f, from_=0, to=max_val, textvariable=var,
+                            font=('Segoe UI', 12), width=3, justify='center',
+                            relief='flat', bg='#f7fafc',
+                            highlightthickness=1, highlightbackground='#cbd5e1')
+            sp.pack()
+            tk.Label(f, text=label, font=('Segoe UI', 8),
+                     bg='#ffffff', fg='#718096').pack()
+
+        lbl_err = tk.Label(body, text='', font=('Segoe UI', 8),
+                           bg='#ffffff', fg='#ef4444')
+        lbl_err.pack(anchor='w')
+
+        def _create():
+            text = txt_entry.get().strip()
+            if not text:
+                lbl_err.config(text='Digite um título')
+                return
+            try:
+                h = int(h_var.get())
+                m = int(m_var.get())
+                s = int(s_var.get())
+            except ValueError:
+                lbl_err.config(text='Valores inválidos')
+                return
+            total = h * 3600 + m * 60 + s
+            if total < 60:
+                lbl_err.config(text='Intervalo mínimo: 1 minuto')
+                return
+            self.messenger.db.add_recurring_reminder(text, total)
+            self._refresh_reminders_list(list_frame)
+            dlg.destroy()
+
+        btn = tk.Button(body, text='Criar', font=('Segoe UI', 10, 'bold'),
+                        bg='#7c3aed', fg='#ffffff', relief='flat', bd=0,
+                        padx=20, pady=6, cursor='hand2', command=_create)
+        btn.pack(pady=(4, 0))
+        _add_hover(btn, '#7c3aed', '#6d28d9')
 
     # Dialogo para criar novo lembrete com calendario e campos de tempo
     def _new_reminder_dialog(self, parent_win, list_frame):
@@ -9418,14 +9592,16 @@ class LanMessengerApp:
             except Exception:
                 pass
         else:
-            self._mark_unread(from_user)
+            # Auto-abre janela de chat (como LAN Messenger)
+            self._open_chat(from_user)
+            if from_user in self.chat_windows:
+                self.chat_windows[from_user].receive_message(
+                    content, timestamp, reply_to=reply_to, msg_id=msg_id)
             self._show_toast(from_user, content)
             self._pending_flash_target = from_user
             self._flash_window()
-            try:
-                self.root.bell()
-            except Exception:
-                pass
+            if from_user in self.chat_windows:
+                self._flash_window(self.chat_windows[from_user])
 
     # Callback: imagem recebida via TCP (MT_IMAGE).
     def _on_image(self, from_user, image_path, msg_id, timestamp,
@@ -9467,10 +9643,15 @@ class LanMessengerApp:
                 except Exception:
                     pass
             else:
-                self._mark_unread(from_user)
+                # Auto-abre janela de chat (como LAN Messenger)
+                self._open_chat(from_user)
+                if from_user in self.chat_windows:
+                    self.chat_windows[from_user].receive_image(image_path, timestamp)
                 self._show_toast(from_user, '[Imagem]')
                 self._pending_flash_target = from_user
                 self._flash_window()
+                if from_user in self.chat_windows:
+                    self._flash_window(self.chat_windows[from_user])
                 try:
                     self.root.bell()
                 except Exception:
@@ -9478,19 +9659,28 @@ class LanMessengerApp:
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
     def _on_poll(self, group_id, poll_data):
-        if group_id not in self.group_windows:
-            return
-        gw = self.group_windows[group_id]
         action = poll_data.get('action')
-        if action == 'create':
-            gw._display_poll(poll_data['question'], poll_data['options'],
-                             poll_data.get('creator', ''), poll_data['poll_id'])
-        elif action == 'vote':
-            gw.chat_text.configure(state='normal')
-            gw.chat_text.insert('end',
-                f"\u2714 {poll_data.get('voter', '?')} votou na enquete\n\n", 'sys_msg')
-            gw.chat_text.configure(state='disabled')
-            gw.chat_text.see('end')
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            if action == 'create':
+                gw._display_poll(poll_data['question'], poll_data['options'],
+                                 poll_data.get('creator', ''), poll_data['poll_id'])
+            elif action == 'vote':
+                # Atualiza a UI do poll em tempo real (barras de progresso)
+                gw._refresh_poll_ui(poll_data['poll_id'])
+        else:
+            # Janela nao aberta: acumula como mensagem pendente
+            if action == 'create':
+                if group_id not in self._pending_group_msgs:
+                    self._pending_group_msgs[group_id] = []
+                self._pending_group_msgs[group_id].append(
+                    (poll_data.get('creator', ''),
+                     f'[poll]{poll_data["poll_id"]}',
+                     time.time()))
+                self._mark_group_unread(group_id)
+                self._show_group_toast(group_id, poll_data.get('creator', ''), '\U0001f4ca Enquete')
+                self._pending_flash_target = f'group:{group_id}'
+                self._flash_window()
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #
@@ -9505,12 +9695,10 @@ class LanMessengerApp:
         #
         # Abre o dialogo de transferencia para o usuario aceitar ou recusar.
         # Registra na lista de historico de transferencias. Pisca taskbar e toca som.
-        dlg = FileTransferDialog(  # cria dialogo de confirmacao de recebimento
+        dlg = FileTransferDialog(  # dialogo de recebimento (envio direto, sem aceitar/recusar)
             self.root, file_id, filename, display_name,
             direction='receive', filesize=filesize,
-            on_cancel=lambda fid: self.messenger.decline_file(fid),
-            on_accept=lambda fid: self.messenger.accept_file(fid),
-            on_decline=lambda fid: self.messenger.decline_file(fid)
+            on_cancel=lambda fid: self.messenger.cancel_file(fid)
         )
         self._file_dialogs[file_id] = dlg
         self._add_transfer_entry(file_id, filename, display_name,

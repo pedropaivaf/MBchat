@@ -810,7 +810,6 @@ class FileReceiver:
         self.on_error = on_error
         self.running = False
         self._server = None
-        self._pending_accepts = {}  # file_id -> True/False (decisao do usuario)
         self._lock = threading.Lock()
 
     # Inicia o servidor de recebimento de arquivos
@@ -847,16 +846,6 @@ class FileReceiver:
         self.running = False
         if self._server:
             self._server.close()
-
-    # GUI chama este metodo quando usuario aceita o arquivo
-    def accept_file(self, file_id):
-        with self._lock:
-            self._pending_accepts[file_id] = True
-
-    # GUI chama este metodo quando usuario recusa o arquivo
-    def decline_file(self, file_id):
-        with self._lock:
-            self._pending_accepts[file_id] = False
 
     # Loop que aceita conexoes de arquivo
     def _accept_loop(self):
@@ -909,26 +898,12 @@ class FileReceiver:
             filename = info['filename']
             filesize = info['filesize']
 
-            # Notifica GUI para mostrar dialogo de aceitacao
+            # Notifica GUI para mostrar dialogo de recebimento (sem aceitar/recusar)
             if self.on_incoming:
                 self.on_incoming(file_id, filename, filesize, addr[0])
 
-            # Aguarda decisao do usuario (polling a cada 200ms, max 60s)
-            deadline = time.time() + 60
-            accepted = None
-            while time.time() < deadline:
-                with self._lock:
-                    if file_id in self._pending_accepts:
-                        accepted = self._pending_accepts.pop(file_id)
-                        break
-                time.sleep(0.2)
-
-            if not accepted:
-                client.sendall(b'DENY')  # Recusado ou timeout
-                client.close()
-                return
-
-            client.sendall(b'OKAY')  # Aceito, pode enviar
+            # Auto-aceita imediatamente (envio direto, sem dialogo de aceitacao)
+            client.sendall(b'OKAY')
 
             # Sanitiza nome do arquivo (remove caracteres perigosos)
             safe_name = "".join(c for c in filename

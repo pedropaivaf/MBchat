@@ -196,6 +196,13 @@ class Database:
             );
         """)
         c.commit()
+        # Migracao: colunas para lembretes recorrentes
+        for col, default in [('is_recurring', '0'), ('recurrence_interval_seconds', '0'), ('is_active', '1')]:
+            try:
+                c.execute(f"ALTER TABLE reminders ADD COLUMN {col} INTEGER DEFAULT {default}")
+                c.commit()
+            except Exception:
+                pass  # coluna ja existe
 
     # ========================================
     # LOCAL USER — Dados do usuário local
@@ -599,11 +606,50 @@ class Database:
         """, (text, remind_at, time.time(), 1 if remind_at == 0 else 0))
         self.conn.commit()
 
+    def add_recurring_reminder(self, text, interval_seconds):
+        now = time.time()
+        self.conn.execute("""
+            INSERT INTO reminders (text, remind_at, created_at, notified,
+                                   is_recurring, recurrence_interval_seconds, is_active)
+            VALUES (?, ?, ?, 0, 1, ?, 1)
+        """, (text, now + interval_seconds, now, interval_seconds))
+        self.conn.commit()
+
+    def reschedule_recurring_reminder(self, reminder_id):
+        row = self.conn.execute(
+            "SELECT remind_at, recurrence_interval_seconds FROM reminders WHERE id=?",
+            (reminder_id,)).fetchone()
+        if row:
+            interval = row['recurrence_interval_seconds']
+            next_at = row['remind_at'] + interval
+            now = time.time()
+            while next_at <= now:
+                next_at += interval
+            self.conn.execute(
+                "UPDATE reminders SET remind_at=?, notified=0 WHERE id=?",
+                (next_at, reminder_id))
+            self.conn.commit()
+
+    def toggle_reminder_active(self, reminder_id):
+        row = self.conn.execute(
+            "SELECT is_active FROM reminders WHERE id=?",
+            (reminder_id,)).fetchone()
+        if row:
+            new_val = 0 if row['is_active'] else 1
+            self.conn.execute(
+                "UPDATE reminders SET is_active=? WHERE id=?",
+                (new_val, reminder_id))
+            if new_val == 1:
+                # Reagenda para o proximo intervalo futuro ao reativar
+                self.reschedule_recurring_reminder(reminder_id)
+            self.conn.commit()
+
     def get_pending_reminders(self):
         now = time.time()
         rows = self.conn.execute("""
             SELECT * FROM reminders
             WHERE notified=0 AND remind_at > 0 AND remind_at <= ?
+              AND (is_recurring=0 OR is_active=1)
             ORDER BY remind_at ASC
         """, (now,)).fetchall()
         return [dict(r) for r in rows]

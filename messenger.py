@@ -617,14 +617,6 @@ class Messenger:
         sender.start()  # Inicia thread de envio
         return file_id
 
-    # Aceita um arquivo recebido (chamado pela GUI)
-    def accept_file(self, file_id):
-        self._file_receiver.accept_file(file_id)
-
-    # Recusa um arquivo recebido (chamado pela GUI)
-    def decline_file(self, file_id):
-        self._file_receiver.decline_file(file_id)
-
     # Cancela envio de arquivo em andamento
     def cancel_file(self, file_id):
         if file_id in self._file_senders:
