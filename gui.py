@@ -1060,7 +1060,16 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('autostart', '0') == '1')
         self.var_show_main = tk.BooleanVar(
             value=db.get_setting('show_main_on_start', '1') == '1')
-        # Tray: sempre ativo (sem opcoes configuráveis)
+        self.var_tray_icon = tk.BooleanVar(
+            value=db.get_setting('tray_icon', '1') == '1')
+        self.var_minimize_tray = tk.BooleanVar(
+            value=db.get_setting('minimize_to_tray', '0') == '1')
+        self.var_single_click_tray = tk.BooleanVar(
+            value=db.get_setting('single_click_tray', '0') == '1')
+        self.var_balloon = tk.BooleanVar(
+            value=db.get_setting('balloon_notify', '1') == '1')
+        self.var_minimize_close = tk.BooleanVar(
+            value=db.get_setting('minimize_on_close', '0') == '1')
         self.var_language = tk.StringVar(
             value=db.get_setting('language', 'Português'))
         self.var_sound = tk.BooleanVar(
@@ -1156,7 +1165,26 @@ class PreferencesWindow(tk.Toplevel):
                        variable=self.var_show_main, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
-        # Bandeja do Sistema: todas as opcoes sao fixas (sempre ativas)
+        # Bandeja
+        lf2 = tk.LabelFrame(parent, text='Bandeja do Sistema', font=FONT,
+                             bg=BG_WINDOW, padx=10, pady=5)
+        lf2.pack(fill='x', padx=10, pady=(0, 8))
+
+        tk.Checkbutton(lf2, text='Mostrar ícone na bandeja do sistema',
+                       variable=self.var_tray_icon, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Minimizar janela principal para a bandeja do sistema',
+                       variable=self.var_minimize_tray, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Um clique no ícone da bandeja para abrir',
+                       variable=self.var_single_click_tray, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Mostrar balões de notificações na bandeja',
+                       variable=self.var_balloon, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
+        tk.Checkbutton(lf2, text='Minimizar janela principal usando o ícone da bandeja',
+                       variable=self.var_minimize_close, font=FONT,
+                       bg=BG_WINDOW).pack(anchor='w')
 
         # Idioma
         lf3 = tk.LabelFrame(parent, text='Idioma', font=FONT,
@@ -1544,7 +1572,16 @@ class PreferencesWindow(tk.Toplevel):
         db.set_setting('autostart', '1' if self.var_autostart.get() else '0')
         db.set_setting('show_main_on_start',
                        '1' if self.var_show_main.get() else '0')
-        # Tray: settings fixas (sempre ativas), nao salva no banco
+        db.set_setting('tray_icon',
+                       '1' if self.var_tray_icon.get() else '0')
+        db.set_setting('minimize_to_tray',
+                       '1' if self.var_minimize_tray.get() else '0')
+        db.set_setting('single_click_tray',
+                       '1' if self.var_single_click_tray.get() else '0')
+        db.set_setting('balloon_notify',
+                       '1' if self.var_balloon.get() else '0')
+        db.set_setting('minimize_on_close',
+                       '1' if self.var_minimize_close.get() else '0')
         db.set_setting('language', self.var_language.get())
         db.set_setting('sound', '1' if self.var_sound.get() else '0')
         db.set_setting('sound_message',
@@ -1648,7 +1685,8 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_reminder.set(True)
             self.var_notif_reminder.set(True)
             self.var_flash_reminder.set(True)
-            # Tray: sempre ativo, sem reset
+            self.var_tray_icon.set(True)
+            self.var_balloon.set(True)
             self.var_save_history.set(True)
             self.var_download_dir.set(
                 os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
