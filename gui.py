@@ -5862,6 +5862,8 @@ class LanMessengerApp:
         self.peer_info = {}                 # peer_id -> {display_name, ip, status, note, ...}
         self._dept_nodes = {}               # department_name -> tree item id (nos de departamento)
         self._file_dialogs = {}             # file_id -> FileTransferDialog (diálogos de transferência)
+        self._reminders_window = None       # Referência à janela de Lembretes (se aberta)
+        self._reminders_list_frame = None   # Frame de lista para auto-refresh pelo timer
         self._transfer_history = []         # Histórico de transferências para a janela de transferências
         self._transfers_window = None       # Referência à janela de Transferências (se aberta)
         self._tray_icon = None              # Ícone do system tray (pystray)
@@ -9116,12 +9118,26 @@ class LanMessengerApp:
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
                 SoundPlayer.play_reminder()
-                # Pisca a janela principal na taskbar (gate proprio de lembrete)
+                # Abre a janela de Lembretes surfaceando do tray (igual a chat)
+                # e pisca-a na taskbar (gate proprio de lembrete)
                 try:
                     self._pending_flash_target = '__reminders__'
-                    self._flash_window(gate_key='flash_reminder')
+                    def _create_reminders():
+                        existing = getattr(self, '_reminders_window', None)
+                        if existing is not None:
+                            try:
+                                if existing.winfo_exists():
+                                    return existing
+                            except Exception:
+                                pass
+                        self._show_reminders()
+                        return getattr(self, '_reminders_window', None)
+                    self._surface_chat_from_tray(_create_reminders)
+                    win = getattr(self, '_reminders_window', None)
+                    if win is not None:
+                        self._flash_window(win, gate_key='flash_reminder')
                 except Exception:
-                    pass
+                    log.exception('Erro ao surfacear janela de lembretes')
             # Atualiza janela de lembretes se estiver aberta
             if pending and hasattr(self, '_reminders_list_frame'):
                 try:
@@ -9166,6 +9182,7 @@ class LanMessengerApp:
         scrollbar = ttk.Scrollbar(win, orient='vertical', command=canvas.yview)
         list_frame = tk.Frame(canvas, bg='#ffffff')
         self._reminders_list_frame = list_frame  # ref para auto-refresh pelo timer
+        self._reminders_window = win  # ref para surfacing no disparo
         list_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
         canvas.create_window((0, 0), window=list_frame, anchor='nw', tags='frame')
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -9180,6 +9197,7 @@ class LanMessengerApp:
             if e.widget == win:
                 canvas.unbind_all('<MouseWheel>')
                 self._reminders_list_frame = None
+                self._reminders_window = None
         win.bind('<Destroy>', _on_win_destroy)
         self._refresh_reminders_list(list_frame)
 
@@ -9778,7 +9796,10 @@ class LanMessengerApp:
             start_base = start_picker['get_date']()
             start = start_base.replace(hour=h, minute=m, second=0, microsecond=0)
             now_local = datetime.now()
-            if start <= now_local:
+            # Grace period de 60s: se o usuario clicou Criar poucos segundos
+            # apos a hora marcada, ainda dispara hoje; so empurra pra amanha
+            # se ja passou mais de 1 minuto
+            if start <= now_local - timedelta(seconds=60):
                 start += timedelta(days=1)
             if pat == 'weekly':
                 weekdays = rule['weekdays']
