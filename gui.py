@@ -2808,6 +2808,9 @@ class ChatWindow(tk.Toplevel):
                                      rmargin=40,
                                      spacing1=0, spacing3=4)
 
+        try: self.chat_text.tag_raise('sel')
+        except tk.TclError: pass
+
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text, is_mine}]
         self._img_click_handled = False
@@ -4653,6 +4656,9 @@ class GroupChatWindow(tk.Toplevel):
                                      foreground='#2451a0',
                                      font=('Segoe UI', 10, 'bold'))
 
+        try: self.chat_text.tag_raise('sel')
+        except tk.TclError: pass
+
         # Menu de contexto no chat (Responder / Copiar)
         self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
         self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
@@ -6255,6 +6261,8 @@ class LanMessengerApp:
             header_sub = t.get('chat_header_sub', t['fg_gray'])
             cw.lbl_peer.configure(bg=header_bg, fg=header_fg)
             cw.lbl_typing.configure(bg=header_bg, fg=header_sub)
+            try: cw.chat_text.tag_raise('sel')
+            except tk.TclError: pass
         except Exception:
             log.exception('Erro ao aplicar tema no chat')
 
@@ -6277,6 +6285,8 @@ class LanMessengerApp:
             input_bg = t.get('bg_input', t['bg_white'])
             gw.entry.configure(bg=input_bg, fg=t['fg_black'],
                                insertbackground=t['fg_black'])
+            try: gw.chat_text.tag_raise('sel')
+            except tk.TclError: pass
         except Exception:
             pass
 
