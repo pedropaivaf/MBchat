@@ -990,6 +990,9 @@ class SoundPlayer:
     @staticmethod
     def play_connect():
         try:
+            if SoundPlayer.db is not None:
+                if SoundPlayer.db.get_setting('sound_master', '1') != '1':
+                    return
             if platform.system() == 'Windows':
                 import winsound
                 winsound.MessageBeep(winsound.MB_OK)
@@ -1158,8 +1161,6 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('download_dir',
                                  os.path.join(os.path.expanduser('~'),
                                               'MB_Chat_Files')))
-        self.var_auto_accept = tk.BooleanVar(
-            value=db.get_setting('auto_accept_files', '1') == '1')
         self.var_udp_port = tk.StringVar(
             value=db.get_setting('udp_port', '50000'))
         self.var_tcp_port = tk.StringVar(
@@ -1452,21 +1453,22 @@ class PreferencesWindow(tk.Toplevel):
         lf = tk.LabelFrame(parent, text='Notificações', font=FONT,
                             bg=BG_WINDOW, padx=10, pady=5)
         lf.pack(fill='x', padx=10, pady=(0, 8))
-        tk.Checkbutton(lf, text='Mensagem privada',
-                       variable=self.var_notif_msg_private, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf, text='Mensagem de grupo',
-                       variable=self.var_notif_msg_group, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf, text='Transmissão',
-                       variable=self.var_notif_msg_broadcast, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf, text='Arquivo',
-                       variable=self.var_notif_file, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf, text='Lembrete',
-                       variable=self.var_notif_reminder, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
+        notif_items = [
+            ('Mensagem privada', self.var_notif_msg_private),
+            ('Mensagem de grupo', self.var_notif_msg_group),
+            ('Transmissão', self.var_notif_msg_broadcast),
+            ('Arquivo', self.var_notif_file),
+            ('Lembrete', self.var_notif_reminder),
+        ]
+        for i, (label, var) in enumerate(notif_items):
+            r = i // 2
+            c = i % 2
+            padx = (0, 20) if c == 0 else (0, 0)
+            tk.Checkbutton(lf, text=label, variable=var, font=FONT,
+                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
+                                              padx=padx)
+        lf.grid_columnconfigure(0, weight=1)
+        lf.grid_columnconfigure(1, weight=1)
 
         # --- Sons ---
         lf2 = tk.LabelFrame(parent, text='Sons', font=FONT,
@@ -1474,25 +1476,25 @@ class PreferencesWindow(tk.Toplevel):
         lf2.pack(fill='x', padx=10, pady=(0, 8))
         tk.Checkbutton(lf2, text='Ativar sons (mestre)',
                        variable=self.var_sound_master, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Mensagem privada',
-                       variable=self.var_sound_msg_private, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
-        tk.Checkbutton(lf2, text='Mensagem de grupo',
-                       variable=self.var_sound_msg_group, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
-        tk.Checkbutton(lf2, text='Transmissão',
-                       variable=self.var_sound_msg_broadcast, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
-        tk.Checkbutton(lf2, text='Recebendo arquivo',
-                       variable=self.var_sound_file_start, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
-        tk.Checkbutton(lf2, text='Transferência concluída',
-                       variable=self.var_sound_file_done, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
-        tk.Checkbutton(lf2, text='Lembrete',
-                       variable=self.var_sound_reminder, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', padx=(20, 0))
+                       bg=BG_WINDOW).grid(row=0, column=0, columnspan=2,
+                                          sticky='w', pady=(0, 2))
+        sound_items = [
+            ('Mensagem privada', self.var_sound_msg_private),
+            ('Mensagem de grupo', self.var_sound_msg_group),
+            ('Transmissão', self.var_sound_msg_broadcast),
+            ('Recebendo arquivo', self.var_sound_file_start),
+            ('Transferência concluída', self.var_sound_file_done),
+            ('Lembrete', self.var_sound_reminder),
+        ]
+        for i, (label, var) in enumerate(sound_items):
+            r = 1 + (i // 2)
+            c = i % 2
+            padx = (20, 10) if c == 0 else (0, 0)
+            tk.Checkbutton(lf2, text=label, variable=var, font=FONT,
+                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
+                                              padx=padx)
+        lf2.grid_columnconfigure(0, weight=1)
+        lf2.grid_columnconfigure(1, weight=1)
 
         # --- Piscar barra de tarefas ---
         lf3 = tk.LabelFrame(parent, text='Piscar na barra de tarefas', font=FONT,
@@ -1500,10 +1502,12 @@ class PreferencesWindow(tk.Toplevel):
         lf3.pack(fill='x', padx=10, pady=(0, 8))
         tk.Checkbutton(lf3, text='Mensagens',
                        variable=self.var_flash_taskbar_msg, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
+                       bg=BG_WINDOW).grid(row=0, column=0, sticky='w', padx=(0, 20))
         tk.Checkbutton(lf3, text='Lembretes',
                        variable=self.var_flash_reminder, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
+                       bg=BG_WINDOW).grid(row=0, column=1, sticky='w')
+        lf3.grid_columnconfigure(0, weight=1)
+        lf3.grid_columnconfigure(1, weight=1)
 
     # ----- REDE -----
     def _build_rede(self, parent):
@@ -1575,10 +1579,6 @@ class PreferencesWindow(tk.Toplevel):
                       filedialog.askdirectory(parent=self) or
                       self.var_download_dir.get())
                   ).pack(side='right', padx=4)
-
-        tk.Checkbutton(lf, text='Aceitar arquivos automaticamente',
-                       variable=self.var_auto_accept, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w', pady=4)
 
     # ----- APARÊNCIA -----
     def _build_aparencia(self, parent):
@@ -1695,8 +1695,6 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_save_history.get() else '0')
         db.set_setting('history_path', self.var_history_path.get())
         db.set_setting('download_dir', self.var_download_dir.get())
-        db.set_setting('auto_accept_files',
-                       '1' if self.var_auto_accept.get() else '0')
         db.set_setting('udp_port', self.var_udp_port.get())
         db.set_setting('tcp_port', self.var_tcp_port.get())
         db.set_setting('multicast', self.var_multicast.get())
@@ -1790,7 +1788,6 @@ class PreferencesWindow(tk.Toplevel):
             self.var_download_dir.set(
                 os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
             self.var_avatar_index.set(0)
-            self.var_auto_accept.set(True)
             self.var_custom_avatar.set('')
 
 
@@ -8629,7 +8626,8 @@ class LanMessengerApp:
             for uid, var in peer_vars.items():
                 if var.get():
                     threading.Thread(target=self.messenger.send_message,
-                                     args=(uid, content), daemon=True).start()
+                                     args=(uid, content, '', True),
+                                     daemon=True).start()
                     sent += 1
             win.destroy()
             if sent:
@@ -8938,7 +8936,6 @@ class LanMessengerApp:
                     self._show_group_toast(group_id, display_name, content)
                     self._pending_flash_target = f'group:{group_id}'
                     self._flash_window(gw)
-                    self._flash_window()
             except Exception:
                 pass
         else:
@@ -8954,7 +8951,6 @@ class LanMessengerApp:
                                        msg_id=msg_id)
                 return gw
             self._surface_chat_from_tray(_create)
-            self._flash_window()
 
     # Processa notificacao de saida de membro do grupo (MT_GROUP_LEAVE).
     #
@@ -9074,10 +9070,7 @@ class LanMessengerApp:
             db = self.messenger.db
             pending = db.get_pending_reminders()
             want_notif = db.get_setting('notif_reminder', '1') == '1'
-            want_sound = db.get_setting('sound_reminder', '1') == '1'
             want_flash = db.get_setting('flash_reminder', '1') == '1'
-            # Mestre de som global
-            sound_master = db.get_setting('sound', '1') == '1'
             for rem in pending:
                 if rem.get('is_recurring') and rem.get('is_active'):
                     db.reschedule_recurring_reminder(rem['id'])
@@ -9113,9 +9106,7 @@ class LanMessengerApp:
                 # Fallback final: messagebox (sempre, se nenhuma notif funcionou)
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
-                # Som de alerta
-                if want_sound and sound_master:
-                    SoundPlayer.play_notification()
+                SoundPlayer.play_reminder()
                 # Pisca a janela principal na taskbar
                 if want_flash:
                     try:
@@ -9770,23 +9761,25 @@ class LanMessengerApp:
     # Se a janela NAO esta aberta: marca contato como nao lido (bold + contagem),
     # mostra toast de notificacao, pisca taskbar e toca o bell do sistema.
     def _on_message(self, from_user, content, msg_id, timestamp,
-                    reply_to='', **kw):
-        SoundPlayer.play_msg_private()
+                    reply_to='', is_broadcast=False, **kw):
+        if is_broadcast:
+            SoundPlayer.play_msg_broadcast()
+        else:
+            SoundPlayer.play_msg_private()
         if from_user in self.chat_windows:
             cw = self.chat_windows[from_user]
             cw.receive_message(content, timestamp, reply_to=reply_to,
                                msg_id=msg_id)
             try:
                 if not cw.focus_displayof():
-                    self._show_toast(from_user, content)
+                    self._show_toast(from_user, content, is_broadcast=is_broadcast)
                     self._pending_flash_target = from_user
                     self._flash_window(cw)
-                    self._flash_window()
             except Exception:
                 pass
         else:
             self._mark_unread(from_user)
-            self._show_toast(from_user, content)
+            self._show_toast(from_user, content, is_broadcast=is_broadcast)
             self._pending_flash_target = from_user
             # Cria janela minimizada na taskbar com a mensagem dentro (estilo LAN Messenger)
             def _create():
@@ -9796,7 +9789,6 @@ class LanMessengerApp:
                                        reply_to=reply_to, msg_id=msg_id)
                 return cw
             self._surface_chat_from_tray(_create)
-            self._flash_window()  # pisca root tambem
 
     # Callback: imagem recebida via TCP (MT_IMAGE).
     def _on_image(self, from_user, image_path, msg_id, timestamp,
@@ -9812,7 +9804,6 @@ class LanMessengerApp:
                         self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                         self._pending_flash_target = f'group:{group_id}'
                         self._flash_window(gw)
-                        self._flash_window()
                 except Exception:
                     pass
             else:
@@ -9825,7 +9816,6 @@ class LanMessengerApp:
                         gw.receive_image(display_name or from_user, image_path, timestamp)
                     return gw
                 self._surface_chat_from_tray(_create)
-                self._flash_window()
         else:
             SoundPlayer.play_msg_private()
             # Imagem individual
@@ -9837,7 +9827,6 @@ class LanMessengerApp:
                         self._show_toast(from_user, '[Imagem]')
                         self._pending_flash_target = from_user
                         self._flash_window(cw)
-                        self._flash_window()
                 except Exception:
                     pass
             else:
@@ -9850,7 +9839,6 @@ class LanMessengerApp:
                         cw.receive_image(image_path, timestamp)
                     return cw
                 self._surface_chat_from_tray(_create)
-                self._flash_window()
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
     def _on_poll(self, group_id, poll_data):
@@ -10070,9 +10058,16 @@ class LanMessengerApp:
             new_style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
             if new_style != style:
                 ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
-                # Re-show pra Windows registrar o novo estilo na taskbar
-                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNA)
+                # Se a janela ja esta mapeada, precisa do ciclo HIDE+SHOW pra
+                # Windows reprocessar a taskbar. Se foi criada withdrawn, o
+                # proximo ShowWindow (SW_SHOWMINNOACTIVE) ja pega o estilo novo
+                # sem flash visivel.
+                try:
+                    if win.winfo_ismapped():
+                        ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNA)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -10196,8 +10191,9 @@ class LanMessengerApp:
             self.root.after(100, lambda: self._open_chat(target))
 
     # Mostra notificacao toast nativa do Windows (clicavel via winotify).
-    def _show_toast(self, from_user, content):
-        if self.messenger.db.get_setting('notif_msg_private', '1') != '1':
+    def _show_toast(self, from_user, content, is_broadcast=False):
+        key = 'notif_msg_broadcast' if is_broadcast else 'notif_msg_private'
+        if self.messenger.db.get_setting(key, '1') != '1':
             return
         self._last_notif_peer = from_user  # guarda quem enviou (para abrir ao clicar)
         name = self.peer_info.get(from_user, {}).get('display_name', 'Mensagem')  # nome do remetente

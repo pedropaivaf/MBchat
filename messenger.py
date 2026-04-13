@@ -240,7 +240,8 @@ class Messenger:
 
             if self.on_message:
                 self.on_message(from_user, content, msg_id, timestamp,
-                               reply_to=reply_to)
+                               reply_to=reply_to,
+                               is_broadcast=msg.get('is_broadcast', False))
 
         # --- Indicador de digitacao ---
         elif msg_type == MT_TYPING:
@@ -421,7 +422,7 @@ class Messenger:
     # to_user_id: user_id do destinatario
     # content: Texto da mensagem
     # Retorna True se enviou com sucesso, False se falhou
-    def send_message(self, to_user_id, content, reply_to_id=''):
+    def send_message(self, to_user_id, content, reply_to_id='', is_broadcast=False):
         contact = self.db.get_contact(to_user_id)
         if not contact:
             return False, None
@@ -444,6 +445,8 @@ class Messenger:
         }
         if reply_to_id:
             payload['reply_to'] = reply_to_id
+        if is_broadcast:
+            payload['is_broadcast'] = True
         ok = TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
         return ok, msg_id
 
