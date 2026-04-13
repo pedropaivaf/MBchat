@@ -10417,10 +10417,9 @@ class LanMessengerApp:
             except Exception:
                 pass
         if peer_id in self.chat_windows:
-            ts = time.strftime('%H:%M')
             name = 'Você' if is_sent else entry.get('peer_name', '')
             cw = self.chat_windows[peer_id]
-            cw._append_message(name, text, ts, is_mine=is_sent)
+            cw._append_message(name, text, is_sent, msg_id=msg_id)
             # Para o sender tambem: pisca a janela de chat na taskbar (igual a mensagem recebida)
             if status == 'completed':
                 try:
