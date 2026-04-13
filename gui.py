@@ -2183,10 +2183,8 @@ class FileTransferDialog(tk.Toplevel):
             pass
 
     def _cancel(self):
-        if self._on_cancel:
+        if not self._finished and self._on_cancel:
             self._on_cancel(self.file_id)
-        if self._on_decline and self.direction == 'receive':
-            self._on_decline(self.file_id)
         self._finished = True
         self._safe_destroy()
 
@@ -10255,6 +10253,18 @@ class LanMessengerApp:
     # - Com tray disponivel: oculta janela (withdraw) e ativa icone na bandeja.
     # - Sem tray: encerra o aplicativo completamente via _quit().
     def _on_close(self):
+        # Destroi qualquer FileTransferDialog ainda vivo — evita que dialogs
+        # transient (filhos do root) reapareçam quando o root for restaurado
+        # do tray. Usuario interpreta o dialog sumindo com o root como "fechei".
+        try:
+            for dlg in list(self._file_dialogs.values()):
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+            self._file_dialogs.clear()
+        except Exception:
+            pass
         try:
             minimize = self.messenger.db.get_setting('minimize_on_close', '0') == '1'
         except Exception:
