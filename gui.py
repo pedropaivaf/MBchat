@@ -765,6 +765,25 @@ def _apply_rounded_corners(win):
         pass  # Windows 10 ou anterior — API não disponível, ignorar silenciosamente
 
 
+# Libera WM_DROPFILES atraves do filtro UIPI para permitir drop do Explorer
+# mesmo quando os integrity levels entre processos diferem (Win7+).
+def _allow_uipi_drop(widget):
+    if platform.system() != 'Windows':
+        return
+    try:
+        import ctypes
+        hwnd = widget.winfo_id()
+        user32 = ctypes.windll.user32
+        MSGFLT_ALLOW = 1
+        for msg in (0x0233, 0x004A, 0x0049):
+            try:
+                user32.ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 
 # Formata automaticamente um campo de entrada como dd/mm/aaaa durante a digitação.
 # Intercepta cada tecla liberada, extrai apenas os dígitos e reinsere o texto
@@ -2800,6 +2819,9 @@ class ChatWindow(tk.Toplevel):
                 windnd.hook_dropfiles(self, func=self._on_drop_files)
                 windnd.hook_dropfiles(self.entry, func=self._on_drop_files)
                 windnd.hook_dropfiles(self.chat_text, func=self._on_drop_files)
+                _allow_uipi_drop(self)
+                _allow_uipi_drop(self.entry)
+                _allow_uipi_drop(self.chat_text)
             except Exception:
                 pass
 
@@ -4499,6 +4521,8 @@ class GroupChatWindow(tk.Toplevel):
             try:
                 windnd.hook_dropfiles(self, func=self._on_drop_files)
                 windnd.hook_dropfiles(self.entry, func=self._on_drop_files)
+                _allow_uipi_drop(self)
+                _allow_uipi_drop(self.entry)
             except Exception:
                 pass
 
@@ -4529,6 +4553,7 @@ class GroupChatWindow(tk.Toplevel):
         if HAS_WINDND:
             try:
                 windnd.hook_dropfiles(self.chat_text, func=self._on_drop_files)
+                _allow_uipi_drop(self.chat_text)
             except Exception:
                 pass
 

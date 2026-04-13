@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 4, 40, 0),
-    prodvers=(1, 4, 40, 0),
+    filevers=(1, 4, 41, 0),
+    prodvers=(1, 4, 41, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -18,12 +18,12 @@ VSVersionInfo(
           [
             StringStruct(u'CompanyName', u'MB Contabilidade'),
             StringStruct(u'FileDescription', u'MB Chat - Mensageiro de Rede Local'),
-            StringStruct(u'FileVersion', u'1.4.40.0'),
+            StringStruct(u'FileVersion', u'1.4.41.0'),
             StringStruct(u'InternalName', u'MBChat'),
             StringStruct(u'LegalCopyright', u'\u00a9 2025-2026 MB Contabilidade'),
             StringStruct(u'OriginalFilename', u'MBChat.exe'),
             StringStruct(u'ProductName', u'MB Chat'),
-            StringStruct(u'ProductVersion', u'1.4.40.0'),
+            StringStruct(u'ProductVersion', u'1.4.41.0'),
           ]
         )
       ]
