@@ -5910,6 +5910,7 @@ class LanMessengerApp:
         self._pending_group_msgs = {}       # group_id -> [(nome, conteúdo, timestamp)] - msgs de grupo sem janela
         self.peer_items = {}                # peer_id -> item_id do TreeView
         self.peer_info = {}                 # peer_id -> {display_name, ip, status, note, ...}
+        self._contact_render_cache = {}     # peer_id -> (cache_key, PIL image) para evitar re-render
         self._dept_nodes = {}               # department_name -> tree item id (nos de departamento)
         self._file_dialogs = {}             # file_id -> FileTransferDialog (diálogos de transferência)
         self._reminders_window = None       # Referência à janela de Lembretes (se aberta)
@@ -6110,6 +6111,7 @@ class LanMessengerApp:
         t = THEMES.get(theme_name, THEMES['MB Contabilidade'])
         self._theme = t
         self._current_theme = theme_name
+        self._contact_render_cache.clear()  # cores podem mudar, invalida cache de render
 
         # --- Main window ---
         self.root.configure(bg=t['bg_window'])
@@ -7631,9 +7633,27 @@ class LanMessengerApp:
         else:
             parent = self.group_general
 
+        # Cache key: pula re-render PIL quando nada mudou desde o ultimo announce
+        avatar_data = info.get('avatar_data', '')
+        cache_key = (name, note, tag, dept, hash(avatar_data) if avatar_data else 0)
+        cached = self._contact_render_cache.get(uid)
+
+        # Early-exit: uid ja existe, parent nao mudou, cache bateu, nao esta em unread
+        if cached is not None and cached[0] == cache_key and uid in self.peer_items:
+            iid = self.peer_items[uid]
+            cur_parent = self.tree.parent(iid)
+            expected_parent = parent if parent is not None else ''
+            tags_now = self.tree.item(iid, 'tags')
+            if cur_parent == expected_parent and 'unread' not in tags_now:
+                return  # nada mudou, skip total
+
         # Tenta renderizar linha composta com emojis coloridos (PIL)
         avatar = self._create_contact_avatar(uid, name, tag)
-        row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
+        if cached is not None and cached[0] == cache_key:
+            row_img = cached[1]
+        else:
+            row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
+            self._contact_render_cache[uid] = (cache_key, row_img)
 
         if row_img:
             display = ''  # texto vazio, tudo na imagem
@@ -7691,6 +7711,7 @@ class LanMessengerApp:
             iid = self.peer_items[uid]
             self.tree.item(iid, tags=('offline',))
             self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+        self._contact_render_cache.pop(uid, None)
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
@@ -7730,6 +7751,7 @@ class LanMessengerApp:
     # Atualiza o avatar do item para refletir o status atual e adiciona
     # o numero de mensagens nao lidas entre parenteses no nome.
     def _mark_unread(self, uid):
+        self._contact_render_cache.pop(uid, None)
         if uid in self.peer_items:
             item = self.peer_items[uid]
             tags = list(self.tree.item(item, 'tags'))
@@ -7751,6 +7773,7 @@ class LanMessengerApp:
                 self.tree.item(item, text=f'  {name} ({unread})', image=avatar)
 
     def _clear_unread(self, uid):
+        self._contact_render_cache.pop(uid, None)
         if uid in self.peer_items:
             item = self.peer_items[uid]
             tags = [t for t in self.tree.item(item, 'tags') if t != 'unread']

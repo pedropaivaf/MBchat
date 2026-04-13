@@ -77,9 +77,9 @@ MULTICAST_GROUP = '239.255.100.200'  # Grupo multicast para discovery
 BROADCAST_ADDR = '255.255.255.255'   # Endereco de broadcast para fallback
 BUFFER_SIZE = 65536    # 64KB - tamanho maximo de pacote UDP
 FILE_CHUNK = 262144    # 256KB - tamanho de chunk para transferencia de arquivos
-DISCOVERY_INTERVAL = 5  # Segundos entre announcements periodicos
-PING_INTERVAL = 10      # Segundos entre verificacoes de peers perdidos
-PING_TIMEOUT = 30       # Segundos sem resposta para considerar peer perdido
+DISCOVERY_INTERVAL = 15  # Segundos entre announcements (mantem presenca responsiva sem jank)
+PING_INTERVAL = 15       # Segundos entre verificacoes de peers perdidos
+PING_TIMEOUT = 45        # Segundos sem resposta para considerar peer perdido (3x DISCOVERY)
 
 # === Tipos de mensagem ===
 # Usados como campo 'type' nos JSONs de comunicacao
@@ -452,7 +452,7 @@ class UDPDiscovery:
     # Loop periodico de announcements (a cada DISCOVERY_INTERVAL segundos)
     def _announce_loop(self):
         while self.running:
-            time.sleep(DISCOVERY_INTERVAL)  # Espera 5 segundos
+            time.sleep(DISCOVERY_INTERVAL)  # Espera DISCOVERY_INTERVAL segundos
             if self.running:
                 self._send_announce()  # Envia announce
 
