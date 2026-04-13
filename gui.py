@@ -7779,12 +7779,8 @@ class LanMessengerApp:
             except Exception:
                 pass  # winotify falhou: tenta fallback
 
-        if self._tray_icon is not None:  # tray ativo? usa balloon tip
-            try:
-                self._tray_icon.notify(preview, title=title)  # balloon tip simples
-                return
-            except Exception:
-                pass
+        if self._balloon_notify(preview, title):
+            return
 
     # Abre/reexibe janela de grupo com foco no input.
     def _open_group(self, group_id, surface_only=False):
@@ -9107,12 +9103,9 @@ class LanMessengerApp:
                     except Exception:
                         log.exception('Erro winotify lembrete')
                 # Fallback: balloon tip via pystray
-                if want_notif and not notified and self._tray_icon is not None:
-                    try:
-                        self._tray_icon.notify(text, title=title)
+                if want_notif and not notified:
+                    if self._balloon_notify(text, title):
                         notified = True
-                    except Exception:
-                        pass
                 # Fallback final: messagebox (sempre, se nenhuma notif funcionou)
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
@@ -10219,19 +10212,28 @@ class LanMessengerApp:
                 pass  # winotify falhou: tenta fallback abaixo
 
         # Fallback: balloon tip via pystray (mais simples, nao clicavel)
-        if self._tray_icon is not None:  # tray icon ja esta ativo?
+        if self._balloon_notify(preview, name):
+            return
+        if HAS_TRAY and HAS_PIL and self._tray_icon is None:
             try:
-                self._tray_icon.notify(preview, title=name)  # balloon tip
-                return
+                self._start_tray()
+                self._balloon_notify(preview, name)
             except Exception:
                 pass
-        if HAS_TRAY and HAS_PIL:  # tray disponivel mas ainda nao iniciado?
-            try:
-                self._start_tray()  # inicia o icone no tray
-                if self._tray_icon is not None:
-                    self._tray_icon.notify(preview, title=name)  # balloon tip
-            except Exception:
-                pass
+
+    def _balloon_notify(self, text, title):
+        try:
+            if self.messenger.db.get_setting('balloon_notify', '1') != '1':
+                return False
+        except Exception:
+            pass
+        if self._tray_icon is None:
+            return False
+        try:
+            self._tray_icon.notify(text, title=title)
+            return True
+        except Exception:
+            return False
 
     def _show_toast_generic(self, title, body):
         preview = body[:120] + '...' if len(body) > 120 else body
@@ -10245,11 +10247,7 @@ class LanMessengerApp:
                 return
             except Exception:
                 pass
-        if self._tray_icon is not None:
-            try:
-                self._tray_icon.notify(preview, title=title)
-            except Exception:
-                pass
+        self._balloon_notify(preview, title)
 
     # Minimiza para o system tray ao fechar a janela (se pystray+PIL disponivel).
     #
@@ -10257,6 +10255,16 @@ class LanMessengerApp:
     # - Com tray disponivel: oculta janela (withdraw) e ativa icone na bandeja.
     # - Sem tray: encerra o aplicativo completamente via _quit().
     def _on_close(self):
+        try:
+            minimize = self.messenger.db.get_setting('minimize_on_close', '0') == '1'
+        except Exception:
+            minimize = False
+        if minimize:
+            try:
+                self._show_in_taskbar_minimized(self.root)
+            except Exception:
+                self.root.iconify()
+            return
         if HAS_TRAY and HAS_PIL:   # bibliotecas de tray disponiveis?
             self.root.withdraw()   # esconde a janela (nao destroi)
             self._start_tray()     # inicia o icone na bandeja do sistema
