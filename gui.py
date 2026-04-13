@@ -767,17 +767,32 @@ def _apply_rounded_corners(win):
 
 # Libera WM_DROPFILES atraves do filtro UIPI para permitir drop do Explorer
 # mesmo quando os integrity levels entre processos diferem (Win7+).
+# Aplica tanto no HWND filho (winfo_id) quanto no top-level pai — Explorer
+# envia WM_DROPFILES para o top-level e windnd pode subclassar o filho.
+# Tambem garante DragAcceptFiles(TRUE) em ambos via shell32.
 def _allow_uipi_drop(widget):
     if platform.system() != 'Windows':
         return
     try:
         import ctypes
-        hwnd = widget.winfo_id()
         user32 = ctypes.windll.user32
+        shell32 = ctypes.windll.shell32
         MSGFLT_ALLOW = 1
-        for msg in (0x0233, 0x004A, 0x0049):
+        child = widget.winfo_id()
+        parent = user32.GetParent(child) or child
+        ancestor = user32.GetAncestor(child, 2) or parent  # GA_ROOT
+        seen = set()
+        for hwnd in (child, parent, ancestor):
+            if not hwnd or hwnd in seen:
+                continue
+            seen.add(hwnd)
+            for msg in (0x0233, 0x004A, 0x0049):
+                try:
+                    user32.ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None)
+                except Exception:
+                    pass
             try:
-                user32.ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None)
+                shell32.DragAcceptFiles(hwnd, True)
             except Exception:
                 pass
     except Exception:
