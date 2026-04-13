@@ -2794,10 +2794,12 @@ class ChatWindow(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self._on_close)  # trata fechamento da janela
         self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))  # para o flash da taskbar ao focar
 
-        # Drag & Drop de arquivos (windnd)
+        # Drag & Drop de arquivos (windnd) — hook na janela E na caixa de entrada
         if HAS_WINDND:
             try:
                 windnd.hook_dropfiles(self, func=self._on_drop_files)
+                windnd.hook_dropfiles(self.entry, func=self._on_drop_files)
+                windnd.hook_dropfiles(self.chat_text, func=self._on_drop_files)
             except Exception:
                 pass
 
@@ -4492,10 +4494,11 @@ class GroupChatWindow(tk.Toplevel):
         self._img_click_handled = False
         self._mention_popup = None  # Popup de autocomplete @mencao
 
-        # Drag & Drop de arquivos (windnd)
+        # Drag & Drop de arquivos (windnd) — toplevel + entry; chat_text hook apos sua criacao
         if HAS_WINDND:
             try:
                 windnd.hook_dropfiles(self, func=self._on_drop_files)
+                windnd.hook_dropfiles(self.entry, func=self._on_drop_files)
             except Exception:
                 pass
 
@@ -4521,6 +4524,13 @@ class GroupChatWindow(tk.Toplevel):
         sb.pack(side='right', fill='y')
         self.chat_text.configure(yscrollcommand=sb.set)
         self.chat_text.pack(fill='both', expand=True)
+
+        # Hook DnD tambem no chat_text (agora que ja foi criado)
+        if HAS_WINDND:
+            try:
+                windnd.hook_dropfiles(self.chat_text, func=self._on_drop_files)
+            except Exception:
+                pass
 
         self.chat_text.tag_configure('my_name',
                                      font=('Segoe UI', 8, 'bold'),
@@ -10265,9 +10275,9 @@ class LanMessengerApp:
                           filename, filesize):
         # Callback: solicitacao de transferencia de arquivo recebida (MT_FILE_REQ).
         #
-        # Abre o dialogo de transferencia para o usuario aceitar ou recusar.
-        # Registra na lista de historico de transferencias. Pisca taskbar e toca som.
-        dlg = FileTransferDialog(  # dialogo de recebimento (envio direto, sem aceitar/recusar)
+        # Abre o dialogo de transferencia + surfacea a janela de chat do peer
+        # do tray com flash (mesmo padrao de mensagem chegando).
+        dlg = FileTransferDialog(
             self.root, file_id, filename, display_name,
             direction='receive', filesize=filesize,
             on_cancel=lambda fid: self.messenger.cancel_file(fid)
@@ -10275,7 +10285,6 @@ class LanMessengerApp:
         self._file_dialogs[file_id] = dlg
         self._add_transfer_entry(file_id, filename, display_name,
                                   'receive', filesize, 'pending', peer_id=from_user)
-        self._flash_window(gate_key='flash_taskbar_file')
         SoundPlayer.play_file_start()
         try:
             if self.messenger.db.get_setting('notif_file', '1') == '1':
@@ -10283,6 +10292,24 @@ class LanMessengerApp:
                                          f'\U0001f4c4 {filename}')
         except Exception:
             pass
+        # Surfacea a janela de chat do peer do tray e pisca (igual mensagem)
+        self._pending_flash_target = from_user
+        if from_user in self.chat_windows:
+            cw = self.chat_windows[from_user]
+            try:
+                self._flash_window(cw, gate_key='flash_taskbar_file')
+            except Exception:
+                pass
+        else:
+            def _create():
+                return self._open_chat(from_user, surface_only=True)
+            try:
+                self._surface_chat_from_tray(_create)
+                cw = self.chat_windows.get(from_user)
+                if cw:
+                    self._flash_window(cw, gate_key='flash_taskbar_file')
+            except Exception:
+                pass
 
     # Callback: progresso de transferencia atualizado.
     #
@@ -10340,11 +10367,26 @@ class LanMessengerApp:
             msg_id, self.messenger.user_id if is_sent else peer_id,
             peer_id if is_sent else self.messenger.user_id,
             text, msg_type='file', is_sent=is_sent)
+        # Garante que a janela de chat esteja aberta (pode ter sido fechada durante o envio)
+        # e surfacea do tray + pisca como acontece com mensagens normais
+        if status == 'completed' and peer_id not in self.chat_windows:
+            try:
+                def _create():
+                    return self._open_chat(peer_id, surface_only=True)
+                self._surface_chat_from_tray(_create)
+            except Exception:
+                pass
         if peer_id in self.chat_windows:
             ts = time.strftime('%H:%M')
             name = 'Você' if is_sent else entry.get('peer_name', '')
-            self.chat_windows[peer_id]._append_message(
-                name, text, ts, is_mine=is_sent)
+            cw = self.chat_windows[peer_id]
+            cw._append_message(name, text, ts, is_mine=is_sent)
+            # Para o sender tambem: pisca a janela de chat na taskbar (igual a mensagem recebida)
+            if status == 'completed':
+                try:
+                    self._flash_window(cw, gate_key='flash_taskbar_file')
+                except Exception:
+                    pass
 
     @staticmethod
     def _format_filesize(size):
