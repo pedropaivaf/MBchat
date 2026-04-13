@@ -68,6 +68,16 @@ gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
 
 **IMPORTANTE**: Portas escolhidas para NAO conflitar com LAN Messenger (50000-50002).
 
+## Descoberta de peers (por que MBChat e mais confiavel que LAN Messenger)
+
+LAN Messenger tem bug conhecido onde peers somem da lista em redes com VPN, Hyper-V, switches gerenciados ou filtros de multicast. MBChat resolveu com 5 decisoes que trabalham juntas — **NAO afrouxar** nenhuma delas sem entender o impacto:
+
+1. **Tri-broadcast** em `_send_announce()` (network.py:348): cada announce sai por 3 caminhos — multicast `239.255.100.200`, broadcast global `255.255.255.255` e subnet-directed broadcast (`_get_subnet_broadcast()`). Se multicast for filtrado, os broadcasts garantem entrega. Para sumir, as 3 rotas teriam que falhar.
+2. **Anuncio imediato em eventos** (network.py:295-316): `update_status`/`update_name`/`update_note`/`update_avatar` chamam `_send_announce()` na hora, sem esperar o ciclo.
+3. **Anuncio no startup** (network.py:283): primeiro announce sai antes do loop periodico, peer recem-aberto aparece instantaneamente.
+4. **Deteccao correta de NIC** em `get_local_ip()`: rota real pro 8.8.8.8 + enumeracao + filtro de interfaces virtuais. Evita bug classico de sair pela NIC da VPN.
+5. **Ciclo curto** (`DISCOVERY_INTERVAL = 15`, `PING_TIMEOUT = 45`): refresh a cada 15s, timeout 3x maior que o intervalo. **NAO aumentar para 60s estilo LAN Messenger** — o usuario reclama e quer manter presenca responsiva. Para reduzir carga, usar cache no receptor (ex: `_contact_render_cache` em gui.py:_add_contact), nao aumentar intervalo.
+
 ## Troubleshooting de rede
 
 Se um PC nao descobre peers:

@@ -714,6 +714,7 @@
             <a href="#doc-arquivos" class="active">Estrutura de Arquivos</a>
             <a href="#doc-banco">Banco de Dados</a>
             <a href="#doc-portas">Portas de Rede</a>
+            <a href="#doc-discovery">Descoberta de Peers</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
     </div>
@@ -836,6 +837,46 @@
                     </tr>
                 </tbody>
             </table>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-discovery">
+            <h3>Descoberta de Peers — por que o MB Chat é mais confiável que o LAN Messenger</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O LAN Messenger tem um problema conhecido: peers somem da lista ou demoram a aparecer quando a rede tem VPN, Hyper-V, switches gerenciados ou filtros de multicast. O MB Chat resolveu isso com cinco decisões de design que trabalham juntas:
+            </p>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Mecanismo</th>
+                        <th>O que faz</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Tri-broadcast</strong></td>
+                        <td>Cada announce sai por <strong>3 caminhos simultâneos</strong>: multicast (<code>239.255.100.200</code>), broadcast global (<code>255.255.255.255</code>) e subnet-directed broadcast (ex: <code>192.168.0.255</code>). Se o multicast for filtrado pelo switch/VPN, os broadcasts garantem entrega. Para um peer sumir, as 3 rotas teriam que falhar.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Anúncio imediato em eventos</strong></td>
+                        <td>Trocar status, nome, nota ou avatar dispara <code>_send_announce()</code> na hora — não espera o próximo ciclo. Mudanças chegam em menos de 1 segundo.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Anúncio no startup</strong></td>
+                        <td>O primeiro announce é enviado <strong>antes</strong> do loop periódico começar, então um peer recém-aberto aparece na rede instantaneamente.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Detecção de NIC correta</strong></td>
+                        <td>Função <code>get_local_ip()</code> usa rota real pra <code>8.8.8.8</code> + enumeração + filtro de interfaces virtuais (Hyper-V, Docker, VPN). Evita o bug clássico do LAN Messenger de sair pela NIC errada em PCs com VPN ativa.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Ciclo curto de refresh</strong></td>
+                        <td>Announce a cada <code>15s</code> (vs ~60s do LAN Messenger). Timeout de presença em <code>45s</code> — 3× o intervalo, garantindo que 1 pacote perdido não derrube o peer.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="docs-note">
+                <strong>Resultado:</strong> A combinação de tri-broadcast + anúncio imediato em eventos + detecção correta de NIC é o que faz o MB Chat ser mais confiável. O intervalo curto só amplifica esses ganhos. Um peer só some da lista se estiver realmente offline — nunca por falha de rede transitória.
+            </div>
         </div>
 
         <div class="docs-section fade-in" id="doc-desinstalar">
