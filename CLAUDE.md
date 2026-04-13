@@ -57,7 +57,7 @@ Ao rodar `python build.py` sem argumentos, aparece menu:
 
 gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
 - **version.py** - Constante APP_VERSION (fonte unica de verdade para versao)
-- **updater.py** - Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback). Baixa zip, extrai, aplica via PowerShell
+- **updater.py** - Auto-update via GitHub Releases. Baixa zip, extrai, aplica via PowerShell
 
 ## Portas de rede
 
@@ -146,15 +146,13 @@ O `create_icon.py` gera o .ico a partir do PNG em `assets/`.
 - **Date picker reusavel** — `_create_date_picker(parent, initial_date)` (gui.py:9385) retorna dict `{'frame', 'get_date', 'set_date'}` com Entry readonly + botao dropdown que abre Toplevel `overrideredirect(True)` com calendario 7x6, nav de mes, destaque de hoje/selecionado, botao "Hoje". **Flip-up automatico**: mede `winfo_reqheight()` apos `update_idletasks()` e posiciona o popup ACIMA do entry se nao couber pra baixo. Usado em "Começa em" e "Em (termino)" do dialog recorrente.
 - **Drag & Drop de arquivos** — arrastar arquivo para janela de chat ou grupo inicia transferencia automaticamente. Usa biblioteca `windnd` para detectar drop no Windows.
 - **Departamentos/Equipes** — Preferencias > Conta permite selecionar departamento. Opcoes: (Nenhum), Fiscal, Contabil, TI, Comercial, DP, SC, Marketing, Recepcao. Departamento exibido como badge `[Setor]` em azul ao lado do nome no TreeView. Campo `department` no UDP announce (enviado E recebido) e na tabela `contacts`.
-- Auto-update via GitHub Releases (primario) + pasta compartilhada (fallback)
+- Auto-update via GitHub Releases (fonte unica — fallback por pasta UNC compartilhada foi removido em v1.4.46)
   - App consulta GitHub Releases API no startup (2s delay), compara tag_name com APP_VERSION
   - Se versao nova: barra amarela no topo "Atualizacao vX.Y.Z disponivel [Atualizar] [X]"
   - Clique baixa `MBChat_update.zip` do GitHub, extrai para staging dir, script PowerShell substitui pasta inteira e reabre
   - IMPORTANTE: script PowerShell usa `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess) para reabrir — processo filho HERDA env vars do pai (TEMP longo). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env do pai e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI)
   - IMPORTANTE: `_apply_and_restart()` NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado
   - Menu Ferramentas > "Verificar atualizacoes" para check manual
-  - Configuravel em Preferencias > Rede > "Pasta de atualizacao (UNC)"
-  - Default: `\\192.168.0.9\Works2026\Publico\mbchat-update` (definido em updater.DEFAULT_SHARE_PATH)
   - Build usa `--noupx` para evitar compressao que corrompe DLLs do VC runtime
 
 ## Convencoes importantes

@@ -147,7 +147,6 @@ LANGS = {
         'update_restarting': 'Atualização aplicada!\nReabra o MB Chat.',
         'update_failed': 'Falha ao baixar atualização.',
         'update_none': 'Você já está na versão mais recente.',
-        'update_share_label': 'Pasta de atualização (UNC):',
     },
     'English': {
         'menu_messenger': 'Messenger',
@@ -196,7 +195,6 @@ LANGS = {
         'update_restarting': 'Update applied!\\nPlease reopen MB Chat.',
         'update_failed': 'Failed to download update.',
         'update_none': 'You are on the latest version.',
-        'update_share_label': 'Update folder (UNC):',
     },
 }
 
@@ -1221,8 +1219,6 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('custom_avatar', ''))
         self.var_display_name = tk.StringVar(
             value=self.messenger.display_name)
-        self.var_update_share = tk.StringVar(
-            value=db.get_setting('update_share_path', updater.DEFAULT_SHARE_PATH))
 
     # Seleciona uma categoria da sidebar e reconstrói o painel direito.
     # Atualiza o destaque visual dos botões da sidebar, destrói o frame anterior
@@ -1585,19 +1581,6 @@ class PreferencesWindow(tk.Toplevel):
                  font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW).pack(
                      anchor='w', pady=4)
 
-        # Secao de atualizacao automatica
-        lf2 = tk.LabelFrame(parent, text='Atualização Automática', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=5)
-        lf2.pack(fill='x', padx=10, pady=(0, 8))
-
-        tk.Label(lf2, text=_t('update_share_label'), font=FONT,
-                 bg=BG_WINDOW).pack(anchor='w', pady=(0, 2))
-        tk.Entry(lf2, textvariable=self.var_update_share, font=FONT_SMALL,
-                 width=40).pack(fill='x', pady=(0, 2))
-        tk.Label(lf2, text='Ex: \\\\servidor\\apps\\MBChat',
-                 font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW).pack(
-                     anchor='w', pady=(0, 4))
-
     # ----- TRANSFERÊNCIA -----
     def _build_transferencia(self, parent):
         tk.Label(parent, text='Transferência de Arquivos', font=FONT_SECTION,
@@ -1664,6 +1647,8 @@ class PreferencesWindow(tk.Toplevel):
         atalhos = [
             ('Enviar mensagem:', 'Enter'),
             ('Nova linha:', 'Shift + Enter'),
+            ('Desfazer:', 'Ctrl + Z'),
+            ('Refazer:', 'Ctrl + Y'),
             ('Enviar arquivo:', 'Ctrl + F'),
             ('Histórico:', 'Ctrl + H'),
             ('Fechar janela:', 'Alt + F4'),
@@ -1742,7 +1727,6 @@ class PreferencesWindow(tk.Toplevel):
         db.set_setting('udp_port', self.var_udp_port.get())
         db.set_setting('tcp_port', self.var_tcp_port.get())
         db.set_setting('multicast', self.var_multicast.get())
-        db.set_setting('update_share_path', self.var_update_share.get().strip())
         db.set_setting('font_size', self.var_font_size.get())
         db.set_setting('theme', self.var_theme.get())
         db.set_setting('enter_to_send',
@@ -2670,8 +2654,15 @@ class ChatWindow(tk.Toplevel):
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=3,
                              wrap='word', padx=8, pady=6,
-                             insertbackground=t.get('fg_black', '#1a202c'))
+                             insertbackground=t.get('fg_black', '#1a202c'),
+                             undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
+        def _redo(e):
+            try: self.entry.edit_redo()
+            except tk.TclError: pass
+            return 'break'
+        self.entry.bind('<Control-y>', _redo)
+        self.entry.bind('<Control-Y>', _redo)
         # Enter envia (verificado em _on_enter); Shift+Enter insere nova linha
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
@@ -4510,8 +4501,15 @@ class GroupChatWindow(tk.Toplevel):
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=3,
                              wrap='word', padx=8, pady=6,
-                             insertbackground=t.get('fg_black', '#1a202c'))
+                             insertbackground=t.get('fg_black', '#1a202c'),
+                             undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
+        def _redo(e):
+            try: self.entry.edit_redo()
+            except tk.TclError: pass
+            return 'break'
+        self.entry.bind('<Control-y>', _redo)
+        self.entry.bind('<Control-Y>', _redo)
         self.entry.bind('<Return>', self._on_enter)
         self.entry.bind('<Shift-Return>', lambda e: None)
         self.entry.bind('<Control-v>', self._on_paste)
@@ -9135,13 +9133,10 @@ class LanMessengerApp:
 
     # Verifica update no startup (chamado no _deferred_init em background).
     def _check_update_startup(self):
-        share = self.messenger.db.get_setting('update_share_path', updater.DEFAULT_SHARE_PATH)
-        if not share:
-            return
         def _on_result(has_update, ver):
             if has_update:
                 self.root.after(0, lambda: self._show_update_bar(ver))
-        updater.check_update_async(share, _on_result)
+        updater.check_update_async(_on_result)
 
     # ========================================
     # LEMBRETES
@@ -10122,19 +10117,13 @@ class LanMessengerApp:
 
     # Verificacao manual via menu Ferramentas.
     def _manual_check_update(self):
-        share = self.messenger.db.get_setting('update_share_path', updater.DEFAULT_SHARE_PATH)
-        if not share:
-            messagebox.showinfo(APP_NAME,
-                _t('update_share_label') + '\n\n'
-                'Configure o caminho em Preferências.')
-            return
         def _on_result(has_update, ver):
             if has_update:
                 self.root.after(0, lambda: self._show_update_bar(ver))
             else:
                 self.root.after(0, lambda: messagebox.showinfo(
                     APP_NAME, _t('update_none')))
-        updater.check_update_async(share, _on_result)
+        updater.check_update_async(_on_result)
 
     # Mostra barra amarela no topo da lista de contatos com botao Atualizar.
     def _show_update_bar(self, version):
@@ -10156,9 +10145,6 @@ class LanMessengerApp:
 
     # Executa o download e apply do update.
     def _do_update(self, version):
-        share = self.messenger.db.get_setting('update_share_path', updater.DEFAULT_SHARE_PATH)
-        if not share:
-            return
         if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
             for w in self._update_bar.winfo_children():
                 w.destroy()
@@ -10166,7 +10152,7 @@ class LanMessengerApp:
                      font=('Segoe UI', 9), bg='#fff3cd', fg='#856404'
                      ).pack(side='left', padx=10, pady=4)
         def _download():
-            path = updater.download_update(share)
+            path = updater.download_update()
             if path:
                 self.root.after(0, lambda: self._apply_and_restart(path))
             else:

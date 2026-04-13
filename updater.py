@@ -1,4 +1,4 @@
-# Auto-update via GitHub Releases (primario) ou pasta compartilhada (fallback).
+# Auto-update via GitHub Releases.
 # Verifica latest release no GitHub, compara com versao local,
 # baixa o zip com o app novo e aplica via PowerShell script com restart.
 import os
@@ -32,8 +32,6 @@ def _get_long_path(path):
 
 GITHUB_REPO = 'pedropaivaf/MBchat'
 GITHUB_API_URL = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
-
-DEFAULT_SHARE_PATH = r'\\192.168.0.9\Works2026\Publico\mbchat-update'
 
 _UPDATE_DIR = _get_long_path(os.path.join(
     os.environ.get('APPDATA', os.path.expanduser('~')),
@@ -73,37 +71,18 @@ def check_update_github():
         return False, '', ''
 
 
-def check_update(share_path):
+def check_update():
     has_update, ver, url = check_update_github()
-    if has_update:
-        return True, ver
-    if ver:
-        return False, ver
-    # Fallback: share de rede
-    try:
-        ver_file = os.path.join(share_path, 'version.txt')
-        with open(ver_file, 'r', encoding='utf-8') as f:
-            remote_ver = f.read().strip()
-        if _parse_version(remote_ver) > _parse_version(APP_VERSION):
-            return True, remote_ver
-        return False, remote_ver
-    except Exception as e:
-        log.warning(f'Share update check falhou: {e}')
-        return False, ''
+    return has_update, ver
 
 
-def download_update(share_path, progress_cb=None):
+def download_update(progress_cb=None):
     # Baixa o zip do update. Retorna pasta extraida ou None.
     os.makedirs(_UPDATE_DIR, exist_ok=True)
     zip_dst = os.path.join(_UPDATE_DIR, 'MBChat_update.zip')
     extract_dir = os.path.join(_UPDATE_DIR, 'update_staging')
 
-    # Tenta GitHub
     path = _download_from_github(zip_dst, progress_cb)
-    if not path:
-        # Fallback: share
-        path = _download_from_share(share_path, zip_dst, progress_cb)
-
     if not path:
         return None
 
@@ -145,32 +124,6 @@ def _download_from_github(dst, progress_cb=None):
         return dst
     except Exception as e:
         log.warning(f'Download GitHub falhou: {e}')
-        return None
-
-
-def _download_from_share(share_path, dst, progress_cb=None):
-    try:
-        # Tenta zip no share
-        src = os.path.join(share_path, 'MBChat_update.zip')
-        if not os.path.isfile(src):
-            log.error(f'Zip nao encontrado no share: {src}')
-            return None
-        total = os.path.getsize(src)
-        copied = 0
-        chunk = 256 * 1024
-        with open(src, 'rb') as fin, open(dst, 'wb') as fout:
-            while True:
-                buf = fin.read(chunk)
-                if not buf:
-                    break
-                fout.write(buf)
-                copied += len(buf)
-                if progress_cb:
-                    progress_cb(copied, total)
-        log.info(f'Update baixado do share: {dst} ({total} bytes)')
-        return dst
-    except Exception as e:
-        log.error(f'Download share falhou: {e}')
         return None
 
 
@@ -261,9 +214,9 @@ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyConti
     log.info('Update script lancado, encerrando app...')
 
 
-def check_update_async(share_path, callback):
+def check_update_async(callback):
     def _run():
-        has_update, ver = check_update(share_path)
+        has_update, ver = check_update()
         callback(has_update, ver)
     t = threading.Thread(target=_run, daemon=True)
     t.start()
