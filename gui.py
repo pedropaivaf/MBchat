@@ -2692,7 +2692,10 @@ class ChatWindow(tk.Toplevel):
                                  bg=chat_bg, fg=t.get('fg_msg', '#1a202c'),
                                  relief='flat', bd=0,
                                  wrap='word', state='disabled', padx=10,
-                                 pady=8, cursor='arrow')
+                                 pady=8, cursor='arrow',
+                                 selectbackground='#1e66d0',
+                                 selectforeground='#ffffff',
+                                 inactiveselectbackground='#1e66d0')
 
         # Scrollbar minimalista (4px, sem setas) — oculta por padrão, aparece no hover
         self._chat_scrollbar = tk.Scrollbar(chat_frame,
@@ -4556,7 +4559,10 @@ class GroupChatWindow(tk.Toplevel):
                                   fg=t.get('fg_msg', '#1a202c'),
                                   relief='flat', bd=0,
                                   wrap='word', state='disabled',
-                                  padx=10, pady=8)
+                                  padx=10, pady=8,
+                                  selectbackground='#1e66d0',
+                                  selectforeground='#ffffff',
+                                  inactiveselectbackground='#1e66d0')
         sb = tk.Scrollbar(chat_frame, command=self.chat_text.yview, width=6)
         sb.pack(side='right', fill='y')
         self.chat_text.configure(yscrollcommand=sb.set)
