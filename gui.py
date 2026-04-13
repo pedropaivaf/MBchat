@@ -1151,6 +1151,8 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('sound_reminder', '1') == '1')
         self.var_flash_taskbar_msg = tk.BooleanVar(
             value=db.get_setting('flash_taskbar_msg', '1') == '1')
+        self.var_flash_taskbar_file = tk.BooleanVar(
+            value=db.get_setting('flash_taskbar_file', '1') == '1')
         self.var_flash_reminder = tk.BooleanVar(
             value=db.get_setting('flash_reminder', '1') == '1')
         self.var_save_history = tk.BooleanVar(value=True)
@@ -1500,12 +1502,18 @@ class PreferencesWindow(tk.Toplevel):
         lf3 = tk.LabelFrame(parent, text='Piscar na barra de tarefas', font=FONT,
                              bg=BG_WINDOW, padx=10, pady=5)
         lf3.pack(fill='x', padx=10, pady=(0, 8))
-        tk.Checkbutton(lf3, text='Mensagens',
-                       variable=self.var_flash_taskbar_msg, font=FONT,
-                       bg=BG_WINDOW).grid(row=0, column=0, sticky='w', padx=(0, 20))
-        tk.Checkbutton(lf3, text='Lembretes',
-                       variable=self.var_flash_reminder, font=FONT,
-                       bg=BG_WINDOW).grid(row=0, column=1, sticky='w')
+        flash_items = [
+            ('Mensagens', self.var_flash_taskbar_msg),
+            ('Arquivos', self.var_flash_taskbar_file),
+            ('Lembretes', self.var_flash_reminder),
+        ]
+        for i, (label, var) in enumerate(flash_items):
+            r = i // 2
+            c = i % 2
+            padx = (0, 20) if c == 0 else (0, 0)
+            tk.Checkbutton(lf3, text=label, variable=var, font=FONT,
+                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
+                                              padx=padx)
         lf3.grid_columnconfigure(0, weight=1)
         lf3.grid_columnconfigure(1, weight=1)
 
@@ -1685,6 +1693,8 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_sound_file_done.get() else '0')
         db.set_setting('flash_taskbar_msg',
                        '1' if self.var_flash_taskbar_msg.get() else '0')
+        db.set_setting('flash_taskbar_file',
+                       '1' if self.var_flash_taskbar_file.get() else '0')
         db.set_setting('sound_reminder',
                        '1' if self.var_sound_reminder.get() else '0')
         db.set_setting('notif_reminder',
@@ -1781,6 +1791,7 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_file_done.set(True)
             self.var_sound_reminder.set(True)
             self.var_flash_taskbar_msg.set(True)
+            self.var_flash_taskbar_file.set(True)
             self.var_flash_reminder.set(True)
             self.var_tray_icon.set(True)
             self.var_balloon.set(True)
@@ -9070,7 +9081,6 @@ class LanMessengerApp:
             db = self.messenger.db
             pending = db.get_pending_reminders()
             want_notif = db.get_setting('notif_reminder', '1') == '1'
-            want_flash = db.get_setting('flash_reminder', '1') == '1'
             for rem in pending:
                 if rem.get('is_recurring') and rem.get('is_active'):
                     db.reschedule_recurring_reminder(rem['id'])
@@ -9107,13 +9117,12 @@ class LanMessengerApp:
                 if not notified:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
                 SoundPlayer.play_reminder()
-                # Pisca a janela principal na taskbar
-                if want_flash:
-                    try:
-                        self._pending_flash_target = '__reminders__'
-                        self._flash_window()
-                    except Exception:
-                        pass
+                # Pisca a janela principal na taskbar (gate proprio de lembrete)
+                try:
+                    self._pending_flash_target = '__reminders__'
+                    self._flash_window(gate_key='flash_reminder')
+                except Exception:
+                    pass
             # Atualiza janela de lembretes se estiver aberta
             if pending and hasattr(self, '_reminders_list_frame'):
                 try:
@@ -9886,12 +9895,12 @@ class LanMessengerApp:
         self._file_dialogs[file_id] = dlg
         self._add_transfer_entry(file_id, filename, display_name,
                                   'receive', filesize, 'pending', peer_id=from_user)
-        self._flash_window()
+        self._flash_window(gate_key='flash_taskbar_file')
         SoundPlayer.play_file_start()
         try:
             if self.messenger.db.get_setting('notif_file', '1') == '1':
                 self._show_toast_generic(display_name or 'Arquivo',
-                                         f'\U0001f4ce {filename}')
+                                         f'\U0001f4c4 {filename}')
         except Exception:
             pass
 
@@ -9936,13 +9945,13 @@ class LanMessengerApp:
         fsize = self._format_filesize(entry.get('filesize', 0))
         if status == 'completed':
             if entry['direction'] == 'send':
-                text = f'\U0001f4ce {fname} ({fsize}) \u2014 Enviado'
+                text = f'\U0001f4c4 {fname} \u2705 ({fsize}) \u2014 Enviado'
             else:
-                text = f'\U0001f4ce {fname} ({fsize}) \u2014 Recebido'
+                text = f'\U0001f4c4 {fname} \u2705 ({fsize}) \u2014 Recebido'
         elif status == 'declined':
-            text = f'\U0001f4ce {fname} \u2014 Recusado'
+            text = f'\U0001f4c4 {fname} \u2014 Recusado'
         else:
-            text = f'\U0001f4ce {fname} \u2014 Cancelado'
+            text = f'\U0001f4c4 {fname} \u2014 Cancelado'
         is_sent = entry['direction'] == 'send'
         peer_id = entry['peer_id']
         import uuid as _uuid
@@ -10109,10 +10118,9 @@ class LanMessengerApp:
             pass
 
     # Pisca o ícone na barra de tarefas (Windows FlashWindowEx).
-    def _flash_window(self, widget=None):
+    def _flash_window(self, widget=None, gate_key='flash_taskbar_msg'):
         try:
-            flash_on = self.messenger.db.get_setting('flash_taskbar_msg', '1') == '1'
-            if not flash_on:
+            if self.messenger.db.get_setting(gate_key, '1') != '1':
                 return
         except Exception:
             pass
@@ -10284,6 +10292,11 @@ class LanMessengerApp:
         if not HAS_TRAY or not HAS_PIL:   # bibliotecas disponiveis?
             log.warning(f'Tray icon nao iniciado: pystray={HAS_TRAY}, PIL={HAS_PIL}')
             return
+        try:
+            if self.messenger.db.get_setting('tray_icon', '1') != '1':
+                return  # usuario desativou icone no tray
+        except Exception:
+            pass
 
         if self._icon_path:  # tem arquivo de icone?
             icon_image = Image.open(self._icon_path)             # carrega icone do arquivo
@@ -10579,9 +10592,14 @@ def main():
 
     app = LanMessengerApp()             # cria a aplicacao principal
     _start_instance_listener(app)       # inicia o listener de instancia unica
-    
-    # Sempre inicia minimizado na bandeja do sistema (sem mostrar janela principal)
-    app.root.withdraw()                 # oculta a janela principal
+
+    # Setting show_main_on_start: True = mostra janela, False = inicia no tray
+    try:
+        show_main = app.messenger.db.get_setting('show_main_on_start', '1') == '1'
+    except Exception:
+        show_main = False
+    if not show_main:
+        app.root.withdraw()
         
     app.run()            # inicia o mainloop do tkinter
 
