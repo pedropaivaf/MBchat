@@ -16,7 +16,63 @@ import sqlite3    # Banco de dados embutido no Python
 import os         # Manipulação de caminhos e diretórios
 import time       # Timestamps para registros
 import threading  # threading.local() para conexão por thread
+import calendar as _cal_mod
+from datetime import datetime as _dt, timedelta as _td
 from pathlib import Path  # Manipulação moderna de caminhos
+
+
+def _compute_next_occurrence(last_ts, rule, now_ts):
+    # rule: {"type":"daily|weekly|monthly|yearly","interval":N,
+    #        "weekdays":[0..6] (weekly, 0=Seg),
+    #        "end":{"kind":"never|count|date","count":N,"date":ts},
+    #        "occurrences_done":N}
+    kind = rule.get('type', 'daily')
+    interval = max(1, int(rule.get('interval', 1)))
+    end = rule.get('end', {'kind': 'never'})
+    end_kind = end.get('kind', 'never')
+    done = int(rule.get('occurrences_done', 0)) + 1  # a que acabou de disparar
+    if end_kind == 'count' and done >= int(end.get('count', 0)):
+        return None
+    last_dt = _dt.fromtimestamp(last_ts)
+    if kind == 'daily':
+        next_dt = last_dt + _td(days=interval)
+    elif kind == 'weekly':
+        weekdays = sorted(set(int(w) for w in rule.get('weekdays', [last_dt.weekday()])))
+        if not weekdays:
+            weekdays = [last_dt.weekday()]
+        # Proxima ocorrencia: busca o proximo weekday na lista, avancando dia a dia;
+        # se chegar a uma nova semana sem dias remanescentes, pula (interval-1) semanas.
+        cur = last_dt + _td(days=1)
+        week_start = last_dt - _td(days=last_dt.weekday())
+        found = None
+        for _ in range(7 * (interval + 1)):
+            if cur.weekday() in weekdays:
+                cur_week_start = cur - _td(days=cur.weekday())
+                weeks_diff = (cur_week_start.date() - week_start.date()).days // 7
+                if weeks_diff == 0 or weeks_diff >= interval:
+                    found = cur
+                    break
+            cur += _td(days=1)
+        next_dt = found or (last_dt + _td(days=7 * interval))
+    elif kind == 'monthly':
+        y, m = last_dt.year, last_dt.month + interval
+        while m > 12:
+            m -= 12
+            y += 1
+        day = min(last_dt.day, _cal_mod.monthrange(y, m)[1])
+        next_dt = last_dt.replace(year=y, month=m, day=day)
+    elif kind == 'yearly':
+        y = last_dt.year + interval
+        try:
+            next_dt = last_dt.replace(year=y)
+        except ValueError:
+            next_dt = last_dt.replace(year=y, day=28)
+    else:
+        return None
+    next_ts = next_dt.timestamp()
+    if end_kind == 'date' and next_ts > float(end.get('date', 0)):
+        return None
+    return next_ts
 
 
 # Retorna caminho do banco: Windows=%APPDATA%/.mbchat/mbchat.db, Linux/Mac=~/.mbchat/mbchat.db
@@ -203,6 +259,12 @@ class Database:
                 c.commit()
             except Exception:
                 pass  # coluna ja existe
+        # Migracao: regra de recorrencia baseada em padrao (JSON: daily/weekly/monthly/yearly)
+        try:
+            c.execute("ALTER TABLE reminders ADD COLUMN recurrence_rule TEXT DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
 
     # ========================================
     # LOCAL USER — Dados do usuário local
@@ -615,20 +677,54 @@ class Database:
         """, (text, now + interval_seconds, now, interval_seconds))
         self.conn.commit()
 
+    def add_pattern_reminder(self, text, start_ts, rule_json):
+        self.conn.execute("""
+            INSERT INTO reminders (text, remind_at, created_at, notified,
+                                   is_recurring, recurrence_interval_seconds,
+                                   is_active, recurrence_rule)
+            VALUES (?, ?, ?, 0, 1, 0, 1, ?)
+        """, (text, start_ts, time.time(), rule_json))
+        self.conn.commit()
+
     def reschedule_recurring_reminder(self, reminder_id):
         row = self.conn.execute(
-            "SELECT remind_at, recurrence_interval_seconds FROM reminders WHERE id=?",
+            "SELECT remind_at, recurrence_interval_seconds, recurrence_rule FROM reminders WHERE id=?",
             (reminder_id,)).fetchone()
-        if row:
-            interval = row['recurrence_interval_seconds']
-            next_at = row['remind_at'] + interval
-            now = time.time()
-            while next_at <= now:
-                next_at += interval
+        if not row:
+            return
+        rule_json = row['recurrence_rule'] if 'recurrence_rule' in row.keys() else ''
+        now = time.time()
+        if rule_json:
+            import json as _json
+            from datetime import datetime as _dt
+            try:
+                rule = _json.loads(rule_json)
+            except Exception:
+                rule = {}
+            next_at = _compute_next_occurrence(row['remind_at'], rule, now)
+            if next_at is None:
+                # Sem proximas ocorrencias: desativa
+                self.conn.execute(
+                    "UPDATE reminders SET is_active=0, notified=1 WHERE id=?",
+                    (reminder_id,))
+                self.conn.commit()
+                return
+            rule['occurrences_done'] = int(rule.get('occurrences_done', 0)) + 1
             self.conn.execute(
-                "UPDATE reminders SET remind_at=?, notified=0 WHERE id=?",
-                (next_at, reminder_id))
+                "UPDATE reminders SET remind_at=?, notified=0, recurrence_rule=? WHERE id=?",
+                (next_at, _json.dumps(rule), reminder_id))
             self.conn.commit()
+            return
+        interval = row['recurrence_interval_seconds']
+        if not interval:
+            return
+        next_at = row['remind_at'] + interval
+        while next_at <= now:
+            next_at += interval
+        self.conn.execute(
+            "UPDATE reminders SET remind_at=?, notified=0 WHERE id=?",
+            (next_at, reminder_id))
+        self.conn.commit()
 
     def toggle_reminder_active(self, reminder_id):
         row = self.conn.execute(

@@ -2151,7 +2151,8 @@ class FileTransferDialog(tk.Toplevel):
                                           cursor='hand2')
                     btn_folder.pack(side='left')
                     btn_folder.bind('<Button-1>',
-                                    lambda e: self._open_folder(filepath))
+                                    lambda e: (self._open_folder(filepath),
+                                               self._safe_destroy()))
                 close_lbl = tk.Label(self._btn_frame, text='Fechar',
                                      font=('Segoe UI', 8, 'underline'),
                                      fg='#718096', bg='#ffffff',
@@ -8998,6 +8999,13 @@ class LanMessengerApp:
             name = self.peer_info.get(peer_id, {}).get('display_name', 'Unknown')
             fname = os.path.basename(filepath)
             fsize = os.path.getsize(filepath)
+            # Garante que a janela de chat esteja aberta para que o usuario
+            # veja a mensagem do arquivo enviado (como se tivesse digitado).
+            if peer_id not in self.chat_windows:
+                try:
+                    self._open_chat(peer_id)
+                except Exception:
+                    pass
             dlg = FileTransferDialog(
                 self.root, fid, fname, name,
                 direction='send', filesize=fsize,
@@ -9276,10 +9284,24 @@ class LanMessengerApp:
             lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
         lbl_text.pack(anchor='w')
         if is_recurring:
-            interval = rem.get('recurrence_interval_seconds', 0)
-            interval_str = self._format_interval(interval)
             status_str = 'Ativo' if is_active else 'Pausado'
-            time_str = f'\U0001f504 A cada {interval_str} — {status_str}'
+            rule_json = rem.get('recurrence_rule', '') or ''
+            if rule_json:
+                import json as _json
+                try:
+                    _rule = _json.loads(rule_json)
+                except Exception:
+                    _rule = {}
+                _pat_label = {'daily': 'dia(s)', 'weekly': 'semana(s)',
+                              'monthly': 'mês(es)', 'yearly': 'ano(s)'}.get(
+                    _rule.get('type', 'daily'), 'dia(s)')
+                _n = int(_rule.get('interval', 1))
+                _next = datetime.fromtimestamp(rem['remind_at']).strftime('%d/%m %H:%M')
+                time_str = f'\U0001f504 A cada {_n} {_pat_label} — proximo {_next} — {status_str}'
+            else:
+                interval = rem.get('recurrence_interval_seconds', 0)
+                interval_str = self._format_interval(interval)
+                time_str = f'\U0001f504 A cada {interval_str} — {status_str}'
             fg_time = '#7c3aed' if is_active else '#9ca3af'
         elif is_normal:
             # Lembrete normal: mostra data de criacao
@@ -9358,57 +9380,359 @@ class LanMessengerApp:
         btn.pack()
         _add_hover(btn, '#2563eb', '#1d4ed8')
 
-    # Dialogo para criar lembrete recorrente (a cada X tempo)
+    # Helper reusavel: cria um campo de data com popup de calendario.
+    # Retorna um dict com 'frame', 'get_date', 'set_date'.
+    def _create_date_picker(self, parent, initial_date=None):
+        import calendar as cal_mod
+        if initial_date is None:
+            initial_date = datetime.now()
+        state = {'date': initial_date}
+        frame = tk.Frame(parent, bg='#ffffff')
+        entry_var = tk.StringVar(value=initial_date.strftime('%d/%m/%Y'))
+        entry = tk.Entry(frame, textvariable=entry_var, width=12,
+                          font=('Segoe UI', 10), relief='flat', bg='#f7fafc',
+                          justify='center', state='readonly', readonlybackground='#f7fafc',
+                          highlightthickness=1, highlightbackground='#cbd5e1')
+        entry.pack(side='left', ipady=3)
+
+        popup_ref = {'win': None}
+
+        def _open_popup():
+            if popup_ref['win'] is not None:
+                try:
+                    popup_ref['win'].destroy()
+                except Exception:
+                    pass
+                popup_ref['win'] = None
+                return
+            top = tk.Toplevel(parent)
+            popup_ref['win'] = top
+            top.overrideredirect(True)
+            top.configure(bg='#ffffff', highlightthickness=1,
+                          highlightbackground='#cbd5e1')
+
+            cur = state['date']
+            cal_state = [cur.year, cur.month]
+            sel = [cur.year, cur.month, cur.day]
+
+            MONTH_NAMES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
+                           'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro',
+                           'Novembro', 'Dezembro']
+
+            nav = tk.Frame(top, bg='#ffffff')
+            nav.pack(fill='x', padx=6, pady=(6, 2))
+            month_label = tk.Label(nav, font=('Segoe UI', 10, 'bold'),
+                                    bg='#ffffff', fg='#1a202c')
+            tk.Button(nav, text='\u25c0', font=('Segoe UI', 9), bg='#ffffff',
+                      fg='#64748b', relief='flat', bd=0, cursor='hand2',
+                      command=lambda: _nav(-1)).pack(side='left')
+            month_label.pack(side='left', expand=True)
+            tk.Button(nav, text='\u25b6', font=('Segoe UI', 9), bg='#ffffff',
+                      fg='#64748b', relief='flat', bd=0, cursor='hand2',
+                      command=lambda: _nav(1)).pack(side='right')
+
+            grid = tk.Frame(top, bg='#ffffff')
+            grid.pack(padx=6, pady=(0, 4))
+            for i, d in enumerate(['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']):
+                fg = '#ef4444' if i >= 5 else '#64748b'
+                tk.Label(grid, text=d, font=('Segoe UI', 8), width=4,
+                          bg='#ffffff', fg=fg).grid(row=0, column=i)
+            day_btns = []
+            for r in range(6):
+                row = []
+                for c in range(7):
+                    b = tk.Button(grid, text='', font=('Segoe UI', 9),
+                                   width=3, relief='flat', bd=0, bg='#ffffff',
+                                   fg='#1a202c', cursor='hand2',
+                                   command=lambda rr=r, cc=c: _pick(rr, cc))
+                    b.grid(row=r + 1, column=c, pady=1)
+                    row.append(b)
+                day_btns.append(row)
+
+            def _nav(delta):
+                cal_state[1] += delta
+                if cal_state[1] > 12:
+                    cal_state[1] = 1
+                    cal_state[0] += 1
+                elif cal_state[1] < 1:
+                    cal_state[1] = 12
+                    cal_state[0] -= 1
+                _refresh()
+
+            def _pick(r, c):
+                txt = day_btns[r][c].cget('text')
+                if not txt:
+                    return
+                sel[0] = cal_state[0]
+                sel[1] = cal_state[1]
+                sel[2] = int(txt)
+                new_date = datetime(sel[0], sel[1], sel[2])
+                state['date'] = new_date
+                entry_var.set(new_date.strftime('%d/%m/%Y'))
+                try:
+                    top.destroy()
+                except Exception:
+                    pass
+                popup_ref['win'] = None
+
+            def _refresh():
+                month_label.config(text=f'{MONTH_NAMES[cal_state[1]]} {cal_state[0]}')
+                first_weekday, days_in = cal_mod.monthrange(cal_state[0], cal_state[1])
+                today = datetime.now()
+                for r in range(6):
+                    for c in range(7):
+                        day_num = r * 7 + c - first_weekday + 1
+                        b = day_btns[r][c]
+                        if 1 <= day_num <= days_in:
+                            b.config(text=str(day_num), state='normal')
+                            is_sel = (day_num == sel[2] and cal_state[1] == sel[1]
+                                       and cal_state[0] == sel[0])
+                            is_today = (day_num == today.day
+                                         and cal_state[1] == today.month
+                                         and cal_state[0] == today.year)
+                            if is_sel:
+                                b.config(bg='#7c3aed', fg='#ffffff')
+                            elif is_today:
+                                b.config(bg='#e0e7ff', fg='#1e40af')
+                            else:
+                                fg = '#ef4444' if c >= 5 else '#1a202c'
+                                b.config(bg='#ffffff', fg=fg)
+                        else:
+                            b.config(text='', state='disabled', bg='#ffffff',
+                                      disabledforeground='#ffffff')
+
+            def _today():
+                t = datetime.now()
+                sel[0], sel[1], sel[2] = t.year, t.month, t.day
+                cal_state[0], cal_state[1] = t.year, t.month
+                state['date'] = t
+                entry_var.set(t.strftime('%d/%m/%Y'))
+                _refresh()
+
+            btn_today = tk.Button(top, text='Hoje', font=('Segoe UI', 9),
+                                   bg='#f1f5f9', fg='#374151', relief='flat',
+                                   bd=0, padx=10, pady=3, cursor='hand2',
+                                   command=_today)
+            btn_today.pack(pady=(0, 6))
+            _refresh()
+
+            # Posicionamento com flip-up se nao couber embaixo
+            top.update_idletasks()
+            pw = top.winfo_reqwidth()
+            ph = top.winfo_reqheight()
+            sh = top.winfo_screenheight()
+            sw = top.winfo_screenwidth()
+            ex = entry.winfo_rootx()
+            ey = entry.winfo_rooty()
+            eh = entry.winfo_height()
+            y_down = ey + eh + 2
+            if y_down + ph > sh - 10:
+                y = ey - ph - 2
+                if y < 10:
+                    y = max(10, sh - ph - 10)
+            else:
+                y = y_down
+            x = ex
+            if x + pw > sw - 10:
+                x = max(10, sw - pw - 10)
+            top.geometry(f'+{x}+{y}')
+
+            def _close_on_focus(e):
+                try:
+                    if top.focus_get() is None or str(top.focus_get()).startswith(str(top)) is False:
+                        top.destroy()
+                        popup_ref['win'] = None
+                except Exception:
+                    pass
+            top.bind('<FocusOut>', _close_on_focus)
+            top.focus_set()
+
+        drop_btn = tk.Button(frame, text='\u25bc', font=('Segoe UI', 9),
+                              bg='#f7fafc', fg='#374151', relief='flat', bd=0,
+                              padx=6, cursor='hand2', command=_open_popup,
+                              highlightthickness=1, highlightbackground='#cbd5e1')
+        drop_btn.pack(side='left', padx=(2, 0), ipady=2)
+
+        return {
+            'frame': frame,
+            'get_date': lambda: state['date'],
+            'set_date': lambda d: (state.__setitem__('date', d),
+                                     entry_var.set(d.strftime('%d/%m/%Y'))),
+        }
+
+    # Dialogo para criar lembrete recorrente (padrao diario/semanal/mensal/anual)
     def _new_recurring_reminder_dialog(self, parent_win, list_frame):
+        import json as _json
         dlg = tk.Toplevel(parent_win)
         dlg.title('Lembrete Recorrente')
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 360, 280)
+        _center_window(dlg, 560, 500)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
-        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr = tk.Frame(dlg, bg='#7c3aed')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\U0001f504 Lembrete Recorrente', font=('Segoe UI', 11, 'bold'),
-                 bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
+        tk.Label(hdr, text='\U0001f504 Lembrete Recorrente',
+                 font=('Segoe UI', 12, 'bold'),
+                 bg='#7c3aed', fg='#ffffff').pack(padx=14, pady=10, side='left')
+
+        # Botoes fixos no rodape (packed primeiro com side='bottom' para ficarem sempre visiveis)
+        btn_row = tk.Frame(dlg, bg='#ffffff')
+        btn_row.pack(side='bottom', fill='x', padx=16, pady=(0, 14))
 
         body = tk.Frame(dlg, bg='#ffffff')
-        body.pack(fill='both', expand=True, padx=14, pady=10)
+        body.pack(fill='both', expand=True, padx=16, pady=(12, 6))
 
-        tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w')
-        txt_entry = tk.Entry(body, font=('Segoe UI', 11), relief='flat',
+        now = datetime.now()
+
+        # Linha 1: Titulo + Horario (lado a lado, Horario proximo)
+        row1 = tk.Frame(body, bg='#ffffff')
+        row1.pack(fill='x', pady=(0, 10))
+
+        col_title = tk.Frame(row1, bg='#ffffff')
+        col_title.pack(side='left', fill='x', expand=True)
+        tk.Label(col_title, text='Título', font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(anchor='w')
+        txt_entry = tk.Entry(col_title, font=('Segoe UI', 11), relief='flat',
                              bg='#f7fafc', highlightthickness=1,
-                             highlightbackground='#cbd5e1')
-        txt_entry.pack(fill='x', pady=(4, 12), ipady=4)
+                             highlightbackground='#cbd5e1',
+                             highlightcolor='#7c3aed', width=28)
+        txt_entry.pack(anchor='w', pady=(3, 0), ipady=5, fill='x', expand=False)
         txt_entry.focus_set()
 
-        tk.Label(body, text='Repetir a cada:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(4, 2))
+        col_time = tk.Frame(row1, bg='#ffffff')
+        col_time.pack(side='left', padx=(16, 0), anchor='n')
+        tk.Label(col_time, text='Horário', font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(anchor='center')
+        time_row = tk.Frame(col_time, bg='#ffffff')
+        time_row.pack(anchor='center', pady=(3, 0))
+        h_var = tk.StringVar(value=f'{now.hour:02d}')
+        m_var = tk.StringVar(value=f'{now.minute:02d}')
+        hs = tk.Spinbox(time_row, from_=0, to=23, textvariable=h_var,
+                        width=3, font=('Segoe UI', 13, 'bold'), format='%02.0f',
+                        relief='flat', bg='#f7fafc', justify='center',
+                        highlightthickness=1, highlightbackground='#cbd5e1')
+        hs.pack(side='left', ipady=2)
+        tk.Label(time_row, text=':', font=('Segoe UI', 14, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(side='left', padx=5)
+        ms = tk.Spinbox(time_row, from_=0, to=59, textvariable=m_var,
+                        width=3, font=('Segoe UI', 13, 'bold'), format='%02.0f',
+                        relief='flat', bg='#f7fafc', justify='center',
+                        highlightthickness=1, highlightbackground='#cbd5e1',
+                        increment=1)
+        ms.pack(side='left', ipady=2)
 
-        interval_frame = tk.Frame(body, bg='#ffffff')
-        interval_frame.pack(anchor='w', pady=(0, 12))
+        # Linha 2: Padrao + A cada N (lado a lado)
+        tk.Label(body, text='Padrão', font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(anchor='w')
+        row2 = tk.Frame(body, bg='#ffffff')
+        row2.pack(fill='x', pady=(3, 8))
 
-        h_var = tk.StringVar(value='0')
-        m_var = tk.StringVar(value='10')
-        s_var = tk.StringVar(value='0')
+        pat_var = tk.StringVar(value='daily')
+        pat_col = tk.Frame(row2, bg='#ffffff')
+        pat_col.pack(side='left')
+        for label, val in [('Diário', 'daily'), ('Semanal', 'weekly'),
+                            ('Mensal', 'monthly'), ('Anual', 'yearly')]:
+            tk.Radiobutton(pat_col, text=label, variable=pat_var, value=val,
+                           font=('Segoe UI', 10), bg='#ffffff',
+                           activebackground='#ffffff',
+                           command=lambda: _refresh_pattern()).pack(side='left', padx=(0, 8))
 
-        for label, var, max_val in [('Horas', h_var, 99), ('Min', m_var, 59), ('Seg', s_var, 59)]:
-            f = tk.Frame(interval_frame, bg='#ffffff')
-            f.pack(side='left', padx=(0, 10))
-            sp = tk.Spinbox(f, from_=0, to=max_val, textvariable=var,
-                            font=('Segoe UI', 12), width=3, justify='center',
-                            relief='flat', bg='#f7fafc',
-                            highlightthickness=1, highlightbackground='#cbd5e1')
-            sp.pack()
-            tk.Label(f, text=label, font=('Segoe UI', 8),
-                     bg='#ffffff', fg='#718096').pack()
+        int_row = tk.Frame(row2, bg='#ffffff')
+        int_row.pack(side='left', padx=(14, 0))
+        tk.Label(int_row, text='A cada', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#374151').pack(side='left')
+        interval_var = tk.StringVar(value='1')
+        int_spin = tk.Spinbox(int_row, from_=1, to=99, textvariable=interval_var,
+                              width=3, font=('Segoe UI', 10), justify='center',
+                              relief='flat', bg='#f7fafc',
+                              highlightthickness=1, highlightbackground='#cbd5e1')
+        int_spin.pack(side='left', padx=6)
+        unit_lbl = tk.Label(int_row, text='dia(s)', font=('Segoe UI', 10),
+                            bg='#ffffff', fg='#374151')
+        unit_lbl.pack(side='left')
+
+        # Dias da semana (so aparece em "weekly")
+        wd_label = tk.Label(body, text='Dias da semana', font=('Segoe UI', 9, 'bold'),
+                            bg='#ffffff', fg='#374151')
+        wd_frame = tk.Frame(body, bg='#ffffff')
+        WEEK_LABELS = [('Seg', 0), ('Ter', 1), ('Qua', 2), ('Qui', 3),
+                        ('Sex', 4), ('Sáb', 5), ('Dom', 6)]
+        wd_vars = {}
+        for label, idx in WEEK_LABELS:
+            v = tk.BooleanVar(value=(idx == now.weekday()))
+            wd_vars[idx] = v
+            tk.Checkbutton(wd_frame, text=label, variable=v,
+                           font=('Segoe UI', 9), bg='#ffffff',
+                           activebackground='#ffffff').pack(side='left', padx=(0, 2))
+
+        # Separador
+        sep = tk.Frame(body, bg='#e2e8f0', height=1)
+        sep.pack(fill='x', pady=6)
+
+        # Linha 3: Comeca em + Termino (lado a lado, mesma linha)
+        row3 = tk.Frame(body, bg='#ffffff')
+        row3.pack(fill='x', pady=(0, 4))
+
+        col_start = tk.Frame(row3, bg='#ffffff')
+        col_start.pack(side='left', anchor='n')
+        tk.Label(col_start, text='Começa em', font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(anchor='w')
+        start_picker = self._create_date_picker(col_start, now)
+        start_picker['frame'].pack(anchor='w', pady=(3, 0))
+
+        col_end = tk.Frame(row3, bg='#ffffff')
+        col_end.pack(side='left', anchor='n', padx=(20, 0), fill='x', expand=True)
+        tk.Label(col_end, text='Término', font=('Segoe UI', 9, 'bold'),
+                 bg='#ffffff', fg='#374151').pack(anchor='w')
+        end_var = tk.StringVar(value='never')
+        end_frame = tk.Frame(col_end, bg='#ffffff')
+        end_frame.pack(anchor='w', pady=(3, 0), fill='x')
+
+        def _refresh_pattern():
+            p = pat_var.get()
+            unit_lbl.config(text={'daily': 'dia(s)', 'weekly': 'semana(s)',
+                                   'monthly': 'mês(es)', 'yearly': 'ano(s)'}[p])
+            if p == 'weekly':
+                wd_label.pack(anchor='w', pady=(2, 2), before=sep)
+                wd_frame.pack(anchor='w', pady=(0, 6), before=sep)
+            else:
+                wd_label.pack_forget()
+                wd_frame.pack_forget()
+
+        _refresh_pattern()
+
+        tk.Radiobutton(end_frame, text='Sem data de término',
+                       variable=end_var, value='never',
+                       font=('Segoe UI', 9), bg='#ffffff',
+                       activebackground='#ffffff').grid(row=0, column=0, sticky='w', columnspan=2, pady=0)
+
+        tk.Radiobutton(end_frame, text='Após',
+                       variable=end_var, value='count',
+                       font=('Segoe UI', 9), bg='#ffffff',
+                       activebackground='#ffffff').grid(row=1, column=0, sticky='w', pady=0)
+        count_row = tk.Frame(end_frame, bg='#ffffff')
+        count_row.grid(row=1, column=1, sticky='w', padx=(4, 0))
+        count_var = tk.StringVar(value='10')
+        tk.Spinbox(count_row, from_=1, to=999, textvariable=count_var,
+                   width=4, font=('Segoe UI', 9), justify='center',
+                   relief='flat', bg='#f7fafc',
+                   highlightthickness=1, highlightbackground='#cbd5e1').pack(side='left')
+        tk.Label(count_row, text='ocorrências', font=('Segoe UI', 9),
+                 bg='#ffffff', fg='#374151').pack(side='left', padx=(4, 0))
+
+        tk.Radiobutton(end_frame, text='Em',
+                       variable=end_var, value='date',
+                       font=('Segoe UI', 9), bg='#ffffff',
+                       activebackground='#ffffff').grid(row=2, column=0, sticky='w', pady=0)
+        end_picker = self._create_date_picker(end_frame, now + timedelta(days=60))
+        end_picker['frame'].grid(row=2, column=1, padx=(4, 0), sticky='w')
 
         lbl_err = tk.Label(body, text='', font=('Segoe UI', 8),
                            bg='#ffffff', fg='#ef4444')
-        lbl_err.pack(anchor='w')
+        lbl_err.pack(anchor='w', pady=(6, 0))
 
         def _create():
             text = txt_entry.get().strip()
@@ -9418,23 +9742,67 @@ class LanMessengerApp:
             try:
                 h = int(h_var.get())
                 m = int(m_var.get())
-                s = int(s_var.get())
+                interval = int(interval_var.get())
             except ValueError:
                 lbl_err.config(text='Valores inválidos')
                 return
-            total = h * 3600 + m * 60 + s
-            if total < 60:
-                lbl_err.config(text='Intervalo mínimo: 1 minuto')
+            if not (0 <= h <= 23 and 0 <= m <= 59) or interval < 1:
+                lbl_err.config(text='Valores inválidos')
                 return
-            self.messenger.db.add_recurring_reminder(text, total)
+            pat = pat_var.get()
+            rule = {'type': pat, 'interval': interval, 'occurrences_done': 0}
+            if pat == 'weekly':
+                selected = [i for i, v in wd_vars.items() if v.get()]
+                if not selected:
+                    lbl_err.config(text='Escolha pelo menos um dia da semana')
+                    return
+                rule['weekdays'] = selected
+            end_kind = end_var.get()
+            if end_kind == 'never':
+                rule['end'] = {'kind': 'never'}
+            elif end_kind == 'count':
+                try:
+                    n = int(count_var.get())
+                    if n < 1:
+                        raise ValueError
+                except ValueError:
+                    lbl_err.config(text='Número de ocorrências inválido')
+                    return
+                rule['end'] = {'kind': 'count', 'count': n}
+            else:
+                ed = end_picker['get_date']()
+                rule['end'] = {'kind': 'date',
+                                'date': ed.replace(hour=23, minute=59).timestamp()}
+
+            # Primeira ocorrencia: a partir da data escolhida em "Começa em"
+            start_base = start_picker['get_date']()
+            start = start_base.replace(hour=h, minute=m, second=0, microsecond=0)
+            now_local = datetime.now()
+            if start <= now_local:
+                start += timedelta(days=1)
+            if pat == 'weekly':
+                weekdays = rule['weekdays']
+                for _ in range(8):
+                    if start.weekday() in weekdays:
+                        break
+                    start += timedelta(days=1)
+            self.messenger.db.add_pattern_reminder(text, start.timestamp(),
+                                                    _json.dumps(rule))
             self._refresh_reminders_list(list_frame)
             dlg.destroy()
 
-        btn = tk.Button(body, text='Criar', font=('Segoe UI', 10, 'bold'),
-                        bg='#7c3aed', fg='#ffffff', relief='flat', bd=0,
-                        padx=20, pady=6, cursor='hand2', command=_create)
-        btn.pack(pady=(4, 0))
-        _add_hover(btn, '#7c3aed', '#6d28d9')
+        btn_cancel = tk.Button(btn_row, text='Cancelar', font=('Segoe UI', 10),
+                               bg='#e5e7eb', fg='#374151', relief='flat', bd=0,
+                               padx=16, pady=6, cursor='hand2',
+                               command=dlg.destroy)
+        btn_cancel.pack(side='right', padx=(6, 0))
+        _add_hover(btn_cancel, '#e5e7eb', '#d1d5db')
+        btn_ok = tk.Button(btn_row, text='Criar lembrete',
+                           font=('Segoe UI', 10, 'bold'),
+                           bg='#7c3aed', fg='#ffffff', relief='flat', bd=0,
+                           padx=18, pady=6, cursor='hand2', command=_create)
+        btn_ok.pack(side='right')
+        _add_hover(btn_ok, '#7c3aed', '#6d28d9')
 
     # Dialogo para criar novo lembrete com calendario e campos de tempo
     def _new_reminder_dialog(self, parent_win, list_frame):
@@ -9619,7 +9987,7 @@ class LanMessengerApp:
                                font=('Segoe UI', 11), format='%02.0f',
                                relief='flat', bg='#f7fafc',
                                highlightthickness=1, highlightbackground='#cbd5e1',
-                               justify='center', increment=5)
+                               justify='center', increment=1)
         min_spin.pack(side='left')
         min_spin.delete(0, 'end')
         min_spin.insert(0, f'{default_time.minute:02d}')
