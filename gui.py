@@ -10174,21 +10174,16 @@ class LanMessengerApp:
         except Exception:
             pass
 
-    # Callback do FocusIn da janela principal: para o flash e abre o alvo pendente.
+    # Callback do FocusIn da janela principal: para o flash na root.
+    # Nao abre chat/grupo automaticamente — cada conversa ja tem sua propria
+    # janela na taskbar (surface pattern), usuario escolhe qual restaurar via
+    # thumbnail. Apenas lembretes abrem aqui, pois nao tem janela dedicada.
     def _on_main_focus(self, event=None):
         self._stop_flash()
         target = self._pending_flash_target
-        if target is None:
-            return
         self._pending_flash_target = None
         if target == '__reminders__':
             self.root.after(100, self._show_reminders)
-        elif target.startswith('group:'):
-            gid = target[6:]
-            if gid in self.messenger._groups:
-                self.root.after(100, lambda: self._open_group(gid))
-        elif target in self.peer_info:
-            self.root.after(100, lambda: self._open_chat(target))
 
     # Mostra notificacao toast nativa do Windows (clicavel via winotify).
     def _show_toast(self, from_user, content, is_broadcast=False):
