@@ -78,6 +78,7 @@ except ImportError:
     HAS_WINDND = False
 
 APP_NAME = 'MB Chat'                        # Nome do aplicativo exibido nos títulos de janela
+APP_AUMID = 'MBContabilidade.MBChat'        # AppUserModelID para taskbar grouping e toasts clicaveis
 
 # Expressão regular para detectar emojis Unicode no texto das mensagens.
 # Usada em _insert_text_with_emojis() para substituir cada emoji por uma imagem colorida
@@ -2679,10 +2680,12 @@ class ChatWindow(tk.Toplevel):
         input_outer = self._input_outer
 
         # tk.Text é usado (não tk.Entry) para suportar múltiplas linhas e imagens (emojis)
+        # Altura adaptativa: inicia em 1 linha e cresce ate INPUT_MAX_H conforme
+        # o conteudo (_adjust_input_height chamado no <<Modified>>).
         self.entry = tk.Text(input_outer, font=('Segoe UI', 10),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
-                             relief='flat', bd=0, height=3,
+                             relief='flat', bd=0, height=1,
                              wrap='word', padx=8, pady=6,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
@@ -3148,6 +3151,11 @@ class ChatWindow(tk.Toplevel):
 
         style = self.messenger.db.get_setting('msg_style', 'bubble')
 
+        # Captura inicio do header (sender) antes de qualquer insercao: a tag
+        # msg_N se estende dai ate body_end, ampliando a area de hover/copy
+        # para cobrir o balao inteiro (nome + horario + corpo).
+        header_start = self.chat_text.index('end-1c')
+
         if style == 'bubble':
             # --- Modo bolha (WhatsApp-style) ---
             # Tags diferentes para lado esquerdo (peer) e direito (próprio)
@@ -3176,10 +3184,12 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.insert('end', '\n', 'msg')
 
         # Tag unica por mensagem: habilita hover copy + modo selecao
+        # Range vai do header_start (inicio do nome) ao body_end (fim do texto)
+        # para o hover disparar sobre qualquer ponto visual da mensagem.
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(f'{body_start}'),
+                               self.chat_text.index(header_start),
                                self.chat_text.index(f'{body_end}'))
         start_mark = f'mstart_{n}'
         end_mark = f'mend_{n}'
@@ -3253,6 +3263,28 @@ class ChatWindow(tk.Toplevel):
             pass
         # Agenda scan com delay para que o widget esteja estável após a modificação
         self.after(30, self._do_emoji_scan)
+        self._adjust_input_height()
+
+    # Ajusta a altura do campo de entrada conforme o conteudo (1..8 linhas).
+    def _adjust_input_height(self):
+        try:
+            info = self.entry.count('1.0', 'end-1c', 'displaylines')
+            if isinstance(info, tuple):
+                dl = info[0] if info else 1
+            else:
+                dl = info if info else 1
+        except Exception:
+            try:
+                content = self.entry.get('1.0', 'end-1c')
+                dl = max(1, content.count('\n') + 1)
+            except Exception:
+                dl = 1
+        n = max(1, min(8, int(dl or 1)))
+        try:
+            if int(self.entry.cget('height')) != n:
+                self.entry.configure(height=n)
+        except Exception:
+            pass
 
     # <KeyRelease> usado APENAS para gerenciar o indicador 'digitando...'.
     # Não processa emojis — isso é feito pelo <<Modified>>.
@@ -4952,10 +4984,11 @@ class GroupChatWindow(tk.Toplevel):
         self._input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
         input_outer = self._input_outer
 
+        # Altura adaptativa igual a ChatWindow: inicia em 1 e cresce com o texto.
         self.entry = tk.Text(input_outer, font=('Segoe UI', 11),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
-                             relief='flat', bd=0, height=3,
+                             relief='flat', bd=0, height=1,
                              wrap='word', padx=8, pady=6,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
@@ -5703,6 +5736,10 @@ class GroupChatWindow(tk.Toplevel):
 
         style = self.app.messenger.db.get_setting('msg_style', 'bubble')
 
+        # Captura inicio do header antes das insercoes para estender msg_N
+        # ate cobrir nome+horario+corpo (hover dispara sobre balao inteiro).
+        header_start = self.chat_text.index('end-1c')
+
         if style == 'bubble':
             if is_mine:
                 name_tag = 'my_bubble_name'
@@ -5730,7 +5767,7 @@ class GroupChatWindow(tk.Toplevel):
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(body_start),
+                               self.chat_text.index(header_start),
                                self.chat_text.index(body_end))
         start_mark = f'gmstart_{n}'
         end_mark = f'gmend_{n}'
@@ -5781,6 +5818,28 @@ class GroupChatWindow(tk.Toplevel):
         except Exception:
             pass
         self.after(30, self._do_emoji_scan)
+        self._adjust_input_height()
+
+    # Ajusta altura do campo de entrada conforme o conteudo (1..8 linhas).
+    def _adjust_input_height(self):
+        try:
+            info = self.entry.count('1.0', 'end-1c', 'displaylines')
+            if isinstance(info, tuple):
+                dl = info[0] if info else 1
+            else:
+                dl = info if info else 1
+        except Exception:
+            try:
+                content = self.entry.get('1.0', 'end-1c')
+                dl = max(1, content.count('\n') + 1)
+            except Exception:
+                dl = 1
+        n = max(1, min(8, int(dl or 1)))
+        try:
+            if int(self.entry.cget('height')) != n:
+                self.entry.configure(height=n)
+        except Exception:
+            pass
 
     # Executa o scan de emojis no campo de entrada do grupo.
     def _do_emoji_scan(self):
@@ -6723,7 +6782,7 @@ class LanMessengerApp:
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                'MBContabilidade.MBChat')
+                APP_AUMID)
         except Exception:
             pass
         self.root = tk.Tk()                  # Janela principal tkinter
@@ -8759,12 +8818,17 @@ class LanMessengerApp:
         if HAS_WINOTIFY:  # winotify disponivel? (toast clicavel do Windows 10/11)
             try:
                 notif = WinNotification(
-                    app_id='MB Chat',
+                    app_id=APP_AUMID,
                     title=title,    # titulo = Grupo - Remetente
                     msg=preview,    # corpo = preview da mensagem
                     icon=self._icon_path or '',
                 )
                 notif.launch = f'mbchat://group/{group_id}'  # URL ao clicar no toast
+                try:
+                    notif.add_actions(label='Abrir',
+                                      launch=f'mbchat://group/{group_id}')
+                except Exception:
+                    pass
                 notif.set_audio(wn_audio.Default, loop=False)  # som padrao sem loop
                 notif.show()   # exibe o toast
                 return         # sucesso: nao usa fallback
@@ -10087,7 +10151,7 @@ class LanMessengerApp:
                 if want_notif and HAS_WINOTIFY:
                     try:
                         n = WinNotification(
-                            app_id='MB Chat',
+                            app_id=APP_AUMID,
                             title=title,
                             msg=text,
                             icon=self._icon_path or '')
@@ -11591,12 +11655,17 @@ class LanMessengerApp:
         if HAS_WINOTIFY:
             try:
                 notif = WinNotification(
-                    app_id='MB Chat',   # identificador do app no Action Center
+                    app_id=APP_AUMID,   # AUMID registrado: essencial para launch do toast
                     title=name,         # titulo = nome do remetente
                     msg=preview,        # corpo = preview da mensagem
                     icon=self._icon_path or '',  # icone do app
                 )
                 notif.launch = f'mbchat://open/{from_user}'  # URL ativada ao clicar
+                try:
+                    notif.add_actions(label='Abrir',
+                                      launch=f'mbchat://open/{from_user}')
+                except Exception:
+                    pass
                 notif.set_audio(wn_audio.Default, loop=False)  # som padrao, sem loop
                 notif.show()  # exibe o toast
                 return  # sucesso: nao precisa usar fallback
@@ -11632,7 +11701,7 @@ class LanMessengerApp:
         if HAS_WINOTIFY:
             try:
                 notif = WinNotification(
-                    app_id='MB Chat', title=title, msg=preview,
+                    app_id=APP_AUMID, title=title, msg=preview,
                     icon=self._icon_path or '')
                 notif.set_audio(wn_audio.Default, loop=False)
                 notif.show()
@@ -11893,6 +11962,47 @@ def _register_url_protocol():
         pass  # falha silenciosa: nao e critico para o funcionamento do app
 
 
+# Cria/atualiza atalho no Menu Iniciar com AppUserModelID injetado.
+# Windows exige um atalho com o AUMID batendo para que toasts com launch
+# (mbchat://...) sejam dispatched quando o usuario clica no corpo da notificacao.
+# Sem esse atalho, o toast aparece mas o clique nao aciona nada.
+def _ensure_start_menu_shortcut():
+    if platform.system() != 'Windows':
+        return
+    if not getattr(sys, 'frozen', False):
+        return  # so em build final; dev (python gui.py) nao precisa
+    try:
+        import pythoncom
+        from win32com.client import Dispatch
+        from win32com.propsys import propsys, pscon
+        from win32com.shell import shell, shellcon
+        appdata = os.environ.get('APPDATA', '')
+        if not appdata:
+            return
+        start_menu = os.path.join(appdata, r'Microsoft\Windows\Start Menu\Programs')
+        os.makedirs(start_menu, exist_ok=True)
+        lnk_path = os.path.join(start_menu, 'MB Chat.lnk')
+        exe_path = sys.executable
+        wsh = Dispatch('WScript.Shell')
+        shortcut = wsh.CreateShortCut(lnk_path)
+        shortcut.TargetPath = exe_path
+        shortcut.IconLocation = f'{exe_path},0'
+        shortcut.WorkingDirectory = os.path.dirname(exe_path)
+        shortcut.save()
+        # Injeta System.AppUserModel.ID no atalho via IPropertyStore
+        store = propsys.SHGetPropertyStoreFromParsingName(
+            lnk_path,
+            None,
+            shellcon.GPS_READWRITE,
+            propsys.IID_IPropertyStore,
+        )
+        store.SetValue(pscon.PKEY_AppUserModel_ID,
+                       propsys.PROPVARIANTType(APP_AUMID))
+        store.Commit()
+    except Exception:
+        log.exception('Falha ao criar atalho Start Menu com AUMID')
+
+
 # Verifica se ja existe uma instancia do MB Chat rodando.
 #
 # Tenta conectar na porta loopback 50199. Se conseguir, envia 'SHOW' para
@@ -12001,6 +12111,7 @@ def main():
     _cleanup_zombie_processes()
 
     _register_url_protocol()  # registra mbchat:// no Registro do Windows
+    _ensure_start_menu_shortcut()  # atalho com AUMID para toasts clicaveis
 
     app = LanMessengerApp()             # cria a aplicacao principal
     _start_instance_listener(app)       # inicia o listener de instancia unica
