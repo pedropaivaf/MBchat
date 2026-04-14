@@ -126,14 +126,14 @@ LANGS = {
     'Português': {
         'menu_messenger': 'Messenger',
         'menu_tools': 'Ferramentas',
-        'menu_help': 'Ajuda',
+        'menu_help': 'Sobre',
         'menu_change_name': 'Alterar nome...',
         'menu_preferences': 'Preferências...',
         'menu_quit': 'Sair',
         'menu_history': 'Histórico de mensagens',
         'menu_transfers': 'Transferência de arquivos',
         'menu_broadcast': 'Mensagem para todos',
-        'menu_about': 'Sobre o',
+        'menu_about': 'MB Chat',
         'btn_send': 'Enviar',
         'btn_file': 'Arquivo',
         'btn_refresh': 'Atualizar',
@@ -174,14 +174,14 @@ LANGS = {
     'English': {
         'menu_messenger': 'Messenger',
         'menu_tools': 'Tools',
-        'menu_help': 'Help',
+        'menu_help': 'About',
         'menu_change_name': 'Change name...',
         'menu_preferences': 'Preferences...',
         'menu_quit': 'Quit',
         'menu_history': 'Message history',
         'menu_transfers': 'File transfers',
         'menu_broadcast': 'Message to all',
-        'menu_about': 'About',
+        'menu_about': 'MB Chat',
         'btn_send': 'Send',
         'btn_file': 'File',
         'btn_refresh': 'Refresh',
@@ -3427,7 +3427,10 @@ class ChatWindow(tk.Toplevel):
 
     def _schedule_hover_hide(self):
         self._cancel_hover_hide()
-        self._hover_hide_after = self.after(180, self._hide_hover_copy)
+        # Delay generoso para dar tempo do mouse atravessar do balao da mensagem
+        # ate o botao (que fica posicionado no canto direito do chat_text,
+        # distante do texto em mensagens curtas).
+        self._hover_hide_after = self.after(600, self._hide_hover_copy)
 
     def _hide_hover_copy(self):
         try:
@@ -5943,7 +5946,10 @@ class GroupChatWindow(tk.Toplevel):
 
     def _schedule_hover_hide(self):
         self._cancel_hover_hide()
-        self._hover_hide_after = self.after(180, self._hide_hover_copy)
+        # Delay generoso para dar tempo do mouse atravessar do balao da mensagem
+        # ate o botao (que fica posicionado no canto direito do chat_text,
+        # distante do texto em mensagens curtas).
+        self._hover_hide_after = self.after(600, self._hide_hover_copy)
 
     def _hide_hover_copy(self):
         try:
@@ -6991,7 +6997,7 @@ class LanMessengerApp:
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
         m3 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m3.add_command(label=f'{_t("menu_about")} {APP_NAME}',
+        m3.add_command(label=_t('menu_about'),
                        command=self._show_about)
         menubar.add_cascade(label=_t('menu_help'), menu=m3)
 
@@ -7217,7 +7223,7 @@ class LanMessengerApp:
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
         m3 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m3.add_command(label=f'{_t("menu_about")} {APP_NAME}', command=self._show_about)
+        m3.add_command(label=_t('menu_about'), command=self._show_about)
         menubar.add_cascade(label=_t('menu_help'), menu=m3)
 
         self.root.config(menu=menubar)
@@ -11151,18 +11157,153 @@ class LanMessengerApp:
         updater.apply_update(new_exe_path)
         os._exit(0)
 
-    # Exibe dialog 'Sobre o MB Chat' com informacoes do aplicativo.
+    # Exibe dialog 'MB Chat' com informacoes do aplicativo.
+    # Dividido em helpers pequenos por responsabilidade: header (icone+titulo+versao),
+    # body (subtitulo+features) e footer (botoes Autor/OK).
     def _show_about(self):
-        messagebox.showinfo(f'Sobre o {APP_NAME}',  # titulo da caixa de dialogo
-            f'{APP_NAME} v{APP_VERSION}\n\n'
-            'Mensageiro de rede local\n\n'
-            'Funcionalidades:\n'
-            '- Descoberta automática de rede\n'
-            '- Mensagens instantâneas\n'
-            '- Transferência de arquivos\n'
-            '- Histórico (SQLite)\n'
-            '- Auto-start com o sistema\n\n'
-            'Python + tkinter')
+        dlg = self._build_about_dialog()
+        _center_window(dlg, 440, 520)
+        _apply_rounded_corners(dlg)
+        try:
+            self._force_taskbar_entry(dlg)
+        except Exception:
+            pass
+        dlg.wait_window()
+
+    def _build_about_dialog(self):
+        t = self._theme if hasattr(self, '_theme') else THEMES.get('MB Contabilidade', {})
+        dlg = tk.Toplevel(self.root)
+        dlg.title(APP_NAME)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.configure(bg=t.get('bg_window', '#f5f7fa'))
+        try:
+            dlg.iconbitmap(_get_icon_path())
+        except Exception:
+            pass
+        self._build_about_header(dlg, t)
+        self._build_about_body(dlg, t)
+        self._build_about_footer(dlg, t)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
+        dlg.grab_set()
+        dlg.focus_set()
+        return dlg
+
+    def _build_about_header(self, parent, t):
+        bg = t.get('bg_window', '#f5f7fa')
+        header = tk.Frame(parent, bg=bg)
+        header.pack(fill='x', padx=24, pady=(24, 8))
+
+        icon_lbl = tk.Label(header, bg=bg)
+        try:
+            if HAS_PIL:
+                img = Image.open(_get_icon_path())
+                img = img.resize((72, 72), Image.LANCZOS)
+                self._about_icon_img = ImageTk.PhotoImage(img)
+                icon_lbl.configure(image=self._about_icon_img)
+        except Exception:
+            icon_lbl.configure(text='MB', font=('Segoe UI', 24, 'bold'),
+                               fg=t.get('fg_blue', '#0066cc'))
+        icon_lbl.pack(side='left', padx=(0, 16))
+
+        text_col = tk.Frame(header, bg=bg)
+        text_col.pack(side='left', fill='y')
+        tk.Label(text_col, text=APP_NAME,
+                 font=('Segoe UI', 20, 'bold'),
+                 fg=t.get('fg_black', '#1a202c'),
+                 bg=bg).pack(anchor='w')
+        tk.Label(text_col, text=f'Versão {APP_VERSION}',
+                 font=('Segoe UI', 10),
+                 fg=t.get('fg_gray', '#666666'),
+                 bg=bg).pack(anchor='w', pady=(2, 0))
+        tk.Label(text_col, text='MB Contabilidade',
+                 font=('Segoe UI', 9),
+                 fg=t.get('fg_blue', '#0066cc'),
+                 bg=bg).pack(anchor='w', pady=(4, 0))
+
+        tk.Frame(parent, bg=t.get('border', '#bbbbbb'), height=1).pack(
+            fill='x', padx=24, pady=(12, 0))
+
+    def _build_about_body(self, parent, t):
+        bg = t.get('bg_window', '#f5f7fa')
+        body = tk.Frame(parent, bg=bg)
+        body.pack(fill='both', expand=True, padx=24, pady=(12, 8))
+
+        tk.Label(body,
+                 text='Mensageiro de rede local para comunicação interna,\n'
+                      'sem servidor central.',
+                 font=('Segoe UI', 10),
+                 fg=t.get('fg_black', '#1a202c'),
+                 bg=bg,
+                 justify='left').pack(anchor='w')
+
+        tk.Label(body, text='Funcionalidades',
+                 font=('Segoe UI', 10, 'bold'),
+                 fg=t.get('fg_black', '#1a202c'),
+                 bg=bg).pack(anchor='w', pady=(12, 4))
+
+        features = [
+            'Descoberta automática de contatos na LAN',
+            'Mensagens, imagens e arquivos em tempo real',
+            'Grupos fixos e temporários com menções e enquetes',
+            'Histórico local em SQLite com busca global',
+            'Lembretes programados e recorrentes',
+            'Notificações do Windows clicáveis',
+            'Auto-update via GitHub Releases',
+        ]
+        for feat in features:
+            row = tk.Frame(body, bg=bg)
+            row.pack(fill='x', anchor='w', pady=1)
+            tk.Label(row, text='•',
+                     font=('Segoe UI', 11, 'bold'),
+                     fg=t.get('fg_blue', '#0066cc'),
+                     bg=bg).pack(side='left', padx=(4, 8))
+            tk.Label(row, text=feat,
+                     font=('Segoe UI', 10),
+                     fg=t.get('fg_black', '#1a202c'),
+                     bg=bg).pack(side='left')
+
+    def _build_about_footer(self, parent, t):
+        bg = t.get('bg_window', '#f5f7fa')
+        tk.Frame(parent, bg=t.get('border', '#bbbbbb'), height=1).pack(
+            fill='x', padx=24)
+
+        footer = tk.Frame(parent, bg=bg)
+        footer.pack(fill='x', padx=24, pady=(12, 20))
+
+        author_btn = tk.Button(footer, text='Autor',
+                               command=self._open_author_site,
+                               font=('Segoe UI', 10),
+                               bg=t.get('btn_bg', '#e8e8e8'),
+                               fg=t.get('btn_fg', '#000000'),
+                               activebackground=t.get('btn_active', '#d0d0d0'),
+                               relief='flat', bd=0, padx=20, pady=6,
+                               cursor='hand2')
+        author_btn.pack(side='left')
+        _add_hover(author_btn,
+                   t.get('btn_bg', '#e8e8e8'),
+                   t.get('btn_active', '#d0d0d0'))
+
+        ok_btn = tk.Button(footer, text='OK',
+                           command=parent.destroy,
+                           font=('Segoe UI', 10, 'bold'),
+                           bg=t.get('btn_send_bg', '#3366aa'),
+                           fg=t.get('btn_send_fg', '#ffffff'),
+                           activebackground=t.get('btn_send_bg', '#3366aa'),
+                           relief='flat', bd=0, padx=28, pady=6,
+                           cursor='hand2')
+        ok_btn.pack(side='right')
+        _add_hover(ok_btn,
+                   t.get('btn_send_bg', '#3366aa'),
+                   t.get('btn_active', '#d0d0d0'))
+
+    def _open_author_site(self):
+        import webbrowser
+        try:
+            webbrowser.open('https://pedropaivaf.dev/')
+        except Exception:
+            pass
 
     # --- Network callbacks ---
     # Callback: novo peer descoberto ou peer existente atualizou presenca via UDP.
@@ -11838,6 +11979,57 @@ class LanMessengerApp:
             elif peer in self.peer_info:           # e um contato conhecido?
                 self._open_chat(peer)              # abre/exibe a janela de chat
 
+    # Abre chat/grupo a partir de uma notificacao clicavel (toast) SEM restaurar
+    # a janela principal. Usuario so quer ver a conversa referente — o root
+    # permanece onde estava (minimizado no tray ou taskbar). Se nao for possivel
+    # abrir a janela especifica (peer offline, grupo nao existe), cai no
+    # _restore_and_open como fallback para pelo menos mostrar algo.
+    def _open_from_notification(self, peer):
+        if not peer:
+            self._restore_and_open()
+            return
+        if not hasattr(self, 'messenger'):
+            self._restore_and_open(peer)
+            return
+        if peer == '__reminders__':
+            # Dialog de lembretes e transient(root); precisa do root visivel.
+            self._restore_and_open(peer)
+            return
+        if peer.startswith('group:'):
+            gid = peer[6:]
+            if gid in self.messenger._groups:
+                gw = self._open_group(gid)
+                if gw is not None:
+                    self._bring_chat_window_to_front(gw)
+                    return
+            self._restore_and_open(peer)
+            return
+        # Chat individual: abre a janela mesmo se o peer nao esta em peer_info
+        # (offline), usando fallback 'Unknown' gerenciado pelo _open_chat.
+        cw = self._open_chat(peer)
+        if cw is not None:
+            self._bring_chat_window_to_front(cw)
+        else:
+            self._restore_and_open(peer)
+
+    # Garante que uma janela de chat/grupo fique visivel, minimizavel e focada
+    # mesmo quando o root esta withdrawn. Segue o mesmo padrao do
+    # _surface_chat_from_tray mas direto para primeiro plano (nao minimizado).
+    def _bring_chat_window_to_front(self, win):
+        try:
+            win.deiconify()
+            win.state('normal')
+            win.lift()
+            win.focus_force()
+            win.attributes('-topmost', True)
+            win.after(200, lambda: win.attributes('-topmost', False))
+            try:
+                win.entry.focus_set()
+            except Exception:
+                pass
+        except Exception:
+            log.exception('Erro trazendo janela de chat para frente')
+
     # Encerra via menu do tray.
     def _tray_quit(self, icon=None, item=None):
         self.root.after(0, self._quit)
@@ -12046,7 +12238,8 @@ def _start_instance_listener(app):
                 client.close()  # fecha a conexao imediatamente
                 if data.startswith('OPEN:'):  # comando para abrir chat/grupo especifico
                     peer_id = data[5:].strip()  # extrai uid ou group:gid
-                    app.root.after(0, lambda p=peer_id: app._restore_and_open(p))  # main thread
+                    # Notificacao clicavel: abre SO a janela do chat, sem restaurar root
+                    app.root.after(0, lambda p=peer_id: app._open_from_notification(p))
                 elif data == 'SHOW':  # comando para apenas mostrar a janela
                     app.root.after(0, app._restore_and_open)  # restaura na main thread
             except socket.timeout:
