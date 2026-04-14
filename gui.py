@@ -2262,13 +2262,6 @@ class FileTransfersWindow(tk.Toplevel):
         tb_inner = tk.Frame(toolbar, bg='#e8ecf1')
         tb_inner.pack(fill='x', padx=6, pady=4)
 
-        btn_cancel = tk.Button(tb_inner, text='\u2716 Cancelar',
-                               font=('Segoe UI', 8), bg='#e8ecf1',
-                               fg='#4a5568', relief='flat', bd=0,
-                               cursor='hand2', padx=6,
-                               command=self._cancel_selected)
-        btn_cancel.pack(side='left', padx=(0, 4))
-
         btn_folder = tk.Button(tb_inner, text='\U0001f4c2 Mostrar a Pasta',
                                font=('Segoe UI', 8), bg='#e8ecf1',
                                fg='#4a5568', relief='flat', bd=0,
@@ -2419,11 +2412,6 @@ class FileTransfersWindow(tk.Toplevel):
                 return fid, row
         return None, None
 
-    def _cancel_selected(self):
-        fid, row = self._get_selected()
-        if fid and row._entry.get('status') in ('pending', 'transferring'):
-            self.app.messenger.cancel_file(fid)
-
     def _open_folder_selected(self):
         fid, row = self._get_selected()
         if not fid:
@@ -2432,16 +2420,15 @@ class FileTransfersWindow(tk.Toplevel):
         if not fp:
             log.warning('Mostrar pasta: filepath vazio para %s', fid)
             return
+        # Abre a pasta que contem o arquivo. os.startfile e o caminho mais
+        # confiavel no Windows — evita o /select, do explorer que quebra
+        # quando passado como arg separado via subprocess.
+        folder = os.path.dirname(fp) if os.path.isfile(fp) else fp
+        if not os.path.isdir(folder):
+            log.warning('Mostrar pasta: diretorio nao existe: %s', folder)
+            return
         try:
-            import subprocess
-            if os.path.exists(fp):
-                subprocess.Popen(['explorer', '/select,', fp])
-            else:
-                folder = os.path.dirname(fp)
-                if os.path.isdir(folder):
-                    subprocess.Popen(['explorer', folder])
-                else:
-                    log.warning('Mostrar pasta: caminho nao existe: %s', fp)
+            os.startfile(folder)
         except Exception:
             log.exception('Erro ao abrir pasta')
 
@@ -10286,13 +10273,10 @@ class LanMessengerApp:
             self._mark_unread(from_user)
             self._show_toast(from_user, content, is_broadcast=is_broadcast)
             self._pending_flash_target = from_user
-            # Cria janela minimizada na taskbar com a mensagem dentro (estilo LAN Messenger)
+            # _open_chat carrega mensagens nao lidas do DB (inclui esta recem-salva
+            # por messenger._on_tcp_message). NAO chamar receive_message aqui — dup.
             def _create():
-                cw = self._open_chat(from_user, surface_only=True)
-                if cw:
-                    cw.receive_message(content, timestamp,
-                                       reply_to=reply_to, msg_id=msg_id)
-                return cw
+                return self._open_chat(from_user, surface_only=True)
             self._surface_chat_from_tray(_create)
 
     # Callback: imagem recebida via TCP (MT_IMAGE).
@@ -10338,11 +10322,9 @@ class LanMessengerApp:
                 self._mark_unread(from_user)
                 self._show_toast(from_user, '[Imagem]')
                 self._pending_flash_target = from_user
+                # _open_chat ja carrega imagens nao lidas do DB — ver _on_message.
                 def _create():
-                    cw = self._open_chat(from_user, surface_only=True)
-                    if cw:
-                        cw.receive_image(image_path, timestamp)
-                    return cw
+                    return self._open_chat(from_user, surface_only=True)
                 self._surface_chat_from_tray(_create)
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
