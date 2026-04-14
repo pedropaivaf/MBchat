@@ -1,8 +1,8 @@
 [Setup]
 AppId={{MB-CHAT-APP}
 AppName=MB Chat
-AppVersion=1.4.48
-AppVerName=MB Chat v1.4.48
+AppVersion=1.4.49
+AppVerName=MB Chat v1.4.49
 AppPublisher=MB Contabilidade
 DefaultDirName={autopf}\MBChat
 DefaultGroupName=MB Chat

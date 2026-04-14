@@ -307,6 +307,11 @@ class UDPDiscovery:
         self.note = note
         self._send_announce()
 
+    # Atualiza departamento e propaga via announce
+    def update_department(self, dept):
+        self.department = dept
+        self._send_announce()
+
     # Atualiza avatar e propaga via announce
     # index: Indice do avatar padrao
     # data_b64: Thumbnail JPEG em base64 (~1-2KB no pacote UDP)

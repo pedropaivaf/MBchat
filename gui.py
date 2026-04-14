@@ -1375,21 +1375,35 @@ class PreferencesWindow(tk.Toplevel):
                       ).pack(anchor='w', pady=2)
 
         # Departamento
-        lf3 = tk.LabelFrame(parent, text='Departamento / Equipe', font=FONT,
+        lf3 = tk.LabelFrame(parent, text='Departamento', font=FONT,
                              bg=BG_WINDOW, padx=10, pady=8)
         lf3.pack(fill='x', padx=10, pady=(0, 8))
         dept_row = tk.Frame(lf3, bg=BG_WINDOW)
         dept_row.pack(fill='x', pady=4)
-        tk.Label(dept_row, text='Departamento:', font=FONT,
+        tk.Label(dept_row, text='Selecionar:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
+                                         state='readonly',
                                          values=['(Nenhum)', 'Fiscal', 'Contábil', 'TI',
                                                  'Comercial', 'DP', 'SC',
                                                  'Marketing', 'Recepção'])
-        self._dept_combo.set(self.messenger.db.get_setting('department', ''))
+        cur_dept = self.messenger.db.get_setting('department', '')
+        self._dept_combo.set(cur_dept if cur_dept else '(Nenhum)')
         self._dept_combo.pack(side='right')
+        self._dept_combo.bind('<<ComboboxSelected>>', self._on_dept_changed)
         tk.Label(lf3, text='Visivel para todos na lista de contatos.',
                  font=FONT_SMALL, bg=BG_WINDOW, fg=FG_GRAY).pack(anchor='w')
+
+    # Aplica e propaga o departamento assim que o usuario seleciona no combobox.
+    def _on_dept_changed(self, event=None):
+        dept = self._dept_combo.get().strip()
+        if dept == '(Nenhum)':
+            dept = ''
+        try:
+            self.messenger.db.set_setting('department', dept)
+            self.messenger.discovery.update_department(dept)
+        except Exception:
+            log.exception('Erro ao aplicar departamento')
 
     # Show image preview in the custom_preview canvas.
     def _show_preview(self, path):
@@ -1739,13 +1753,16 @@ class PreferencesWindow(tk.Toplevel):
             self.var_avatar_index.get(),
             self.var_custom_avatar.get())
 
-        # Save department
+        # Departamento ja foi salvo e propagado via _on_dept_changed,
+        # mas garante consistencia caso tenha sido alterado por outro meio.
         if hasattr(self, '_dept_combo'):
             dept = self._dept_combo.get().strip()
             if dept == '(Nenhum)':
                 dept = ''
-            db.set_setting('department', dept)
-            self.messenger.discovery.department = dept
+            cur = db.get_setting('department', '')
+            if cur != dept:
+                db.set_setting('department', dept)
+                self.messenger.discovery.update_department(dept)
 
         # Apply name change (uses StringVar, safe even if Conta tab not visible)
         new_name = self.var_display_name.get().strip()
@@ -1989,13 +2006,16 @@ class AccountWindow(tk.Toplevel):
             self.var_avatar_index.get(),
             self.var_custom_avatar.get())
         self.app._update_avatar()
-        # Save department
+        # Departamento ja foi salvo e propagado via _on_dept_changed,
+        # mas garante consistencia caso tenha sido alterado por outro meio.
         if hasattr(self, '_dept_combo'):
             dept = self._dept_combo.get().strip()
             if dept == '(Nenhum)':
                 dept = ''
-            db.set_setting('department', dept)
-            self.messenger.discovery.department = dept
+            cur = db.get_setting('department', '')
+            if cur != dept:
+                db.set_setting('department', dept)
+                self.messenger.discovery.update_department(dept)
         self.destroy()
 
 
@@ -6583,10 +6603,12 @@ class LanMessengerApp:
         self._status_dots = {}
         self._create_status_dots()  # Gera as bolinhas de cor para cada status
 
-        # Cria o nó raiz "Geral" no TreeView — contatos online ficam aqui
+        # Cria o nó raiz "Geral" no TreeView — contatos sem departamento caem aqui.
+        # Fica logicamente abaixo dos departamentos; novos nos de departamento sao
+        # inseridos ANTES de group_general via _get_dept_node.
         self.group_general = self.tree.insert('', 'end', text=_t('group_general'),
                                               open=True, tags=('group',))
-        # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui
+        # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui (sempre ultimo)
         self.group_groups = self.tree.insert('', 'end', text='Grupos',
                                              open=True, tags=('group',))
         # Offline: contatos offline nao aparecem no TreeView (sao detachados)
@@ -7626,11 +7648,26 @@ class LanMessengerApp:
     def _get_dept_node(self, dept_name):
         if dept_name in self._dept_nodes:
             return self._dept_nodes[dept_name]
-        # Cria no de departamento antes do Grupos
-        node = self.tree.insert('', self.tree.index(self.group_groups),
+        # Cria no de departamento ANTES de Geral (que por sua vez fica antes de Grupos)
+        node = self.tree.insert('', self.tree.index(self.group_general),
                                 text=dept_name, open=True, tags=('group',))
         self._dept_nodes[dept_name] = node
         return node
+
+    # Esconde secao Geral quando nao tem filhos visiveis (todos os peers tem dept).
+    # Mostra de volta quando volta a ter conteudo.
+    def _update_general_visibility(self):
+        try:
+            has_children = bool(self.tree.get_children(self.group_general))
+            cur_parent = self.tree.parent(self.group_general)
+            if has_children and not cur_parent:
+                # Reattach na posicao correta: antes de Grupos
+                self.tree.reattach(self.group_general, '',
+                                   self.tree.index(self.group_groups))
+            elif not has_children and cur_parent == '':
+                self.tree.detach(self.group_general)
+        except tk.TclError:
+            pass
 
     def _add_contact(self, uid, info):
         status = info.get('status', 'online')  # status atual do contato recebido
@@ -7719,6 +7756,8 @@ class LanMessengerApp:
             if uid in gw._members:               # este contato esta no grupo?
                 gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
+        self._update_general_visibility()
+
     # Marca peer como offline e esconde do TreeView.
     def _remove_contact(self, uid):
         if uid in self.peer_items:
@@ -7726,6 +7765,7 @@ class LanMessengerApp:
             self.tree.item(iid, tags=('offline',))
             self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
         self._contact_render_cache.pop(uid, None)
+        self._update_general_visibility()
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
