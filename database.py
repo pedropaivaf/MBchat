@@ -211,12 +211,19 @@ class Database:
             pass
 
         # Migration: department e private_note em contacts
-        for col in ('department', 'private_note'):
+        for col in ('department', 'private_note', 'ramal'):
             try:
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT DEFAULT ''")
                 c.commit()
             except Exception:
                 pass
+
+        # Migration: ramal em local_user
+        try:
+            c.execute("ALTER TABLE local_user ADD COLUMN ramal TEXT DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
 
         # Migration: completed em reminders
         try:
@@ -308,6 +315,22 @@ class Database:
         row = self.conn.execute(
             "SELECT note FROM local_user WHERE id=1").fetchone()
         return row['note'] if row and row['note'] else ''
+
+    # Atualiza ramal (4 dígitos) do usuário local
+    def update_local_ramal(self, ramal):
+        self.conn.execute(
+            "UPDATE local_user SET ramal=?, updated_at=? WHERE id=1",
+            (ramal, time.time()))
+        self.conn.commit()
+
+    # Retorna ramal do usuário local (string vazia se não tem)
+    def get_local_ramal(self):
+        try:
+            row = self.conn.execute(
+                "SELECT ramal FROM local_user WHERE id=1").fetchone()
+            return row['ramal'] if row and row['ramal'] else ''
+        except Exception:
+            return ''
 
     # ========================================
     # CONTACTS — Peers descobertos na rede
@@ -611,6 +634,12 @@ class Database:
         self.conn.execute(
             "UPDATE contacts SET department=? WHERE user_id=?",
             (department, user_id))
+        self.conn.commit()
+
+    def set_contact_ramal(self, user_id, ramal):
+        self.conn.execute(
+            "UPDATE contacts SET ramal=? WHERE user_id=?",
+            (ramal, user_id))
         self.conn.commit()
 
     def set_contact_private_note(self, user_id, note):

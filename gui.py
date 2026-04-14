@@ -24,6 +24,7 @@ import calendar as cal_mod                      # Gerar o grid de dias no mini-c
 import logging                                  # Registrar erros em arquivo de log
 import re                                       # Detectar emojis Unicode via expressão regular
 import io                                       # BytesIO para compressao de imagens em memoria
+import webbrowser                                # Abrir links clicaveis no browser padrao
 from pathlib import Path                        # Manipulação de caminhos de forma moderna
 
 # --- Logging ---
@@ -93,6 +94,27 @@ _EMOJI_RE = re.compile(
     r'|[\u231a-\u231b\u23e9-\u23ec\u23f0-\u23f3\u25fd\u25fe\u2614\u2615\u263a\u2648-\u2653\u2660\u2663\u2665\u2666\u2668\u267b\u267f\u2692-\u2694\u2696\u2697\u2699\u269b\u269c\u26a0\u26a1\u26aa\u26ab\u26b0\u26b1\u26bd\u26be\u26c4\u26c5\u26c8\u26ce\u26cf\u26d1\u26d3\u26d4\u26e9\u26ea\u26f0-\u26f5\u26f7-\u26fa\u26fd]'
     r')[\ufe00-\ufe0f\U0001f3fb-\U0001f3ff]?' # seletor de variação e tons de pele
 )
+
+# Detecta URLs em mensagens (http(s)://, www.)
+_URL_RE = re.compile(
+    r'(https?://[^\s<>"\'`]+|www\.[^\s<>"\'`]+)',
+    re.IGNORECASE
+)
+
+
+# Abre uma URL no browser; normaliza www. para http://www.
+def _open_url(url):
+    # Remove pontuacao trailing (., ,, ), ], !, ?)
+    while url and url[-1] in '.,);]!?':
+        url = url[:-1]
+    if not url:
+        return
+    if url.lower().startswith('www.'):
+        url = 'http://' + url
+    try:
+        webbrowser.open(url, new=2)
+    except Exception:
+        log.exception('Erro ao abrir URL')
 
 # --- Idiomas ---
 # Dicionário de traduções para suporte a múltiplos idiomas.
@@ -2821,12 +2843,47 @@ class ChatWindow(tk.Toplevel):
 
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text, is_mine}]
+        self._msg_ranges_idx = []  # [(start_idx, end_idx)] por mensagem (para tag msg_N)
         self._img_click_handled = False
+        self._link_counter = 0
 
-        # Menu de contexto no chat (Responder / Copiar)
+        # Tag visual para mensagem selecionada em modo seleção multi-mensagem
+        self.chat_text.tag_configure('selected_msg', background='#fff3b0')
+        try:
+            self.chat_text.tag_raise('sel')
+        except tk.TclError:
+            pass
+
+        # Modo seleção (long-press ativa)
+        self._selection_mode = False
+        self._selection_set = set()
+        self._selection_bar = None
+        self._sel_count_lbl = None
+        self._long_press_after = None
+        self._long_press_origin = None
+        self._long_press_msg_idx = None
+
+        # Botao de copiar que aparece no hover da mensagem
+        self._hover_copy_btn = tk.Label(
+            self.chat_text, text='\uE8C8', font=('Segoe MDL2 Assets', 9),
+            bg='#f0f0f0', fg='#666666', cursor='hand2', bd=0, relief='flat',
+            padx=2, pady=0)
+        self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
+        self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
+        self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
+        self._hover_copy_visible_idx = None
+        self._hover_hide_after = None
+
+        self.chat_text.bind('<ButtonPress-1>', self._on_chat_press, add='+')
+        self.chat_text.bind('<B1-Motion>', self._on_chat_motion, add='+')
+        self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
+        self.bind('<Escape>', self._on_escape_selection, add='+')
+
+        # Menu de contexto no chat (Responder / Copiar / Selecionar)
         self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
         self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
         self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
+        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -3018,12 +3075,25 @@ class ChatWindow(tk.Toplevel):
     # Divide o texto com regex: partes textuais recebem 'tag'; emojis viram imagens inline.
     # Fallback para texto simples se PIL não disponível ou emoji não renderizável.
     def _insert_text_with_emojis(self, text, tag):
-        parts = _EMOJI_RE.split(text)    # fragmentos de texto entre os emojis
-        emojis = _EMOJI_RE.findall(text)  # lista dos emojis encontrados
         bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
+        # Primeiro divide por URL; cada pedaco nao-URL passa pelo render de emoji
+        last = 0
+        for m in _URL_RE.finditer(text):
+            if m.start() > last:
+                self._insert_emoji_run(text[last:m.start()], tag, bg)
+            url = m.group(0)
+            self._insert_link(url, tag)
+            last = m.end()
+        if last < len(text):
+            self._insert_emoji_run(text[last:], tag, bg)
+
+    # Insere um pedaco de texto (sem URLs) aplicando emojis coloridos.
+    def _insert_emoji_run(self, text, tag, bg):
+        parts = _EMOJI_RE.split(text)
+        emojis = _EMOJI_RE.findall(text)
         for i, part in enumerate(parts):
             if part:
-                self.chat_text.insert('end', part, tag)  # texto puro com estilo da tag
+                self.chat_text.insert('end', part, tag)
             if i < len(emojis):
                 img = self._get_chat_emoji(emojis[i], bg_color=bg)
                 if img:
@@ -3031,7 +3101,24 @@ class ChatWindow(tk.Toplevel):
                     self.chat_text.image_create('end', image=img, padx=1)
                     self.chat_text.tag_add(tag, mark, 'end-1c')
                 else:
-                    self.chat_text.insert('end', emojis[i], tag)  # fallback texto
+                    self.chat_text.insert('end', emojis[i], tag)
+
+    # Insere uma URL clicavel com tag unica.
+    def _insert_link(self, url, base_tag):
+        n = getattr(self, '_link_counter', 0) + 1
+        self._link_counter = n
+        link_tag = f'link_{n}'
+        bg = self.chat_text.tag_cget(base_tag, 'background') or self.chat_text.cget('bg')
+        self.chat_text.tag_configure(link_tag, foreground='#0066cc',
+                                     underline=True, background=bg)
+        start = self.chat_text.index('end-1c')
+        self.chat_text.insert('end', url, (base_tag, link_tag))
+        self.chat_text.tag_bind(link_tag, '<Button-1>',
+                                lambda e, u=url: _open_url(u))
+        self.chat_text.tag_bind(link_tag, '<Enter>',
+                                lambda e: self.chat_text.config(cursor='hand2'))
+        self.chat_text.tag_bind(link_tag, '<Leave>',
+                                lambda e: self.chat_text.config(cursor=''))
 
     # Adiciona uma mensagem à área de chat com formatação e suporte a emojis.
     #
@@ -3074,19 +3161,42 @@ class ChatWindow(tk.Toplevel):
                 msg_tag = 'peer_bubble'
             self.chat_text.insert('end', f'{sender}', name_tag)
             self.chat_text.insert('end', f'  {ts}\n', time_tag)
+            body_start = self.chat_text.index('end-1c')
             self._insert_text_with_emojis(text, msg_tag)
+            body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', msg_tag)
         else:
             # --- Modo linear (padrão LAN Messenger) ---
             tag = 'my_name' if is_mine else 'peer_name'
             self.chat_text.insert('end', f'{sender}', tag)
             self.chat_text.insert('end', f'  {ts}\n', 'time')
+            body_start = self.chat_text.index('end-1c')
             self._insert_text_with_emojis(text, 'msg')
+            body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', 'msg')
+
+        # Tag unica por mensagem: habilita hover copy + modo selecao
+        n = len(self._msg_data)
+        msg_tag_name = f'msg_{n}'
+        self.chat_text.tag_add(msg_tag_name,
+                               self.chat_text.index(f'{body_start}'),
+                               self.chat_text.index(f'{body_end}'))
+        start_mark = f'mstart_{n}'
+        end_mark = f'mend_{n}'
+        self.chat_text.mark_set(start_mark, body_start)
+        self.chat_text.mark_set(end_mark, body_end)
+        self.chat_text.mark_gravity(start_mark, 'left')
+        self.chat_text.mark_gravity(end_mark, 'right')
+        self._msg_ranges_idx.append((start_mark, end_mark))
+        self.chat_text.tag_bind(msg_tag_name, '<Enter>',
+                                lambda e, idx=n: self._on_msg_hover_enter(idx))
+        self.chat_text.tag_bind(msg_tag_name, '<Leave>',
+                                lambda e, idx=n: self._on_msg_hover_leave(idx))
 
         self._msg_ranges.append(text)        # salva texto para funcionalidade copiar
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
-                               'text': text[:80], 'is_mine': is_mine})
+                               'text': text, 'is_mine': is_mine,
+                               'timestamp': timestamp or time.time()})
         self.chat_text.insert('end', '\n')   # linha em branco entre mensagens
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
@@ -3206,15 +3316,14 @@ class ChatWindow(tk.Toplevel):
             self._reply_bar.destroy()
             self._reply_bar = None
 
-    # Clique direito no chat: mostra menu contexto (Responder / Copiar)
+    # Clique direito no chat: mostra menu contexto (Responder / Copiar / Selecionar)
     def _on_chat_right_click(self, event):
         if self._img_click_handled:
             self._img_click_handled = False
             return
         idx = self.chat_text.index(f'@{event.x},{event.y}')
         self._ctx_click_index = idx
-        line = int(idx.split('.')[0])
-        self._ctx_msg_idx = self._find_msg_at_line(line)
+        self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
         msg_idx = self._ctx_msg_idx
         if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
             self._chat_ctx.entryconfigure(0, state='disabled')
@@ -3253,6 +3362,339 @@ class ChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    # Contexto: Entra em modo selecao com a mensagem clicada ja marcada
+    def _ctx_select(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        self._enter_selection_mode(idx)
+
+    # ========================================
+    # HOVER COPY + SELECTION MODE
+    # ========================================
+
+    def _on_msg_hover_enter(self, idx):
+        if self._selection_mode:
+            return
+        self._cancel_hover_hide()
+        self._show_hover_copy(idx)
+
+    def _on_msg_hover_leave(self, idx):
+        if self._selection_mode:
+            return
+        self._schedule_hover_hide()
+
+    def _cancel_hover_hide(self):
+        if self._hover_hide_after:
+            try:
+                self.after_cancel(self._hover_hide_after)
+            except Exception:
+                pass
+            self._hover_hide_after = None
+
+    def _schedule_hover_hide(self):
+        self._cancel_hover_hide()
+        self._hover_hide_after = self.after(180, self._hide_hover_copy)
+
+    def _hide_hover_copy(self):
+        try:
+            self._hover_copy_btn.place_forget()
+        except Exception:
+            pass
+        self._hover_copy_visible_idx = None
+
+    def _show_hover_copy(self, idx):
+        if idx < 0 or idx >= len(self._msg_ranges_idx):
+            return
+        start_mark, end_mark = self._msg_ranges_idx[idx]
+        try:
+            bbox = self.chat_text.bbox(start_mark)
+            if not bbox:
+                return
+            x, y, w, h = bbox
+            # Posiciona no canto superior direito da linha da mensagem
+            chat_w = self.chat_text.winfo_width()
+            btn_x = max(4, chat_w - 32)
+            btn_y = max(2, y - 2)
+            self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
+            self._hover_copy_visible_idx = idx
+        except Exception:
+            pass
+
+    def _on_hover_copy_click(self, event):
+        idx = self._hover_copy_visible_idx
+        if idx is None or idx >= len(self._msg_data):
+            return
+        text = self._msg_data[idx].get('text', '')
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        # Feedback visual: muda para check por 600ms
+        original = self._hover_copy_btn.cget('text')
+        self._hover_copy_btn.config(text='\u2714', fg='#2a7f3f')
+        self.after(600, lambda: self._hover_copy_btn.config(text=original, fg='#4a5568'))
+
+    # --- Long-press detection ---
+    def _on_chat_press(self, event):
+        if self._selection_mode:
+            # Em modo selecao: clique toggla a mensagem sob o cursor
+            idx = self._find_msg_idx_at_xy(event.x, event.y)
+            if idx >= 0:
+                self._toggle_msg_selection(idx)
+            return 'break'
+        self._long_press_origin = (event.x, event.y)
+        self._long_press_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        if self._long_press_after:
+            try:
+                self.after_cancel(self._long_press_after)
+            except Exception:
+                pass
+        if self._long_press_msg_idx >= 0:
+            self._long_press_after = self.after(500, self._long_press_fire)
+
+    def _on_chat_motion(self, event):
+        if self._long_press_after and self._long_press_origin:
+            ox, oy = self._long_press_origin
+            if abs(event.x - ox) > 5 or abs(event.y - oy) > 5:
+                try:
+                    self.after_cancel(self._long_press_after)
+                except Exception:
+                    pass
+                self._long_press_after = None
+
+    def _on_chat_release(self, event):
+        if self._long_press_after:
+            try:
+                self.after_cancel(self._long_press_after)
+            except Exception:
+                pass
+            self._long_press_after = None
+
+    def _long_press_fire(self):
+        self._long_press_after = None
+        idx = self._long_press_msg_idx
+        if idx is None or idx < 0:
+            return
+        # Limpa selecao nativa de texto antes de entrar em modo selecao
+        try:
+            self.chat_text.tag_remove('sel', '1.0', 'end')
+        except Exception:
+            pass
+        self._enter_selection_mode(idx)
+
+    # Encontra o indice da mensagem correspondente a uma coordenada (x,y).
+    def _find_msg_idx_at_xy(self, x, y):
+        try:
+            click_idx = self.chat_text.index(f'@{x},{y}')
+        except Exception:
+            return -1
+        return self._find_msg_idx_at_index(click_idx)
+
+    def _find_msg_idx_at_index(self, click_idx):
+        # Procura a ultima mensagem cujo start_mark esta <= click_idx
+        best = -1
+        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+            try:
+                s = self.chat_text.index(sm)
+                e = self.chat_text.index(em)
+            except Exception:
+                continue
+            if self.chat_text.compare(click_idx, '>=', s) and \
+               self.chat_text.compare(click_idx, '<=', e):
+                return i
+            if self.chat_text.compare(click_idx, '>=', s):
+                best = i
+        return best
+
+    # --- Selection mode ---
+    def _enter_selection_mode(self, initial_idx):
+        if self._selection_mode:
+            self._toggle_msg_selection(initial_idx)
+            return
+        self._selection_mode = True
+        self._selection_set = set()
+        self._hide_hover_copy()
+        self._build_selection_bar()
+        self._toggle_msg_selection(initial_idx)
+
+    def _build_selection_bar(self):
+        if self._selection_bar is not None:
+            return
+        bar = tk.Frame(self, bg='#0f2a5c', height=34)
+        bar.pack(fill='x', side='top', before=self.chat_text.master)
+        self._sel_count_lbl = tk.Label(
+            bar, text='1 selecionada', font=('Segoe UI', 9, 'bold'),
+            bg='#0f2a5c', fg='#ffffff')
+        self._sel_count_lbl.pack(side='left', padx=10, pady=6)
+        btn_copy = tk.Button(
+            bar, text='\U0001f4cb Copiar', font=('Segoe UI', 9),
+            bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#2451a0', activeforeground='#ffffff',
+            command=self._selection_copy)
+        btn_copy.pack(side='left', padx=4, pady=4)
+        btn_fwd = tk.Button(
+            bar, text='\u27a4 Encaminhar', font=('Segoe UI', 9),
+            bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#2451a0', activeforeground='#ffffff',
+            command=self._selection_forward)
+        btn_fwd.pack(side='left', padx=4, pady=4)
+        btn_cancel = tk.Button(
+            bar, text='\u2715 Cancelar', font=('Segoe UI', 9),
+            bg='#7a1a1a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#a02424', activeforeground='#ffffff',
+            command=self._exit_selection_mode)
+        btn_cancel.pack(side='right', padx=10, pady=4)
+        self._selection_bar = bar
+
+    def _toggle_msg_selection(self, idx):
+        if idx < 0 or idx >= len(self._msg_ranges_idx):
+            return
+        sm, em = self._msg_ranges_idx[idx]
+        if idx in self._selection_set:
+            self._selection_set.discard(idx)
+            self.chat_text.tag_remove('selected_msg',
+                                      self.chat_text.index(sm),
+                                      self.chat_text.index(em))
+        else:
+            self._selection_set.add(idx)
+            self.chat_text.tag_add('selected_msg',
+                                   self.chat_text.index(sm),
+                                   self.chat_text.index(em))
+        self._update_selection_count()
+        if not self._selection_set:
+            self._exit_selection_mode()
+
+    def _update_selection_count(self):
+        if self._sel_count_lbl:
+            n = len(self._selection_set)
+            label = f'{n} selecionada' if n == 1 else f'{n} selecionadas'
+            self._sel_count_lbl.config(text=label)
+
+    def _exit_selection_mode(self, *args):
+        if not self._selection_mode:
+            return
+        # Remove highlight de todas
+        for idx in list(self._selection_set):
+            if idx < len(self._msg_ranges_idx):
+                sm, em = self._msg_ranges_idx[idx]
+                try:
+                    self.chat_text.tag_remove('selected_msg',
+                                              self.chat_text.index(sm),
+                                              self.chat_text.index(em))
+                except Exception:
+                    pass
+        self._selection_set.clear()
+        self._selection_mode = False
+        if self._selection_bar is not None:
+            try:
+                self._selection_bar.destroy()
+            except Exception:
+                pass
+            self._selection_bar = None
+            self._sel_count_lbl = None
+
+    def _on_escape_selection(self, event):
+        if self._selection_mode:
+            self._exit_selection_mode()
+            return 'break'
+
+    def _collect_selected_messages(self):
+        out = []
+        for idx in sorted(self._selection_set):
+            if idx < len(self._msg_data):
+                d = self._msg_data[idx]
+                ts = datetime.fromtimestamp(
+                    d.get('timestamp') or time.time()).strftime('%H:%M')
+                out.append(f"[{ts}] {d.get('sender','')}: {d.get('text','')}")
+        return out
+
+    def _selection_copy(self):
+        lines = self._collect_selected_messages()
+        if not lines:
+            return
+        text = '\n'.join(lines)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._exit_selection_mode()
+
+    def _selection_forward(self):
+        msgs = [self._msg_data[i]['text'] for i in sorted(self._selection_set)
+                if i < len(self._msg_data) and self._msg_data[i].get('text')]
+        if not msgs:
+            return
+        self._open_forward_dialog(msgs)
+        self._exit_selection_mode()
+
+    def _open_forward_dialog(self, messages):
+        dlg = tk.Toplevel(self)
+        dlg.title('Encaminhar mensagens')
+        dlg.configure(bg='#f5f7fa')
+        dlg.geometry('320x420')
+        dlg.transient(self)
+        dlg.grab_set()
+        tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
+                 font=('Segoe UI', 10, 'bold'),
+                 bg='#f5f7fa', fg='#1a202c').pack(padx=12, pady=(12, 6), anchor='w')
+        list_frame = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
+        list_frame.pack(fill='both', expand=True, padx=12, pady=4)
+        lb = tk.Listbox(list_frame, font=('Segoe UI', 9),
+                        bg='#ffffff', fg='#1a202c',
+                        selectbackground='#1e66d0',
+                        selectforeground='#ffffff',
+                        bd=0, relief='flat', activestyle='none')
+        lb.pack(fill='both', expand=True)
+        targets = []  # list of (kind, id, label)
+        # Contatos online
+        for uid, info in self.app.peer_info.items():
+            if uid == self.messenger.user_id:
+                continue
+            name = info.get('display_name', uid)
+            status = info.get('status', 'offline')
+            if status == 'offline':
+                continue
+            targets.append(('peer', uid, f'\U0001f464 {name}'))
+        # Grupos abertos
+        for gid, gw in self.app.group_windows.items():
+            try:
+                name = gw.group_info.get('name', gid)
+            except Exception:
+                name = gid
+            targets.append(('group', gid, f'\U0001f465 {name}'))
+        for t in targets:
+            lb.insert('end', t[2])
+        btn_frame = tk.Frame(dlg, bg='#f5f7fa')
+        btn_frame.pack(fill='x', padx=12, pady=10)
+
+        def _send():
+            sel = lb.curselection()
+            if not sel:
+                return
+            kind, ident, _ = targets[sel[0]]
+            body = '[Encaminhada]\n' + '\n'.join(messages)
+            try:
+                if kind == 'peer':
+                    self.messenger.send_message(ident, body)
+                else:
+                    self.messenger.send_group_message(ident, body)
+            except Exception:
+                log.exception('Erro ao encaminhar')
+            dlg.destroy()
+
+        tk.Button(btn_frame, text='Enviar', font=('Segoe UI', 9, 'bold'),
+                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+                  cursor='hand2', padx=14, pady=4,
+                  activebackground='#2451a0', activeforeground='#ffffff',
+                  command=_send).pack(side='right', padx=4)
+        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                  cursor='hand2', padx=14, pady=4,
+                  command=dlg.destroy).pack(side='right', padx=4)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
 
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
@@ -4664,13 +5106,43 @@ class GroupChatWindow(tk.Toplevel):
                                      foreground='#2451a0',
                                      font=('Segoe UI', 10, 'bold'))
 
-        try: self.chat_text.tag_raise('sel')
-        except tk.TclError: pass
+        self.chat_text.tag_configure('selected_msg', background='#fff3b0')
+        try:
+            self.chat_text.tag_raise('sel')
+        except tk.TclError:
+            pass
 
-        # Menu de contexto no chat (Responder / Copiar)
+        # Estado de copy-hover + selection mode (mesmo padrao da ChatWindow)
+        self._msg_ranges_idx = []
+        self._link_counter = 0
+        self._selection_mode = False
+        self._selection_set = set()
+        self._selection_bar = None
+        self._sel_count_lbl = None
+        self._long_press_after = None
+        self._long_press_origin = None
+        self._long_press_msg_idx = None
+
+        self._hover_copy_btn = tk.Label(
+            self.chat_text, text='\uE8C8', font=('Segoe MDL2 Assets', 9),
+            bg='#f0f0f0', fg='#666666', cursor='hand2', bd=0, relief='flat',
+            padx=2, pady=0)
+        self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
+        self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
+        self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
+        self._hover_copy_visible_idx = None
+        self._hover_hide_after = None
+
+        self.chat_text.bind('<ButtonPress-1>', self._on_chat_press, add='+')
+        self.chat_text.bind('<B1-Motion>', self._on_chat_motion, add='+')
+        self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
+        self.bind('<Escape>', self._on_escape_selection, add='+')
+
+        # Menu de contexto no chat (Responder / Copiar / Selecionar)
         self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
         self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
         self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
+        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -5043,12 +5515,22 @@ class GroupChatWindow(tk.Toplevel):
     # Insere texto na área de chat, substituindo emojis Unicode por imagens coloridas.
     # Usa _EMOJI_RE para separar texto e emojis, inserindo cada um com a tag correta.
     def _insert_text_with_emojis(self, text, tag):
-        parts = _EMOJI_RE.split(text)    # Partes de texto entre emojis
-        emojis = _EMOJI_RE.findall(text)  # Lista de emojis encontrados
         bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
+        last = 0
+        for m in _URL_RE.finditer(text):
+            if m.start() > last:
+                self._insert_emoji_run(text[last:m.start()], tag, bg)
+            self._insert_link(m.group(0), tag)
+            last = m.end()
+        if last < len(text):
+            self._insert_emoji_run(text[last:], tag, bg)
+
+    def _insert_emoji_run(self, text, tag, bg):
+        parts = _EMOJI_RE.split(text)
+        emojis = _EMOJI_RE.findall(text)
         for i, part in enumerate(parts):
             if part:
-                self.chat_text.insert('end', part, tag)  # Insere texto
+                self.chat_text.insert('end', part, tag)
             if i < len(emojis):
                 img = self._get_chat_emoji(emojis[i], bg_color=bg)
                 if img:
@@ -5056,7 +5538,22 @@ class GroupChatWindow(tk.Toplevel):
                     self.chat_text.image_create('end', image=img, padx=1)
                     self.chat_text.tag_add(tag, mark, 'end-1c')
                 else:
-                    self.chat_text.insert('end', emojis[i], tag)  # Fallback: emoji como texto
+                    self.chat_text.insert('end', emojis[i], tag)
+
+    def _insert_link(self, url, base_tag):
+        n = getattr(self, '_link_counter', 0) + 1
+        self._link_counter = n
+        link_tag = f'link_{n}'
+        bg = self.chat_text.tag_cget(base_tag, 'background') or self.chat_text.cget('bg')
+        self.chat_text.tag_configure(link_tag, foreground='#0066cc',
+                                     underline=True, background=bg)
+        self.chat_text.insert('end', url, (base_tag, link_tag))
+        self.chat_text.tag_bind(link_tag, '<Button-1>',
+                                lambda e, u=url: _open_url(u))
+        self.chat_text.tag_bind(link_tag, '<Enter>',
+                                lambda e: self.chat_text.config(cursor='hand2'))
+        self.chat_text.tag_bind(link_tag, '<Leave>',
+                                lambda e: self.chat_text.config(cursor=''))
 
     # Abre emoji picker (reutiliza logica do ChatWindow).
     def _show_emoji_picker(self):
@@ -5207,7 +5704,6 @@ class GroupChatWindow(tk.Toplevel):
         style = self.app.messenger.db.get_setting('msg_style', 'bubble')
 
         if style == 'bubble':
-            # --- Modo bolha (WhatsApp-style) ---
             if is_mine:
                 name_tag = 'my_bubble_name'
                 time_tag = 'my_bubble_time'
@@ -5218,18 +5714,39 @@ class GroupChatWindow(tk.Toplevel):
                 msg_tag = 'peer_bubble'
             self.chat_text.insert('end', f'{sender}', name_tag)
             self.chat_text.insert('end', f'  {ts}\n', time_tag)
+            body_start = self.chat_text.index('end-1c')
             self._insert_text_with_mentions(text, msg_tag, mentions)
+            body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', msg_tag)
         else:
-            # --- Modo linear (padrao LAN Messenger) ---
             name_tag = 'my_name' if is_mine else 'peer_name'
             self.chat_text.insert('end', sender, name_tag)
             self.chat_text.insert('end', f'  {ts}\n', 'time')
+            body_start = self.chat_text.index('end-1c')
             self._insert_text_with_mentions(text, 'msg', mentions)
+            body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n')
 
+        n = len(self._msg_data)
+        msg_tag_name = f'msg_{n}'
+        self.chat_text.tag_add(msg_tag_name,
+                               self.chat_text.index(body_start),
+                               self.chat_text.index(body_end))
+        start_mark = f'gmstart_{n}'
+        end_mark = f'gmend_{n}'
+        self.chat_text.mark_set(start_mark, body_start)
+        self.chat_text.mark_set(end_mark, body_end)
+        self.chat_text.mark_gravity(start_mark, 'left')
+        self.chat_text.mark_gravity(end_mark, 'right')
+        self._msg_ranges_idx.append((start_mark, end_mark))
+        self.chat_text.tag_bind(msg_tag_name, '<Enter>',
+                                lambda e, idx=n: self._on_msg_hover_enter(idx))
+        self.chat_text.tag_bind(msg_tag_name, '<Leave>',
+                                lambda e, idx=n: self._on_msg_hover_leave(idx))
+
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
-                               'text': text[:80], 'is_mine': is_mine})
+                               'text': text, 'is_mine': is_mine,
+                               'timestamp': timestamp or time.time()})
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
@@ -5311,21 +5828,13 @@ class GroupChatWindow(tk.Toplevel):
         if self._img_click_handled:
             self._img_click_handled = False
             return
-        idx = self.chat_text.index(f'@{event.x},{event.y}')
-        self._ctx_click_index = idx
-        line = int(idx.split('.')[0])
-        self._ctx_msg_idx = self._find_msg_at_line(line)
+        self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
         msg_idx = self._ctx_msg_idx
         if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
             self._chat_ctx.entryconfigure(0, state='disabled')
         else:
             self._chat_ctx.entryconfigure(0, state='normal')
         self._chat_ctx.tk_popup(event.x_root, event.y_root)
-
-    def _find_msg_at_line(self, click_line):
-        if not self._msg_data:
-            return -1
-        return max(0, min(len(self._msg_data) - 1, click_line // 4))
 
     def _ctx_reply(self):
         idx = getattr(self, '_ctx_msg_idx', -1)
@@ -5344,6 +5853,330 @@ class GroupChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    def _ctx_select(self):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        self._enter_selection_mode(idx)
+
+    # ========================================
+    # HOVER COPY + SELECTION MODE (GroupChatWindow)
+    # ========================================
+    def _on_msg_hover_enter(self, idx):
+        if self._selection_mode:
+            return
+        self._cancel_hover_hide()
+        self._show_hover_copy(idx)
+
+    def _on_msg_hover_leave(self, idx):
+        if self._selection_mode:
+            return
+        self._schedule_hover_hide()
+
+    def _cancel_hover_hide(self):
+        if self._hover_hide_after:
+            try:
+                self.after_cancel(self._hover_hide_after)
+            except Exception:
+                pass
+            self._hover_hide_after = None
+
+    def _schedule_hover_hide(self):
+        self._cancel_hover_hide()
+        self._hover_hide_after = self.after(180, self._hide_hover_copy)
+
+    def _hide_hover_copy(self):
+        try:
+            self._hover_copy_btn.place_forget()
+        except Exception:
+            pass
+        self._hover_copy_visible_idx = None
+
+    def _show_hover_copy(self, idx):
+        if idx < 0 or idx >= len(self._msg_ranges_idx):
+            return
+        start_mark, end_mark = self._msg_ranges_idx[idx]
+        try:
+            # Linha do header (sender + horario): 1 linha acima do body_start
+            header_idx = self.chat_text.index(f'{start_mark} -1c linestart')
+            info = self.chat_text.dlineinfo(header_idx)
+            if not info:
+                return
+            lx, ly, lw, lh, _ = info
+            chat_w = self.chat_text.winfo_width()
+            btn_x = min(chat_w - 20, lx + lw + 6)
+            btn_y = ly + 1
+            self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
+            self._hover_copy_visible_idx = idx
+        except Exception:
+            pass
+
+    def _on_hover_copy_click(self, event):
+        idx = self._hover_copy_visible_idx
+        if idx is None or idx >= len(self._msg_data):
+            return
+        text = self._msg_data[idx].get('text', '')
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        original = self._hover_copy_btn.cget('text')
+        self._hover_copy_btn.config(text='\u2714', fg='#2a7f3f')
+        self.after(600, lambda: self._hover_copy_btn.config(text=original, fg='#4a5568'))
+
+    def _on_chat_press(self, event):
+        if self._selection_mode:
+            idx = self._find_msg_idx_at_xy(event.x, event.y)
+            if idx >= 0:
+                self._toggle_msg_selection(idx)
+            return 'break'
+        self._long_press_origin = (event.x, event.y)
+        self._long_press_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        if self._long_press_after:
+            try:
+                self.after_cancel(self._long_press_after)
+            except Exception:
+                pass
+        if self._long_press_msg_idx >= 0:
+            self._long_press_after = self.after(500, self._long_press_fire)
+
+    def _on_chat_motion(self, event):
+        if self._long_press_after and self._long_press_origin:
+            ox, oy = self._long_press_origin
+            if abs(event.x - ox) > 5 or abs(event.y - oy) > 5:
+                try:
+                    self.after_cancel(self._long_press_after)
+                except Exception:
+                    pass
+                self._long_press_after = None
+
+    def _on_chat_release(self, event):
+        if self._long_press_after:
+            try:
+                self.after_cancel(self._long_press_after)
+            except Exception:
+                pass
+            self._long_press_after = None
+
+    def _long_press_fire(self):
+        self._long_press_after = None
+        idx = self._long_press_msg_idx
+        if idx is None or idx < 0:
+            return
+        try:
+            self.chat_text.tag_remove('sel', '1.0', 'end')
+        except Exception:
+            pass
+        self._enter_selection_mode(idx)
+
+    def _find_msg_idx_at_xy(self, x, y):
+        try:
+            click_idx = self.chat_text.index(f'@{x},{y}')
+        except Exception:
+            return -1
+        return self._find_msg_idx_at_index(click_idx)
+
+    def _find_msg_idx_at_index(self, click_idx):
+        best = -1
+        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+            try:
+                s = self.chat_text.index(sm)
+                e = self.chat_text.index(em)
+            except Exception:
+                continue
+            if self.chat_text.compare(click_idx, '>=', s) and \
+               self.chat_text.compare(click_idx, '<=', e):
+                return i
+            if self.chat_text.compare(click_idx, '>=', s):
+                best = i
+        return best
+
+    def _enter_selection_mode(self, initial_idx):
+        if self._selection_mode:
+            self._toggle_msg_selection(initial_idx)
+            return
+        self._selection_mode = True
+        self._selection_set = set()
+        self._hide_hover_copy()
+        self._build_selection_bar()
+        self._toggle_msg_selection(initial_idx)
+
+    def _build_selection_bar(self):
+        if self._selection_bar is not None:
+            return
+        bar = tk.Frame(self, bg='#0f2a5c', height=34)
+        bar.pack(fill='x', side='top', before=self.chat_text.master)
+        self._sel_count_lbl = tk.Label(
+            bar, text='1 selecionada', font=('Segoe UI', 9, 'bold'),
+            bg='#0f2a5c', fg='#ffffff')
+        self._sel_count_lbl.pack(side='left', padx=10, pady=6)
+        btn_copy = tk.Button(
+            bar, text='\U0001f4cb Copiar', font=('Segoe UI', 9),
+            bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#2451a0', activeforeground='#ffffff',
+            command=self._selection_copy)
+        btn_copy.pack(side='left', padx=4, pady=4)
+        btn_fwd = tk.Button(
+            bar, text='\u27a4 Encaminhar', font=('Segoe UI', 9),
+            bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#2451a0', activeforeground='#ffffff',
+            command=self._selection_forward)
+        btn_fwd.pack(side='left', padx=4, pady=4)
+        btn_cancel = tk.Button(
+            bar, text='\u2715 Cancelar', font=('Segoe UI', 9),
+            bg='#7a1a1a', fg='#ffffff', relief='flat', bd=0,
+            cursor='hand2', padx=10, pady=3,
+            activebackground='#a02424', activeforeground='#ffffff',
+            command=self._exit_selection_mode)
+        btn_cancel.pack(side='right', padx=10, pady=4)
+        self._selection_bar = bar
+
+    def _toggle_msg_selection(self, idx):
+        if idx < 0 or idx >= len(self._msg_ranges_idx):
+            return
+        sm, em = self._msg_ranges_idx[idx]
+        if idx in self._selection_set:
+            self._selection_set.discard(idx)
+            self.chat_text.tag_remove('selected_msg',
+                                      self.chat_text.index(sm),
+                                      self.chat_text.index(em))
+        else:
+            self._selection_set.add(idx)
+            self.chat_text.tag_add('selected_msg',
+                                   self.chat_text.index(sm),
+                                   self.chat_text.index(em))
+        self._update_selection_count()
+        if not self._selection_set:
+            self._exit_selection_mode()
+
+    def _update_selection_count(self):
+        if self._sel_count_lbl:
+            n = len(self._selection_set)
+            label = f'{n} selecionada' if n == 1 else f'{n} selecionadas'
+            self._sel_count_lbl.config(text=label)
+
+    def _exit_selection_mode(self, *args):
+        if not self._selection_mode:
+            return
+        for idx in list(self._selection_set):
+            if idx < len(self._msg_ranges_idx):
+                sm, em = self._msg_ranges_idx[idx]
+                try:
+                    self.chat_text.tag_remove('selected_msg',
+                                              self.chat_text.index(sm),
+                                              self.chat_text.index(em))
+                except Exception:
+                    pass
+        self._selection_set.clear()
+        self._selection_mode = False
+        if self._selection_bar is not None:
+            try:
+                self._selection_bar.destroy()
+            except Exception:
+                pass
+            self._selection_bar = None
+            self._sel_count_lbl = None
+
+    def _on_escape_selection(self, event):
+        if self._selection_mode:
+            self._exit_selection_mode()
+            return 'break'
+
+    def _collect_selected_messages(self):
+        out = []
+        for idx in sorted(self._selection_set):
+            if idx < len(self._msg_data):
+                d = self._msg_data[idx]
+                ts = datetime.fromtimestamp(
+                    d.get('timestamp') or time.time()).strftime('%H:%M')
+                out.append(f"[{ts}] {d.get('sender','')}: {d.get('text','')}")
+        return out
+
+    def _selection_copy(self):
+        lines = self._collect_selected_messages()
+        if not lines:
+            return
+        text = '\n'.join(lines)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._exit_selection_mode()
+
+    def _selection_forward(self):
+        msgs = [self._msg_data[i]['text'] for i in sorted(self._selection_set)
+                if i < len(self._msg_data) and self._msg_data[i].get('text')]
+        if not msgs:
+            return
+        self._open_forward_dialog(msgs)
+        self._exit_selection_mode()
+
+    def _open_forward_dialog(self, messages):
+        dlg = tk.Toplevel(self)
+        dlg.title('Encaminhar mensagens')
+        dlg.configure(bg='#f5f7fa')
+        dlg.geometry('320x420')
+        dlg.transient(self)
+        dlg.grab_set()
+        tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
+                 font=('Segoe UI', 10, 'bold'),
+                 bg='#f5f7fa', fg='#1a202c').pack(padx=12, pady=(12, 6), anchor='w')
+        list_frame = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
+        list_frame.pack(fill='both', expand=True, padx=12, pady=4)
+        lb = tk.Listbox(list_frame, font=('Segoe UI', 9),
+                        bg='#ffffff', fg='#1a202c',
+                        selectbackground='#1e66d0',
+                        selectforeground='#ffffff',
+                        bd=0, relief='flat', activestyle='none')
+        lb.pack(fill='both', expand=True)
+        targets = []
+        for uid, info in self.app.peer_info.items():
+            if uid == self.messenger.user_id:
+                continue
+            name = info.get('display_name', uid)
+            status = info.get('status', 'offline')
+            if status == 'offline':
+                continue
+            targets.append(('peer', uid, f'\U0001f464 {name}'))
+        for gid, gw in self.app.group_windows.items():
+            if gid == self.group_id:
+                continue
+            try:
+                name = gw.group_info.get('name', gid)
+            except Exception:
+                name = gid
+            targets.append(('group', gid, f'\U0001f465 {name}'))
+        for t in targets:
+            lb.insert('end', t[2])
+        btn_frame = tk.Frame(dlg, bg='#f5f7fa')
+        btn_frame.pack(fill='x', padx=12, pady=10)
+
+        def _send():
+            sel = lb.curselection()
+            if not sel:
+                return
+            kind, ident, _ = targets[sel[0]]
+            body = '[Encaminhada]\n' + '\n'.join(messages)
+            try:
+                if kind == 'peer':
+                    self.messenger.send_message(ident, body)
+                else:
+                    self.messenger.send_group_message(ident, body)
+            except Exception:
+                log.exception('Erro ao encaminhar')
+            dlg.destroy()
+
+        tk.Button(btn_frame, text='Enviar', font=('Segoe UI', 9, 'bold'),
+                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+                  cursor='hand2', padx=14, pady=4,
+                  activebackground='#2451a0', activeforeground='#ffffff',
+                  command=_send).pack(side='right', padx=4)
+        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+                  cursor='hand2', padx=14, pady=4,
+                  command=dlg.destroy).pack(side='right', padx=4)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
 
     # Callback do windnd: arquivos arrastados para a janela do grupo
     def _on_drop_files(self, files):
@@ -5950,6 +6783,12 @@ class LanMessengerApp:
     def _deferred_init(self):
         self._init_messenger()
 
+        # Carregar ramal salvo
+        try:
+            self.ramal_var.set(self.messenger.ramal or '')
+        except Exception:
+            pass
+
         # Carregar nota salva do banco
         saved_note = self.messenger.note
         if saved_note:
@@ -6380,6 +7219,21 @@ class LanMessengerApp:
         self.status_combo.bind('<<ComboboxSelected>>',
                                self._on_status_change)
 
+        # Ramal (4 digitos numericos) — substitui badge de Departamento no TreeView
+        tk.Label(status_row, text='Ramal:', font=('Segoe UI', 8),
+                 bg=NAVY, fg='#c8d6e5').pack(side='left', padx=(10, 3))
+        vcmd = (self.root.register(self._validate_ramal_entry), '%P')
+        self.ramal_var = tk.StringVar(value='')
+        self.ramal_entry = tk.Entry(status_row, textvariable=self.ramal_var,
+                                    font=('Segoe UI', 9), width=6,
+                                    bg='#1a3f7a', fg='#ffffff',
+                                    insertbackground='#ffffff',
+                                    relief='flat', bd=0, justify='center',
+                                    validate='key', validatecommand=vcmd)
+        self.ramal_entry.pack(side='left', ipady=2)
+        self.ramal_entry.bind('<FocusOut>', lambda e: self._save_ramal())
+        self.ramal_entry.bind('<Return>', lambda e: (self._save_ramal(), self.root.focus_set()))
+
         # Botões de ação rápida: Transmitir e Bate Papo
         action_row = tk.Frame(user_frame, bg=NAVY)
         action_row.pack(fill='x', padx=10, pady=(0, 4))
@@ -6740,7 +7594,7 @@ class LanMessengerApp:
 
     # Renderiza linha composta (avatar + nome + nota com emojis coloridos) para o TreeView.
     # Retorna ImageTk.PhotoImage ou None se PIL indisponível.
-    def _render_contact_display(self, uid, name, note, status, bold=False, unread_count=0, dept=''):
+    def _render_contact_display(self, uid, name, note, status, bold=False, unread_count=0, dept='', ramal=''):
         if not HAS_PIL:
             return None
         from PIL import ImageDraw, ImageFont
@@ -6774,11 +7628,11 @@ class LanMessengerApp:
         name_bbox = d.textbbox((0, 0), name_text, font=name_font)
         name_w = name_bbox[2] - name_bbox[0]
 
-        # Departamento badge
+        # Ramal badge (substituiu badge de Departamento)
         dept_w = 0
         dept_text = ''
-        if dept:
-            dept_text = f'[{dept}]'
+        if ramal:
+            dept_text = f'[{ramal}]'
             db = d.textbbox((0, 0), dept_text, font=dept_font)
             dept_w = db[2] - db[0] + 6
 
@@ -6909,8 +7763,9 @@ class LanMessengerApp:
             name = c.get('display_name', 'Unknown')
             note = c.get('note', '')
             dept = c.get('department', '')
+            ramal = c.get('ramal', '')
             avatar = self._create_contact_avatar(uid, name, tag)
-            row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
+            row_img = self._render_contact_display(uid, name, note, tag, dept=dept, ramal=ramal)
             # Offline nao aparece no TreeView — salva info mas nao insere
             if tag == 'offline':
                 self.peer_info[uid] = {
@@ -6938,6 +7793,8 @@ class LanMessengerApp:
                 'hostname': c.get('hostname', ''),
                 'status': status,
                 'note': note,
+                'department': dept,
+                'ramal': ramal,
             }
         self._sort_tree_children(self.group_general)
 
@@ -7147,6 +8004,22 @@ class LanMessengerApp:
         # Tirar foco do entry
         self.root.focus_set()
         return 'break'  # impede nova linha no tk.Text ao pressionar Enter
+
+    # Valida entrada do Entry de Ramal: apenas digitos, max 4.
+    def _validate_ramal_entry(self, proposed):
+        if proposed == '':
+            return True
+        return proposed.isdigit() and len(proposed) <= 4
+
+    # Salva ramal no banco + propaga via announce.
+    def _save_ramal(self):
+        ramal = (self.ramal_var.get() or '').strip()
+        # Aceita vazio OU exatamente 4 digitos
+        if ramal and (not ramal.isdigit() or len(ramal) != 4):
+            return
+        if ramal == (self.messenger.ramal or ''):
+            return
+        self.messenger.change_ramal(ramal)
 
     def _show_note_emoji_picker(self):
         popup = tk.Toplevel(self.root)
@@ -7663,6 +8536,7 @@ class LanMessengerApp:
         name = info.get('display_name', 'Unknown')
         note = info.get('note', '')
         dept = info.get('department', '')
+        ramal = info.get('ramal', '')
 
         # Determina o grupo pai correto (departamento > Geral; offline = detach)
         if tag == 'offline':
@@ -7674,7 +8548,7 @@ class LanMessengerApp:
 
         # Cache key: pula re-render PIL quando nada mudou desde o ultimo announce
         avatar_data = info.get('avatar_data', '')
-        cache_key = (name, note, tag, dept, hash(avatar_data) if avatar_data else 0)
+        cache_key = (name, note, tag, dept, ramal, hash(avatar_data) if avatar_data else 0)
         cached = self._contact_render_cache.get(uid)
 
         # Early-exit: uid ja existe, parent nao mudou, cache bateu, nao esta em unread
@@ -7691,7 +8565,7 @@ class LanMessengerApp:
         if cached is not None and cached[0] == cache_key:
             row_img = cached[1]
         else:
-            row_img = self._render_contact_display(uid, name, note, tag, dept=dept)
+            row_img = self._render_contact_display(uid, name, note, tag, dept=dept, ramal=ramal)
             self._contact_render_cache[uid] = (cache_key, row_img)
 
         if row_img:
@@ -7808,7 +8682,8 @@ class LanMessengerApp:
             status = status_tag[0] if status_tag else 'online'
             avatar = self._create_contact_avatar(uid, name, status)
             dept = info.get('department', '')
-            row_img = self._render_contact_display(uid, name, note, status, bold=True, unread_count=unread, dept=dept)
+            ramal = info.get('ramal', '')
+            row_img = self._render_contact_display(uid, name, note, status, bold=True, unread_count=unread, dept=dept, ramal=ramal)
             if row_img:
                 self.tree.item(item, text='', image=row_img)
             else:
@@ -7824,9 +8699,10 @@ class LanMessengerApp:
             name = info.get('display_name', '')
             note = info.get('note', '')
             dept = info.get('department', '')
+            ramal = info.get('ramal', '')
             status = tags[0] if tags and tags[0] != 'group' else 'online'
             avatar = self._create_contact_avatar(uid, name, status)
-            row_img = self._render_contact_display(uid, name, note, status, dept=dept)
+            row_img = self._render_contact_display(uid, name, note, status, dept=dept, ramal=ramal)
             if row_img:
                 self.tree.item(item, text='', image=row_img)
             else:

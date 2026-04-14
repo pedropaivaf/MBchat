@@ -312,6 +312,11 @@ class UDPDiscovery:
         self.department = dept
         self._send_announce()
 
+    # Atualiza ramal (4 digitos) e propaga via announce
+    def update_ramal(self, ramal):
+        self.ramal = ramal
+        self._send_announce()
+
     # Atualiza avatar e propaga via announce
     # index: Indice do avatar padrao
     # data_b64: Thumbnail JPEG em base64 (~1-2KB no pacote UDP)
@@ -336,6 +341,7 @@ class UDPDiscovery:
             'avatar_index': self.avatar_index,  # Indice do avatar
             'avatar_data': self.avatar_data,    # Thumbnail base64 JPEG
             'department': getattr(self, 'department', ''),  # Departamento do usuario
+            'ramal': getattr(self, 'ramal', ''),  # Ramal (4 digitos)
             'ip': get_local_ip(),       # IP local atual
             'hostname': socket.gethostname(),   # Nome da maquina
             'os': f"{platform.system()} {platform.release()}",  # OS info
@@ -438,6 +444,7 @@ class UDPDiscovery:
                 'avatar_index': pkt.get('avatar_index', 0),
                 'avatar_data': pkt.get('avatar_data', ''),
                 'department': pkt.get('department', ''),
+                'ramal': pkt.get('ramal', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
                 'last_seen': time.time()  # Marca momento do recebimento
             }

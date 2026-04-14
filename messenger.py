@@ -101,6 +101,7 @@ class Messenger:
 
         self.status = 'online'  # Status inicial
         self.note = self.db.get_local_note()  # Nota pessoal do banco
+        self.ramal = self.db.get_local_ramal()  # Ramal (4 digitos) do banco
         self.avatar_index = int(self.db.get_setting('avatar_index', '0'))  # Avatar padrao
         self.avatar_data = self._generate_avatar_thumbnail()  # Thumbnail base64
         self.db.set_local_user(self.user_id, self.display_name, self.status)
@@ -122,6 +123,7 @@ class Messenger:
         self.discovery.avatar_index = self.avatar_index
         self.discovery.avatar_data = self.avatar_data
         self.discovery.department = self.db.get_setting('department', '')
+        self.discovery.ramal = self.db.get_local_ramal()
 
         # Servidor TCP: recebe mensagens de outros peers
         self.tcp_server = TCPServer(
@@ -191,6 +193,8 @@ class Messenger:
         dept = info.get('department', '')
         if dept:
             self.db.set_contact_department(uid, dept)
+        ramal = info.get('ramal', '')
+        self.db.set_contact_ramal(uid, ramal)
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
 
@@ -542,6 +546,17 @@ class Messenger:
         self.note = note
         self.db.update_local_note(note)   # Salva no banco
         self.discovery.update_note(note)  # Propaga via announce
+
+    # Altera ramal (4 digitos) e propaga para todos os peers
+    def change_ramal(self, ramal):
+        # Aceita vazio ou exatamente 4 digitos numericos
+        ramal = (ramal or '').strip()
+        if ramal and (not ramal.isdigit() or len(ramal) != 4):
+            return False
+        self.ramal = ramal
+        self.db.update_local_ramal(ramal)
+        self.discovery.update_ramal(ramal)
+        return True
 
     # Altera avatar e propaga para todos os peers
     # index: Indice do avatar padrao
