@@ -1384,8 +1384,9 @@ class PreferencesWindow(tk.Toplevel):
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
                                          state='readonly',
-                                         values=['(Nenhum)', 'Fiscal', 'Contábil', 'TI',
-                                                 'Comercial', 'DP', 'SC',
+                                         values=['(Nenhum)', 'Administrativo',
+                                                 'Fiscal', 'Contábil', 'TI',
+                                                 'Comercial', 'Pessoal', 'CS',
                                                  'Marketing', 'Recepção'])
         cur_dept = self.messenger.db.get_setting('department', '')
         self._dept_combo.set(cur_dept if cur_dept else '(Nenhum)')
