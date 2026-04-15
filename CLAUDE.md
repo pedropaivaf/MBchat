@@ -87,6 +87,20 @@ python build.py --version X.Y.Z --release
 - Respostas curtas e diretas
 - Se screenshot de erro, corrigir direto
 
+## Workflow de changelog (ao lancar nova versao)
+
+Apos o build+release, atualizar o changelog no cofre Obsidian:
+1. Abrir ~/obsidian-cofre/Projetos/MB-Contabilidade/MB Chat - Changelog.md
+2. Adicionar entrada no topo (abaixo do separador ---) no formato:
+   ## vX.Y.Z — DD/MMM/AAAA — EMOJI Tipo
+   Descricao curta da mudanca
+3. Atualizar campo versao-atual no frontmatter
+4. Atualizar estatisticas (total de versoes, por tipo)
+5. O plugin Obsidian Git faz commit+push automatico a cada 5 min
+
+Tipos: Major Feature, Feature, Bugfix, Refactor, Build, Docs, UI, Performance, QA, Hotfix, UX
+Emojis: ver legenda no proprio changelog
+
 ## Documentacao detalhada
 
 Para detalhes alem deste resumo, consultar:
