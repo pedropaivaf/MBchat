@@ -6996,10 +6996,8 @@ class LanMessengerApp:
                        command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
-        m3 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m3.add_command(label=_t('menu_about'),
-                       command=self._show_about)
-        menubar.add_cascade(label=_t('menu_help'), menu=m3)
+        # "Sobre" e um botao direto no menubar (sem submenu). Clicar abre o dialog.
+        menubar.add_command(label=_t('menu_help'), command=self._show_about)
 
         self.root.config(menu=menubar)
 
@@ -7222,9 +7220,7 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
-        m3 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m3.add_command(label=_t('menu_about'), command=self._show_about)
-        menubar.add_cascade(label=_t('menu_help'), menu=m3)
+        menubar.add_command(label=_t('menu_help'), command=self._show_about)
 
         self.root.config(menu=menubar)
 
@@ -8574,24 +8570,61 @@ class LanMessengerApp:
     def _get_dept_node(self, dept_name):
         if dept_name in self._dept_nodes:
             return self._dept_nodes[dept_name]
-        # Cria no de departamento ANTES de Geral (que por sua vez fica antes de Grupos)
-        node = self.tree.insert('', self.tree.index(self.group_general),
+        # Cria no de departamento no fim e depois forca a ordem [depts, Geral, Grupos]
+        node = self.tree.insert('', 'end',
                                 text=dept_name, open=True, tags=('group',))
         self._dept_nodes[dept_name] = node
+        self._enforce_section_order()
         return node
 
     # Esconde secao Geral quando nao tem filhos visiveis (todos os peers tem dept).
-    # Mostra de volta quando volta a ter conteudo.
+    # Mostra de volta quando volta a ter conteudo. Invariante: a ordem dos tops-level
+    # e [depts... , Geral, Grupos] — Geral sempre logo antes de Grupos, depts sempre
+    # antes de Geral. Se ja estiver atacada, reforca a ordem via _enforce_section_order.
     def _update_general_visibility(self):
         try:
             has_children = bool(self.tree.get_children(self.group_general))
-            cur_parent = self.tree.parent(self.group_general)
-            if has_children and not cur_parent:
-                # Reattach na posicao correta: antes de Grupos
-                self.tree.reattach(self.group_general, '',
-                                   self.tree.index(self.group_groups))
-            elif not has_children and cur_parent == '':
+            root_children = self.tree.get_children('')
+            is_attached = self.group_general in root_children
+
+            if has_children and not is_attached:
+                self._reattach_general_before_groups()
+            elif not has_children and is_attached:
                 self.tree.detach(self.group_general)
+            self._enforce_section_order()
+        except tk.TclError:
+            pass
+
+    # Reancora Geral imediatamente antes de Grupos, sem mexer nos depts existentes.
+    def _reattach_general_before_groups(self):
+        try:
+            root_children = self.tree.get_children('')
+            if self.group_groups in root_children:
+                idx = root_children.index(self.group_groups)
+            else:
+                idx = 'end'
+            self.tree.reattach(self.group_general, '', idx)
+        except tk.TclError:
+            pass
+
+    # Forca a ordem global [depts..., Geral, Grupos] entre os top-level do tree.
+    # Chamada apos qualquer mutacao que possa ter reorganizado Geral/Grupos.
+    def _enforce_section_order(self):
+        try:
+            root_children = list(self.tree.get_children(''))
+            if not root_children:
+                return
+            section_nodes = {self.group_general, self.group_groups}
+            depts = [c for c in root_children if c not in section_nodes]
+            ordered = list(depts)
+            if self.group_general in root_children:
+                ordered.append(self.group_general)
+            if self.group_groups in root_children:
+                ordered.append(self.group_groups)
+            for i, node in enumerate(ordered):
+                if root_children[i] != node:
+                    self.tree.move(node, '', i)
+                    root_children = list(self.tree.get_children(''))
         except tk.TclError:
             pass
 
@@ -11160,19 +11193,35 @@ class LanMessengerApp:
     # Exibe dialog 'MB Chat' com informacoes do aplicativo.
     # Dividido em helpers pequenos por responsabilidade: header (icone+titulo+versao),
     # body (subtitulo+features) e footer (botoes Autor/OK).
+    # Nao-modal (sem grab_set) porque abrir o navegador no botao "Autor" transferia
+    # o foco do grab para fora e deixava o app travado ao voltar.
     def _show_about(self):
+        if getattr(self, '_about_dlg', None) is not None:
+            try:
+                if self._about_dlg.winfo_exists():
+                    self._about_dlg.deiconify()
+                    self._about_dlg.lift()
+                    self._about_dlg.focus_set()
+                    return
+            except tk.TclError:
+                pass
+            self._about_dlg = None
         dlg = self._build_about_dialog()
-        _center_window(dlg, 440, 520)
+        self._about_dlg = dlg
+        self._center_about_dialog(dlg, 440, 520)
         _apply_rounded_corners(dlg)
         try:
             self._force_taskbar_entry(dlg)
         except Exception:
             pass
-        dlg.wait_window()
+        dlg.deiconify()
+        dlg.lift()
+        dlg.focus_set()
 
     def _build_about_dialog(self):
         t = self._theme if hasattr(self, '_theme') else THEMES.get('MB Contabilidade', {})
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title(APP_NAME)
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -11184,11 +11233,40 @@ class LanMessengerApp:
         self._build_about_header(dlg, t)
         self._build_about_body(dlg, t)
         self._build_about_footer(dlg, t)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
-        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
-        dlg.grab_set()
-        dlg.focus_set()
+        dlg.bind('<Escape>', lambda e: self._close_about_dialog())
+        dlg.protocol('WM_DELETE_WINDOW', self._close_about_dialog)
         return dlg
+
+    # Centraliza o dialog na tela da janela principal (funciona em multi-monitor).
+    def _center_about_dialog(self, dlg, w, h):
+        try:
+            dlg.update_idletasks()
+            self.root.update_idletasks()
+            if self.root.winfo_viewable():
+                rx = self.root.winfo_rootx()
+                ry = self.root.winfo_rooty()
+                rw = self.root.winfo_width()
+                rh = self.root.winfo_height()
+                x = rx + (rw - w) // 2
+                y = ry + (rh - h) // 2
+            else:
+                sx = dlg.winfo_screenwidth()
+                sy = dlg.winfo_screenheight()
+                x = (sx - w) // 2
+                y = (sy - h) // 2
+            dlg.geometry(f'{w}x{h}+{max(0, x)}+{max(0, y)}')
+        except Exception:
+            dlg.geometry(f'{w}x{h}')
+
+    def _close_about_dialog(self):
+        dlg = getattr(self, '_about_dlg', None)
+        if dlg is None:
+            return
+        try:
+            dlg.destroy()
+        except tk.TclError:
+            pass
+        self._about_dlg = None
 
     def _build_about_header(self, parent, t):
         bg = t.get('bg_window', '#f5f7fa')
@@ -11286,7 +11364,7 @@ class LanMessengerApp:
                    t.get('btn_active', '#d0d0d0'))
 
         ok_btn = tk.Button(footer, text='OK',
-                           command=parent.destroy,
+                           command=self._close_about_dialog,
                            font=('Segoe UI', 10, 'bold'),
                            bg=t.get('btn_send_bg', '#3366aa'),
                            fg=t.get('btn_send_fg', '#ffffff'),
@@ -11298,12 +11376,16 @@ class LanMessengerApp:
                    t.get('btn_send_bg', '#3366aa'),
                    t.get('btn_active', '#d0d0d0'))
 
+    # Abre o site do autor no navegador padrao em thread separada para nao
+    # bloquear o mainloop do tk em caso de delay do ShellExecute.
     def _open_author_site(self):
-        import webbrowser
-        try:
-            webbrowser.open('https://pedropaivaf.dev/')
-        except Exception:
-            pass
+        def _open():
+            import webbrowser
+            try:
+                webbrowser.open('https://pedropaivaf.dev/')
+            except Exception:
+                pass
+        threading.Thread(target=_open, daemon=True).start()
 
     # --- Network callbacks ---
     # Callback: novo peer descoberto ou peer existente atualizou presenca via UDP.
