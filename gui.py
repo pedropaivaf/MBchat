@@ -1081,9 +1081,9 @@ class PreferencesWindow(tk.Toplevel):
         _center_window(self, 580, 450)
         _apply_rounded_corners(self)
 
-        # --- Main layout: top area (left+right) and bottom buttons ---
+        # --- Main layout: top area (left+right). Sem bottom buttons — auto-save. ---
         top = tk.Frame(self, bg=BG_WINDOW)
-        top.pack(fill='both', expand=True, padx=6, pady=(6, 0))
+        top.pack(fill='both', expand=True, padx=6, pady=6)
 
         # Left sidebar
         left = tk.Frame(top, bg='#f8fafc', width=160, bd=0, relief='flat',
@@ -1120,43 +1120,15 @@ class PreferencesWindow(tk.Toplevel):
             _add_hover(btn, '#f8fafc', '#e2e8f0')
             self.cat_buttons.append(btn)
 
-        # --- Bottom buttons (outside top, guaranteed visible) ---
-        bottom = tk.Frame(self, bg=BG_WINDOW)
-        bottom.pack(fill='x', padx=10, pady=8)
-
-        btn_cancel = tk.Button(bottom, text='Cancelar',
-                               font=('Segoe UI', 9),
-                               bg='#e2e8f0', fg='#4a5568', relief='flat',
-                               bd=0, padx=14, pady=4, cursor='hand2',
-                               activebackground='#cbd5e0',
-                               command=self.destroy)
-        btn_cancel.pack(side='right', padx=4)
-        _add_hover(btn_cancel, '#e2e8f0', '#cbd5e0')
-
-        btn_ok = tk.Button(bottom, text='OK',
-                           font=('Segoe UI', 9, 'bold'),
-                           bg='#0f2a5c', fg='#ffffff', relief='flat',
-                           bd=0, padx=14, pady=4, cursor='hand2',
-                           activebackground='#1a3f7a',
-                           activeforeground='#ffffff',
-                           command=self._save_all)
-        btn_ok.pack(side='right', padx=4)
-        _add_hover(btn_ok, '#0f2a5c', '#1a3f7a')
-
-        btn_reset = tk.Button(bottom, text='Redefinir Preferências',
-                              font=('Segoe UI', 8),
-                              bg='#f5f7fa', fg='#94a3b8', relief='flat',
-                              bd=0, padx=8, pady=4, cursor='hand2',
-                              activebackground='#e2e8f0',
-                              command=self._reset_defaults)
-        btn_reset.pack(side='left', padx=4)
-        _add_hover(btn_reset, '#f5f7fa', '#e2e8f0')
-
         # Settings vars
         self._init_vars()
 
         # Select initial tab
         self._select_category(initial_tab)
+
+        # Auto-save: cada alteracao em var persiste automaticamente (debounce 400ms).
+        # Configurado apos _select_category para evitar dispara durante construcao.
+        self._setup_autosave()
 
     # Inicializa todas as variáveis tkinter com os valores salvos no banco de dados.
     # Cada var_* corresponde a uma configuração persistida em database.py via
@@ -1168,16 +1140,6 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('autostart', '0') == '1')
         self.var_show_main = tk.BooleanVar(
             value=db.get_setting('show_main_on_start', '1') == '1')
-        self.var_tray_icon = tk.BooleanVar(
-            value=db.get_setting('tray_icon', '1') == '1')
-        self.var_minimize_tray = tk.BooleanVar(
-            value=db.get_setting('minimize_to_tray', '0') == '1')
-        self.var_single_click_tray = tk.BooleanVar(
-            value=db.get_setting('single_click_tray', '0') == '1')
-        self.var_balloon = tk.BooleanVar(
-            value=db.get_setting('balloon_notify', '1') == '1')
-        self.var_minimize_close = tk.BooleanVar(
-            value=db.get_setting('minimize_on_close', '0') == '1')
         self.var_language = tk.StringVar(
             value=db.get_setting('language', 'Português'))
         self.var_notif_msg_private = tk.BooleanVar(
@@ -1243,6 +1205,47 @@ class PreferencesWindow(tk.Toplevel):
         self.var_display_name = tk.StringVar(
             value=self.messenger.display_name)
 
+    # Atacha trace_add a todas as vars para persistir alteracoes automaticamente
+    # (debounce 400ms). Eliminar o botao OK — qualquer mudanca e gravada sozinha.
+    def _setup_autosave(self):
+        self._autosave_after_id = None
+        vars_to_watch = [
+            self.var_autostart, self.var_show_main, self.var_language,
+            self.var_notif_msg_private, self.var_notif_msg_group,
+            self.var_notif_msg_broadcast, self.var_notif_file, self.var_notif_reminder,
+            self.var_sound_master, self.var_sound_msg_private, self.var_sound_msg_group,
+            self.var_sound_msg_broadcast, self.var_sound_file_start,
+            self.var_sound_file_done, self.var_sound_reminder,
+            self.var_flash_taskbar_msg, self.var_flash_taskbar_file, self.var_flash_reminder,
+            self.var_save_history, self.var_history_path, self.var_download_dir,
+            self.var_udp_port, self.var_tcp_port, self.var_multicast,
+            self.var_font_size, self.var_theme, self.var_enter_send,
+            self.var_show_timestamp, self.var_msg_style, self.var_avatar_index,
+            self.var_custom_avatar, self.var_display_name,
+        ]
+        for v in vars_to_watch:
+            try:
+                v.trace_add('write', self._schedule_autosave)
+            except Exception:
+                pass
+
+    # Debounce: cada alteracao reinicia o timer. Evita escrever 30+ chaves no
+    # SQLite a cada keystroke num Entry de texto.
+    def _schedule_autosave(self, *args):
+        try:
+            if self._autosave_after_id is not None:
+                self.after_cancel(self._autosave_after_id)
+        except Exception:
+            pass
+        self._autosave_after_id = self.after(400, self._run_autosave)
+
+    def _run_autosave(self):
+        self._autosave_after_id = None
+        try:
+            self._save_all()
+        except Exception as e:
+            print(f'[prefs] autosave falhou: {e}')
+
     # Seleciona uma categoria da sidebar e reconstrói o painel direito.
     # Atualiza o destaque visual dos botões da sidebar, destrói o frame anterior
     # e chama o método _build_*() da categoria selecionada para preencher o painel.
@@ -1281,27 +1284,6 @@ class PreferencesWindow(tk.Toplevel):
                        bg=BG_WINDOW).pack(anchor='w')
         tk.Checkbutton(lf, text=f'Mostrar a tela principal quando o {APP_NAME} iniciar',
                        variable=self.var_show_main, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-
-        # Bandeja
-        lf2 = tk.LabelFrame(parent, text='Bandeja do Sistema', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=5)
-        lf2.pack(fill='x', padx=10, pady=(0, 8))
-
-        tk.Checkbutton(lf2, text='Mostrar ícone na bandeja do sistema',
-                       variable=self.var_tray_icon, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Minimizar janela principal para a bandeja do sistema',
-                       variable=self.var_minimize_tray, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Um clique no ícone da bandeja para abrir',
-                       variable=self.var_single_click_tray, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Mostrar balões de notificações na bandeja',
-                       variable=self.var_balloon, font=FONT,
-                       bg=BG_WINDOW).pack(anchor='w')
-        tk.Checkbutton(lf2, text='Minimizar janela principal usando o ícone da bandeja',
-                       variable=self.var_minimize_close, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
         # Idioma
@@ -1713,20 +1695,18 @@ class PreferencesWindow(tk.Toplevel):
     def _save_all(self):
         db = self.messenger.db
 
+        # Snapshot do estado anterior para decidir side effects pesados
+        old_theme = db.get_setting('theme', 'claro')
+        old_lang = db.get_setting('language', 'pt')
+        old_autostart = db.get_setting('autostart', '0')
+        old_font = db.get_setting('font_size', '10')
+        old_avatar_idx = db.get_setting('avatar_index', '0')
+        old_avatar_custom = db.get_setting('avatar_custom', '')
+
         # Persiste cada configuração individualmente no banco SQLite
         db.set_setting('autostart', '1' if self.var_autostart.get() else '0')
         db.set_setting('show_main_on_start',
                        '1' if self.var_show_main.get() else '0')
-        db.set_setting('tray_icon',
-                       '1' if self.var_tray_icon.get() else '0')
-        db.set_setting('minimize_to_tray',
-                       '1' if self.var_minimize_tray.get() else '0')
-        db.set_setting('single_click_tray',
-                       '1' if self.var_single_click_tray.get() else '0')
-        db.set_setting('balloon_notify',
-                       '1' if self.var_balloon.get() else '0')
-        db.set_setting('minimize_on_close',
-                       '1' if self.var_minimize_close.get() else '0')
         db.set_setting('language', self.var_language.get())
         db.set_setting('notif_msg_private',
                        '1' if self.var_notif_msg_private.get() else '0')
@@ -1772,21 +1752,30 @@ class PreferencesWindow(tk.Toplevel):
         db.set_setting('show_timestamp',
                        '1' if self.var_show_timestamp.get() else '0')
         db.set_setting('msg_style', self.var_msg_style.get())
-        # Apply avatar change via messenger (syncs to network)
-        self.messenger.change_avatar(
-            self.var_avatar_index.get(),
-            self.var_custom_avatar.get())
+        # Apply avatar change via messenger (syncs to network) — so se mudou
+        new_avatar_idx = self.var_avatar_index.get()
+        new_avatar_custom = self.var_custom_avatar.get()
+        avatar_changed = (str(new_avatar_idx) != str(old_avatar_idx)
+                          or new_avatar_custom != old_avatar_custom)
+        if avatar_changed:
+            self.messenger.change_avatar(new_avatar_idx, new_avatar_custom)
 
-        # Departamento ja foi salvo e propagado via _on_dept_changed,
-        # mas garante consistencia caso tenha sido alterado por outro meio.
-        if hasattr(self, '_dept_combo'):
-            dept = self._dept_combo.get().strip()
-            if dept == '(Nenhum)':
-                dept = ''
-            cur = db.get_setting('department', '')
-            if cur != dept:
-                db.set_setting('department', dept)
-                self.messenger.discovery.update_department(dept)
+        # Departamento ja foi salvo e propagado via _on_dept_changed.
+        # Re-checar se o widget ainda existe (usuario pode ter trocado de aba,
+        # destruindo o combobox — attr Python persiste mas Tcl command nao).
+        combo = getattr(self, '_dept_combo', None)
+        if combo is not None:
+            try:
+                if combo.winfo_exists():
+                    dept = combo.get().strip()
+                    if dept == '(Nenhum)':
+                        dept = ''
+                    cur = db.get_setting('department', '')
+                    if cur != dept:
+                        db.set_setting('department', dept)
+                        self.messenger.discovery.update_department(dept)
+            except tk.TclError:
+                pass
 
         # Apply name change (uses StringVar, safe even if Conta tab not visible)
         new_name = self.var_display_name.get().strip()
@@ -1794,43 +1783,52 @@ class PreferencesWindow(tk.Toplevel):
             self.messenger.change_name(new_name)
             self.app.lbl_username.config(text=f' {new_name}')
 
-        # Apply font size to open chat windows and update global
-        new_size = int(self.var_font_size.get())
-        chat_font = ('Segoe UI', new_size)
-        chat_font_bold = ('Segoe UI', new_size, 'bold')
-        # Update globals so new windows use updated font
-        global FONT_CHAT
-        FONT_CHAT = chat_font
-        for cw in self.app.chat_windows.values():
+        # Apply font size to open chat windows — so se mudou
+        new_font = str(self.var_font_size.get())
+        if new_font != old_font:
             try:
-                cw.chat_text.configure(font=chat_font)
-                cw.chat_text.tag_configure('msg', font=chat_font)
-                cw.chat_text.tag_configure('my_name', font=chat_font_bold)
-                cw.chat_text.tag_configure('peer_name', font=chat_font_bold)
-                cw.entry.configure(font=chat_font)
+                new_size = int(new_font)
+                chat_font = ('Segoe UI', new_size)
+                chat_font_bold = ('Segoe UI', new_size, 'bold')
+                global FONT_CHAT
+                FONT_CHAT = chat_font
+                for cw in self.app.chat_windows.values():
+                    try:
+                        cw.chat_text.configure(font=chat_font)
+                        cw.chat_text.tag_configure('msg', font=chat_font)
+                        cw.chat_text.tag_configure(
+                            'my_name', font=chat_font_bold)
+                        cw.chat_text.tag_configure(
+                            'peer_name', font=chat_font_bold)
+                        cw.entry.configure(font=chat_font)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
-        # Apply theme
-        self.app.apply_theme(self.var_theme.get())
+        # Apply theme — so se mudou
+        new_theme = self.var_theme.get()
+        if new_theme != old_theme:
+            self.app.apply_theme(new_theme)
 
-        # Apply auto-start
-        if self.var_autostart.get():
-            _setup_autostart()
-        else:
-            _remove_autostart()
+        # Apply auto-start — so se mudou
+        new_autostart = '1' if self.var_autostart.get() else '0'
+        if new_autostart != old_autostart:
+            if new_autostart == '1':
+                _setup_autostart()
+            else:
+                _remove_autostart()
 
-        # Apply language
-        lang = self.var_language.get()
-        if lang in LANGS:
+        # Apply language — so se mudou
+        new_lang = self.var_language.get()
+        if new_lang != old_lang and new_lang in LANGS:
             global _CURRENT_LANG
-            _CURRENT_LANG = LANGS[lang]
+            _CURRENT_LANG = LANGS[new_lang]
             self.app._rebuild_ui_language()
 
-        # Update avatar in main window
-        self.app._update_avatar()
-
-        self.destroy()
+        # Update avatar in main window — so se mudou
+        if avatar_changed:
+            self.app._update_avatar()
 
     def _reset_defaults(self):
         if messagebox.askyesno('Redefinir', 'Restaurar todas as preferências?',
@@ -8847,6 +8845,12 @@ class LanMessengerApp:
     # Titulo: 'Nome do Grupo - Remetente'. Preview truncado em 120 chars.
     # Usa winotify (toast clicavel) se disponivel, senao balloon tip do tray.
     def _show_group_toast(self, group_id, display_name, content):
+        # Master gate: balloon_notify desligado silencia todos os toasts.
+        try:
+            if self.messenger.db.get_setting('balloon_notify', '1') != '1':
+                return
+        except Exception:
+            pass
         if self.messenger.db.get_setting('notif_msg_group', '1') != '1':
             return
         group_data = self.messenger._groups.get(group_id)             # dados do grupo
@@ -11237,23 +11241,14 @@ class LanMessengerApp:
         dlg.protocol('WM_DELETE_WINDOW', self._close_about_dialog)
         return dlg
 
-    # Centraliza o dialog na tela da janela principal (funciona em multi-monitor).
+    # Centraliza o dialog no centro da tela (monitor principal).
     def _center_about_dialog(self, dlg, w, h):
         try:
             dlg.update_idletasks()
-            self.root.update_idletasks()
-            if self.root.winfo_viewable():
-                rx = self.root.winfo_rootx()
-                ry = self.root.winfo_rooty()
-                rw = self.root.winfo_width()
-                rh = self.root.winfo_height()
-                x = rx + (rw - w) // 2
-                y = ry + (rh - h) // 2
-            else:
-                sx = dlg.winfo_screenwidth()
-                sy = dlg.winfo_screenheight()
-                x = (sx - w) // 2
-                y = (sy - h) // 2
+            sx = dlg.winfo_screenwidth()
+            sy = dlg.winfo_screenheight()
+            x = (sx - w) // 2
+            y = (sy - h) // 2
             dlg.geometry(f'{w}x{h}+{max(0, x)}+{max(0, y)}')
         except Exception:
             dlg.geometry(f'{w}x{h}')
@@ -11867,6 +11862,13 @@ class LanMessengerApp:
 
     # Mostra notificacao toast nativa do Windows (clicavel via winotify).
     def _show_toast(self, from_user, content, is_broadcast=False):
+        # Master gate: se usuario desativou 'Mostrar baloes de notificacoes',
+        # nenhum toast aparece (nem winotify nem balloon tip).
+        try:
+            if self.messenger.db.get_setting('balloon_notify', '1') != '1':
+                return
+        except Exception:
+            pass
         key = 'notif_msg_broadcast' if is_broadcast else 'notif_msg_private'
         if self.messenger.db.get_setting(key, '1') != '1':
             return
@@ -11920,6 +11922,12 @@ class LanMessengerApp:
             return False
 
     def _show_toast_generic(self, title, body):
+        # Master gate: balloon_notify desligado silencia todos os toasts.
+        try:
+            if self.messenger.db.get_setting('balloon_notify', '1') != '1':
+                return
+        except Exception:
+            pass
         preview = body[:120] + '...' if len(body) > 120 else body
         if HAS_WINOTIFY:
             try:
@@ -11951,6 +11959,15 @@ class LanMessengerApp:
             self._file_dialogs.clear()
         except Exception:
             pass
+        # Se usuario desativou o icone da bandeja, nao ha pra onde esconder:
+        # fechar com X encerra o app de verdade (evita app fantasma).
+        try:
+            tray_enabled = self.messenger.db.get_setting('tray_icon', '1') == '1'
+        except Exception:
+            tray_enabled = True
+        if not tray_enabled:
+            self._quit()
+            return
         try:
             minimize = self.messenger.db.get_setting('minimize_on_close', '0') == '1'
         except Exception:
