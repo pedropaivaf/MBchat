@@ -715,6 +715,7 @@
             <a href="#doc-banco">Banco de Dados</a>
             <a href="#doc-portas">Portas de Rede</a>
             <a href="#doc-discovery">Descoberta de Peers</a>
+            <a href="#doc-firewall">Firewall</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
     </div>
@@ -876,6 +877,23 @@
             </table>
             <div class="docs-note">
                 <strong>Resultado:</strong> A combinação de tri-broadcast + anúncio imediato em eventos + detecção correta de NIC é o que faz o MB Chat ser mais confiável. O intervalo curto só amplifica esses ganhos. Um peer só some da lista se estiver realmente offline — nunca por falha de rede transitória.
+            </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-firewall">
+            <h3>Firewall — PC aparece online pra outros mas não vê ninguém</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Sintoma: o PC abre o MB Chat e a lista fica vazia, mas os outros PCs enxergam ele como online normalmente. Reinstalar o app não resolve. Causa: o Windows Defender Firewall está bloqueando pacotes de entrada (inbound) nas portas do MB Chat. A partir da <strong>v1.4.59</strong> o app detecta isso na primeira execução e pede permissão via UAC para criar as regras automaticamente. Se a janela for recusada ou não aparecer, basta liberar manualmente:
+            </p>
+            <ol style="color: var(--gray-300); font-size: 0.95rem; line-height: 1.8; padding-left: 1.5rem;">
+                <li>Abrir <strong>Painel de Controle → Sistema e Segurança → Windows Defender Firewall → Aplicativos permitidos</strong> (ou rodar <code>control firewall.cpl</code> e clicar em <em>Permitir um aplicativo ou recurso pelo Firewall do Windows Defender</em>).</li>
+                <li>Clicar em <strong>Alterar configurações</strong> (precisa de admin).</li>
+                <li>Procurar <strong>MBChat</strong> na lista. Se já aparecer, marcar as duas caixas: <strong>Particular</strong> e <strong>Público</strong>.</li>
+                <li>Se não aparecer, clicar em <strong>Permitir outro aplicativo…</strong>, <strong>Procurar…</strong> e selecionar <code>MBChat.exe</code> em <code>C:\Program Files\MBChat\MBChat.exe</code> (ou <code>%LOCALAPPDATA%\Programs\MBChat\MBChat.exe</code>). Adicionar e marcar as duas caixas.</li>
+                <li>Clicar <strong>OK</strong>, fechar o MB Chat e abrir de novo — os peers aparecem em até 15 segundos.</li>
+            </ol>
+            <div class="docs-note">
+                <strong>Alternativa rápida via admin:</strong> rodar o <code>tools/fix_firewall.bat</code> (no repositório) como administrador — ele cria as regras por porta (<code>UDP 50100/50110/50120</code> + <code>TCP 50101/50102/50199</code>), sobrevive a reinstalações e reinicia o app.
             </div>
         </div>
 

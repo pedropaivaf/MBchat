@@ -141,6 +141,13 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    deleta todas as regras MBChat, recria Allow Inbound por porta, reinicia o MBChat.
    Enviar por WhatsApp se o auto-fix via UAC falhar ou for recusado.
 
+   **Fix manual via Painel de Controle** (se user recusar UAC e nao quiser rodar .bat):
+   `Painel de Controle > Sistema e Seguranca > Windows Defender Firewall > Aplicativos permitidos`
+   > Alterar configuracoes > marcar **MBChat** em **Particular** e **Publico**. Se nao aparecer
+   na lista, `Permitir outro aplicativo... > Procurar... > MBChat.exe` (em `%LOCALAPPDATA%\Programs\MBChat\`
+   ou `C:\Program Files\MBChat\`). Documentado na landing (`docs/index.html#doc-firewall`) e
+   em `docs/DECISIONS.md`.
+
 7. **tools/sniff_mbchat.py** — Sniffer UDP 50100 passivo, standalone, diagnostico remoto.
    Lista todos os peers anunciando na LAN com IP src vs IP declarado (detecta `get_local_ip()` bugado).
    Rodar com MBChat local fechado. Usado para confirmar se PC com problema esta enviando/recebendo.

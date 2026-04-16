@@ -13,7 +13,9 @@ LAN Messenger tem bug onde peers somem em redes com VPN, Hyper-V, switches geren
 ## Troubleshooting de rede
 
 Se um PC nao descobre peers:
-1. **Firewall**: verificar regra de entrada UDP+TCP 50100-50102. Comando: `netsh advfirewall firewall add rule name=MBChat dir=in action=allow protocol=UDP localport=50100,50101,50102 profile=any`
+1. **Firewall (v1.4.59+ auto-fix via UAC)**: o app detecta regras ausentes na 1a execucao e pede permissao. Se recusar, liberar manualmente em:
+   `Painel de Controle > Sistema e Seguranca > Windows Defender Firewall > Aplicativos permitidos` — marcar **MBChat** nas colunas **Particular** e **Publico**. Se nao aparecer, `Permitir outro aplicativo... > Procurar... > MBChat.exe`.
+   Via CLI (admin): `netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any` + mesmo para TCP 50101,50102,50199. Ou rodar `tools/fix_firewall.bat` como admin.
 2. **Antivirus**: Kaspersky, Norton podem bloquear. Adicionar excecao.
 3. **Multiplas NICs**: VPN, Hyper-V, Docker criam interfaces virtuais. get_local_ip() tenta detectar a correta, mas pode pegar a errada. Desativar NICs virtuais resolve.
 4. **Subnet diferente**: PC deve estar na mesma subnet /24.
