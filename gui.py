@@ -6901,6 +6901,14 @@ class LanMessengerApp:
         # Verifica atualizacoes em background
         self.root.after(2000, self._check_update_startup)
 
+        # Fix auto-invocado de firewall: se regras 'MBChat UDP In'/'MBChat TCP In'
+        # nao existem, pede UAC ao usuario para criar. So roda em build frozen.
+        self.root.after(4000, self._check_firewall_on_startup)
+
+        # Monitor de saude da rede (banner de diagnostico se discovery degradado)
+        # Primeiro check apos 15s (da tempo de sockets iniciarem e pacotes chegarem)
+        self.root.after(15000, self._update_health_banner)
+
     # Posiciona a janela no canto direito da tela, centralizada na vertical.
     def _position_right(self):
         self.root.update_idletasks()
@@ -6990,6 +6998,8 @@ class LanMessengerApp:
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
         m2.add_separator()
+        m2.add_command(label='Diagnostico de rede...',
+                       command=self._open_network_diag)
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -7215,6 +7225,7 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
         m2.add_separator()
+        m2.add_command(label='Diagnostico de rede...', command=self._open_network_diag)
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
@@ -11169,6 +11180,294 @@ class LanMessengerApp:
         tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg='#fff3cd',
                   fg='#856404', bd=0, cursor='hand2',
                   command=bar.destroy).pack(side='right', padx=(0, 4), pady=4)
+
+    # ============ AUTO-FIX DE FIREWALL (primeira execucao pos-update) ============
+    # Dispara UAC e cria regras de firewall via netsh se ainda nao existem.
+    # So roda em build frozen (PyInstaller), nunca em dev. Cooldown de 24h
+    # gravado no DB para nao importunar o usuario se ele recusou.
+    def _check_firewall_on_startup(self):
+        if not getattr(sys, 'frozen', False):
+            return  # dev mode — nao mexer
+        def _bg():
+            try:
+                if network.firewall_rules_present():
+                    return  # ja esta tudo certo
+                # Cooldown: nao perguntar de novo por 24h se o user dismissou
+                try:
+                    last = self.messenger.db.get_setting(
+                        'firewall_prompt_dismissed_at', '0')
+                    if time.time() - float(last or '0') < 86400:
+                        return
+                except Exception:
+                    pass
+                self.root.after(0, self._prompt_firewall_fix)
+            except Exception:
+                log.exception('_check_firewall_on_startup failed')
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _prompt_firewall_fix(self):
+        try:
+            resp = messagebox.askyesno(
+                APP_NAME,
+                'Para receber mensagens dos colegas, o MB Chat precisa criar '
+                'uma regra no Firewall do Windows.\n\n'
+                'Uma janela de permissao (UAC) vai aparecer — clique "Sim".\n\n'
+                'Deseja configurar agora?',
+                parent=self.root)
+        except Exception:
+            return
+        if not resp:
+            try:
+                self.messenger.db.set_setting(
+                    'firewall_prompt_dismissed_at', str(time.time()))
+            except Exception:
+                pass
+            return
+
+        def _do():
+            ok = network.request_firewall_rules_elevated()
+            # Aguarda netsh terminar (roda em processo filho elevado)
+            time.sleep(3)
+            # Re-checa para confirmar
+            present = network.firewall_rules_present()
+            if present:
+                self.root.after(0, lambda: messagebox.showinfo(
+                    APP_NAME,
+                    'Regras de firewall criadas com sucesso.\n\n'
+                    'A descoberta de colegas deve comecar a funcionar em '
+                    'alguns segundos.',
+                    parent=self.root))
+                # Remove banner se estava visivel
+                self.root.after(0, self._hide_health_banner)
+            else:
+                self.root.after(0, lambda: messagebox.showwarning(
+                    APP_NAME,
+                    'Nao foi possivel confirmar a criacao das regras.\n\n'
+                    'Se voce clicou "Nao" na janela de permissao, rode o '
+                    'MB Chat como administrador uma vez ou acesse '
+                    'Ferramentas > Diagnostico de rede.',
+                    parent=self.root))
+        threading.Thread(target=_do, daemon=True).start()
+
+    # ============ BANNER DE SAUDE DE REDE (Track 2 — blindagem) ============
+    # Consulta messenger.discovery.get_health() periodicamente e mostra
+    # banner se o discovery esta degradado. Nos 28 PCs saudaveis o banner
+    # nunca aparece — so quando bind_fallback/multicast_joined/peers indicam
+    # que algo esta errado. Rearma a cada 30s.
+    def _update_health_banner(self):
+        try:
+            health = None
+            if hasattr(self, 'messenger') and self.messenger \
+               and hasattr(self.messenger, 'discovery') and self.messenger.discovery:
+                health = self.messenger.discovery.get_health()
+        except Exception:
+            health = None
+
+        if health:
+            uptime = health.get('uptime', 0) or 0
+            peers = health.get('peers_count', 0)
+            sent = health.get('packets_sent', 0)
+            recv = health.get('packets_received', 0)
+            bind_fb = health.get('bind_fallback', False)
+            mc_ok = health.get('multicast_joined', False)
+
+            # CRITICO: bind caiu em porta aleatoria - discovery quebrado
+            if bind_fb:
+                self._show_health_banner(
+                    severity='critical',
+                    text='Porta UDP 50100 ocupada. A descoberta de colegas '
+                         'nao funciona. Feche outras instancias do MBChat '
+                         'ou reinicie o computador.')
+            # AVISO: 30s rodando mas nenhum pacote recebido (envia mas nao recebe)
+            elif uptime > 30 and recv == 0 and sent > 0:
+                self._show_health_banner(
+                    severity='warning',
+                    text='Nenhum colega detectado. Verifique firewall e '
+                         'antivirus (entrada UDP 50100 / TCP 50101).')
+            # AVISO: multicast falhou e ja faz tempo sem peers
+            elif uptime > 60 and not mc_ok and peers == 0:
+                self._show_health_banner(
+                    severity='warning',
+                    text='Multicast bloqueado e nenhum colega encontrado. '
+                         'Rede pode estar filtrando descoberta.')
+            else:
+                self._hide_health_banner()
+
+        try:
+            self.root.after(30000, self._update_health_banner)
+        except Exception:
+            pass
+
+    def _show_health_banner(self, severity='warning', text=''):
+        if hasattr(self, '_health_bar') and self._health_bar.winfo_exists():
+            try:
+                self._health_bar_label.config(text=text)
+            except Exception:
+                pass
+            return
+        if severity == 'critical':
+            bg, fg = '#f8d7da', '#721c24'
+        else:
+            bg, fg = '#fff3cd', '#856404'
+        bar = tk.Frame(self.root, bg=bg, bd=0)
+        try:
+            kids = self.root.winfo_children()
+            before = kids[1] if len(kids) > 1 else None
+            if before is not None:
+                bar.pack(fill='x', before=before)
+            else:
+                bar.pack(fill='x')
+        except Exception:
+            bar.pack(fill='x')
+        self._health_bar = bar
+        lbl = tk.Label(bar, text=text, font=('Segoe UI', 9),
+                       bg=bg, fg=fg, wraplength=240, justify='left')
+        lbl.pack(side='left', padx=(10, 5), pady=4)
+        self._health_bar_label = lbl
+        btn = tk.Button(bar, text='Diagnostico',
+                        font=('Segoe UI', 9, 'bold'),
+                        bg='#0f2a5c', fg='white', bd=0, padx=8, cursor='hand2',
+                        command=self._open_network_diag)
+        btn.pack(side='right', padx=(0, 4), pady=4)
+        tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg=bg,
+                  fg=fg, bd=0, cursor='hand2',
+                  command=self._hide_health_banner).pack(
+                      side='right', padx=(0, 2), pady=4)
+
+    def _hide_health_banner(self):
+        try:
+            if hasattr(self, '_health_bar') and self._health_bar.winfo_exists():
+                self._health_bar.destroy()
+        except Exception:
+            pass
+
+    # Janela Ferramentas > Diagnostico de rede
+    def _open_network_diag(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Diagnostico de rede')
+        dlg.geometry('640x520')
+        dlg.configure(bg='#f8fafc')
+        try: dlg.transient(self.root)
+        except Exception: pass
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        header = tk.Frame(dlg, bg='#0f2a5c', height=42)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        tk.Label(header, text='Diagnostico de rede', bg='#0f2a5c',
+                 fg='white', font=('Segoe UI', 11, 'bold')
+                 ).pack(side='left', padx=14)
+
+        body = tk.Frame(dlg, bg='#f8fafc')
+        body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        txt = tk.Text(body, wrap='word', font=('Consolas', 9),
+                      bg='#ffffff', fg='#1a202c', bd=1, relief='solid',
+                      padx=8, pady=6)
+        sb = ttk.Scrollbar(body, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        txt.pack(side='left', fill='both', expand=True)
+
+        def _refresh():
+            txt.config(state='normal')
+            txt.delete('1.0', 'end')
+            try:
+                health = self.messenger.discovery.get_health()
+            except Exception as e:
+                txt.insert('end', f'ERRO lendo health: {e}\n')
+                txt.config(state='disabled')
+                return
+            try:
+                from version import APP_VERSION
+                txt.insert('end', f'MBChat v{APP_VERSION}\n')
+            except Exception:
+                pass
+            try:
+                txt.insert('end', f'Usuario: {self.messenger.display_name}\n')
+                txt.insert('end', f'User ID: {self.messenger.user_id}\n')
+                import socket as _s
+                txt.insert('end', f'Hostname: {_s.gethostname()}\n')
+            except Exception:
+                pass
+            txt.insert('end', '\n=== DISCOVERY HEALTH ===\n')
+            txt.insert('end', f'Bound port:       {health.get("bound_port")}\n')
+            txt.insert('end', f'Bind fallback:    {health.get("bind_fallback")}')
+            if health.get('bind_fallback'):
+                txt.insert('end', '  <-- DISCOVERY QUEBRADO\n')
+            else:
+                txt.insert('end', '\n')
+            txt.insert('end', f'Multicast joined: {health.get("multicast_joined")}\n')
+            txt.insert('end', f'Uptime:           {int(health.get("uptime", 0))}s\n')
+            txt.insert('end', f'Packets sent:     {health.get("packets_sent")}\n')
+            txt.insert('end', f'Packets received: {health.get("packets_received")}\n')
+            txt.insert('end', f'Sendto errors:    {health.get("sendto_errors")}\n')
+            txt.insert('end', f'Peers conhecidos: {health.get("peers_count")}\n')
+            if health.get('bind_errors'):
+                txt.insert('end', '\nBind errors:\n')
+                for p, e in health['bind_errors']:
+                    txt.insert('end', f'  port={p}  {e}\n')
+            txt.insert('end', '\n=== PEERS ===\n')
+            try:
+                with self.messenger.discovery._lock:
+                    peers = dict(self.messenger.discovery.peers)
+                for uid, info in sorted(peers.items(),
+                                        key=lambda x: x[1].get('display_name', '')):
+                    name = info.get('display_name', '?')
+                    ip = info.get('ip', '?')
+                    host = info.get('hostname', '?')
+                    txt.insert('end', f'{name:22} {ip:15} {host}\n')
+            except Exception as e:
+                txt.insert('end', f'erro lendo peers: {e}\n')
+            txt.insert('end', '\n=== ULTIMAS LINHAS DO LOG ===\n')
+            try:
+                appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
+                log_path = os.path.join(appdata, '.mbchat', 'network.log')
+                if os.path.exists(log_path):
+                    with open(log_path, 'r', encoding='utf-8',
+                              errors='ignore') as f:
+                        lines = f.readlines()[-60:]
+                        txt.insert('end', ''.join(lines))
+                else:
+                    txt.insert('end', '(arquivo nao existe ainda)\n')
+            except Exception as e:
+                txt.insert('end', f'erro lendo log: {e}\n')
+            txt.config(state='disabled')
+
+        _refresh()
+
+        btns = tk.Frame(dlg, bg='#f8fafc')
+        btns.pack(fill='x', padx=14, pady=(0, 12))
+
+        def _copy_all():
+            try:
+                content = txt.get('1.0', 'end').strip()
+                self.root.clipboard_clear()
+                self.root.clipboard_append(content)
+                messagebox.showinfo(
+                    'Diagnostico',
+                    'Diagnostico copiado para area de transferencia.',
+                    parent=dlg)
+            except Exception:
+                pass
+
+        tk.Button(btns, text='Copiar tudo', font=('Segoe UI', 9),
+                  bg='#0f2a5c', fg='white', bd=0, padx=14, pady=6,
+                  cursor='hand2', command=_copy_all).pack(side='right')
+        tk.Button(btns, text='Atualizar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#1a202c', bd=0, padx=14, pady=6,
+                  cursor='hand2', command=_refresh).pack(
+                      side='right', padx=(0, 8))
+        tk.Button(btns, text='Fechar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#1a202c', bd=0, padx=14, pady=6,
+                  cursor='hand2', command=dlg.destroy).pack(
+                      side='right', padx=(0, 8))
+
+        try:
+            _center_window(dlg)
+            _apply_rounded_corners(dlg)
+        except Exception:
+            pass
 
     # Executa o download e apply do update.
     def _do_update(self, version):

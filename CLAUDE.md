@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.4.56.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.4.59.
 
 ## Arquitetura (4 camadas)
 
@@ -92,7 +92,7 @@ python build.py --version X.Y.Z --release
 Apos o build+release, atualizar o changelog no cofre Obsidian:
 1. Abrir ~/obsidian-cofre/Projetos/MB-Contabilidade/MB Chat - Changelog.md
 2. Adicionar entrada no topo (abaixo do separador ---) no formato:
-   ## vX.Y.Z � DD/MMM/AAAA � EMOJI Tipo
+   ## vX.Y.Z � DD/MMM/AAAA � EMOJI Tipo
    Descricao curta da mudanca
 3. Atualizar campo versao-atual no frontmatter
 4. Atualizar estatisticas (total de versoes, por tipo)
@@ -100,6 +100,61 @@ Apos o build+release, atualizar o changelog no cofre Obsidian:
 
 Tipos: Major Feature, Feature, Bugfix, Refactor, Build, Docs, UI, Performance, QA, Hotfix, UX
 Emojis: ver legenda no proprio changelog
+
+## Blindagem de rede e auto-fix de firewall (v1.4.59)
+
+Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-recuperaveis:
+
+1. **Log rotativo de rede** em `%APPDATA%\.mbchat\network.log` — RotatingFileHandler 1MB x 3 backups.
+   Grava cada bind/IGMP join, stats de send/recv, erros engolidos. Fail-safe (NullHandler se IO falhar).
+   Acessado via `network._log()` — uma unica linha por evento, nunca levanta excecao para caller.
+
+2. **Health dict** em `UDPDiscovery.health` (network.py:201) com `bound_port`, `bind_fallback`,
+   `multicast_joined`, `packets_sent`, `packets_received`, `sendto_errors`, `last_peer_seen_at`,
+   `started_at`, `bind_errors`. Exposto via `get_health()` que adiciona `uptime` e `peers_count`
+   on-the-fly. Todos os contadores sao incrementados nos pontos que antes tinham `except: pass`
+   silencioso — zero impacto no caminho feliz, instrumentacao pura.
+
+3. **Banner de diagnostico** na janela principal (gui.py `_update_health_banner`). Rearma a cada 30s.
+   - **VERMELHO** se `bind_fallback=True` (porta UDP 50100 ocupada, cai em porta aleatoria — discovery quebrado)
+   - **AMARELO** se uptime>30s, pacotes enviados>0, mas zero recebidos (firewall inbound bloqueado)
+   - **AMARELO** se uptime>60s, multicast nao joinado e nenhum peer (rede filtrando)
+   - Nos PCs saudaveis o banner NUNCA aparece (condicionais sao `and not healthy`).
+
+4. **Auto-fix de firewall via UAC** (primeira execucao pos-update). `_check_firewall_on_startup`
+   roda 4s apos o _deferred_init, em thread background, so em build frozen. Chama
+   `network.firewall_rules_present()` (checa regras canonicas "MBChat UDP In" e "MBChat TCP In"
+   via `netsh show rule name=X`). Se ausentes, main thread mostra messagebox pedindo permissao;
+   se user aceita, `network.request_firewall_rules_elevated()` usa `ctypes.windll.shell32.ShellExecuteW`
+   com verbo `runas` para disparar UAC e rodar `cmd /c netsh delete... & netsh add rule...` elevado.
+   Cria regras **por porta** (50100,50110,50120 UDP + 50101,50102,50199 TCP), sem dependencia de path.
+   Deleta primeiro qualquer regra existente para o exe atual (limpa Blocks residuais do Defender).
+   Cooldown de 24h em `firewall_prompt_dismissed_at` do DB para nao importunar quem recusa.
+   Apos sucesso, `_hide_health_banner()` e messagebox de confirmacao.
+
+5. **Menu Ferramentas > Diagnostico de rede** (`_open_network_diag` em gui.py) abre Toplevel com
+   health dict formatado, lista de peers conhecidos, ultimas 60 linhas do `network.log`,
+   botoes **Copiar tudo** (clipboard), **Atualizar**, **Fechar**. Reusa `_center_window` e
+   `_apply_rounded_corners`.
+
+6. **tools/fix_firewall.bat** — Script standalone para casos extremos: executa como admin,
+   deleta todas as regras MBChat, recria Allow Inbound por porta, reinicia o MBChat.
+   Enviar por WhatsApp se o auto-fix via UAC falhar ou for recusado.
+
+7. **tools/sniff_mbchat.py** — Sniffer UDP 50100 passivo, standalone, diagnostico remoto.
+   Lista todos os peers anunciando na LAN com IP src vs IP declarado (detecta `get_local_ip()` bugado).
+   Rodar com MBChat local fechado. Usado para confirmar se PC com problema esta enviando/recebendo.
+
+**Hipotese confirmada v1.4.59**: 2 PCs de 30 ficaram invisiveis (lista vazia) porque nao tinham
+regras de firewall inbound. Reinstalacao + apagar `%APPDATA%\.mbchat` nao resolve — o Windows
+Defender Firewall nao re-pergunta "Permitir?" ao user e o installer roda com `PrivilegesRequired=lowest`
+(sem admin, nao consegue criar regras via netsh). O `_add_firewall_rule()` em network.py:40 tambem
+falha silenciosamente sem admin. Diagnostico feito via `Test-NetConnection` do PC do Pedro:
+TCP 50101 `TcpTestSucceeded: False`, `PingSucceeded: True` → inbound bloqueado, L2/L3 ok.
+Sniffer confirmou que PC problematico envia UDP announces normalmente (outbound ok) mas nao recebe
+nada (inbound bloqueado). **Nao alfroxar** `_add_firewall_rule()` ou o `except Exception: pass` —
+o problema nao e o codigo tentar silenciosamente, e a falta de feedback ao user quando falha.
+O auto-fix via UAC e a solucao definitiva: pede permissao uma vez, cria regras por porta, resolve.
 
 ## Documentacao detalhada
 

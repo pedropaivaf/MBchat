@@ -22,9 +22,39 @@ import threading   # Threads para servidor e discovery
 import time        # Timestamps e intervalos
 import uuid        # Geracao de IDs unicos
 import os          # Caminhos de arquivos
+import sys         # sys.executable para caminho do exe (UAC firewall fix)
 import platform    # Deteccao de OS
 import subprocess  # Execucao de netsh para firewall
+import logging     # Log rotativo em %APPDATA%\.mbchat\network.log
+import logging.handlers
 from pathlib import Path  # Manipulacao de caminhos
+
+
+# Logger dedicado para rede com arquivo rotativo em %APPDATA%\.mbchat\network.log
+# Criado sob demanda, thread-safe, fail-safe (NullHandler se IO falhar).
+# Uso: _log().info(...) / _log().error(...) — nunca levanta excecao para caller.
+_network_logger = None
+def _log():
+    global _network_logger
+    if _network_logger is not None:
+        return _network_logger
+    lg = logging.getLogger('mbchat.network')
+    lg.setLevel(logging.DEBUG)
+    lg.propagate = False
+    try:
+        appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
+        log_dir = os.path.join(appdata, '.mbchat')
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, 'network.log')
+        h = logging.handlers.RotatingFileHandler(
+            path, maxBytes=1_000_000, backupCount=3, encoding='utf-8')
+        h.setFormatter(logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(message)s'))
+        lg.addHandler(h)
+    except Exception:
+        lg.addHandler(logging.NullHandler())
+    _network_logger = lg
+    return lg
 
 
 # === Portas de rede ===
@@ -71,6 +101,73 @@ def _add_firewall_rule():
 
 # Configura firewall em thread background (nao bloqueia startup)
 threading.Thread(target=_add_firewall_rule, daemon=True).start()
+
+
+# Checa se as regras canonicas 'MBChat UDP In' e 'MBChat TCP In' existem no firewall.
+# Usadas pelo fix auto-invocado do gui.py no primeiro start pos-update.
+# Returns True se ambas existem, False caso contrario ou em erro.
+def firewall_rules_present():
+    if platform.system() != 'Windows':
+        return True
+    try:
+        for name in ['MBChat UDP In', 'MBChat TCP In']:
+            r = subprocess.run(
+                ['netsh', 'advfirewall', 'firewall', 'show', 'rule',
+                 f'name={name}'],
+                capture_output=True, text=True, timeout=3,
+                creationflags=0x08000000,
+                encoding='cp850', errors='ignore'
+            )
+            out = r.stdout or ''
+            if r.returncode != 0:
+                return False
+            # netsh pt-BR: "Nenhuma regra corresponde"; en-US: "No rules match"
+            if 'No rules match' in out or 'Nenhuma regra' in out:
+                return False
+            if name not in out:
+                return False
+        return True
+    except Exception as e:
+        _log().warning('firewall_rules_present check failed: %s', e)
+        return False
+
+
+# Dispara UAC e executa netsh elevado para criar regras de firewall do MBChat.
+# Primeiro deleta qualquer regra existente para o exe atual (limpa Blocks residuais)
+# e qualquer regra com o nome canonico, depois cria Allow Inbound novas por porta.
+# Retorna True se o ShellExecuteW despachou (nao significa que o user aceitou o UAC).
+def request_firewall_rules_elevated(exe_path=None):
+    if platform.system() != 'Windows':
+        return False
+    try:
+        import ctypes
+        if exe_path is None:
+            exe_path = sys.executable
+        # Escapa aspas duplas no path (improvavel mas seguro)
+        exe_safe = exe_path.replace('"', '')
+        # Encadeia comandos com '&' (cmd /c) — todos rodam mesmo se algum falhar
+        cmds = (
+            f'netsh advfirewall firewall delete rule name=all program="{exe_safe}" >nul 2>&1 & '
+            'netsh advfirewall firewall delete rule name="MBChat" >nul 2>&1 & '
+            'netsh advfirewall firewall delete rule name="MBChat UDP In" >nul 2>&1 & '
+            'netsh advfirewall firewall delete rule name="MBChat TCP In" >nul 2>&1 & '
+            'netsh advfirewall firewall add rule name="MBChat UDP In" '
+            'dir=in action=allow protocol=UDP '
+            'localport=50100,50110,50120 profile=any >nul & '
+            'netsh advfirewall firewall add rule name="MBChat TCP In" '
+            'dir=in action=allow protocol=TCP '
+            'localport=50101,50102,50199 profile=any >nul'
+        )
+        # ShellExecuteW com verb 'runas' dispara UAC. SW_HIDE=0 esconde janela cmd.
+        r = ctypes.windll.shell32.ShellExecuteW(
+            None, 'runas', 'cmd.exe', f'/c {cmds}', None, 0
+        )
+        _log().info('request_firewall_rules_elevated ShellExecute=%d exe=%s',
+                    r, exe_safe)
+        return r > 32  # >32 indica sucesso (veja docs do ShellExecute)
+    except Exception as e:
+        _log().warning('request_firewall_rules_elevated failed: %s', e)
+        return False
 
 # === Constantes de rede ===
 MULTICAST_GROUP = '239.255.100.200'  # Grupo multicast para discovery
@@ -199,9 +296,25 @@ class UDPDiscovery:
         self._sock_send = None   # Socket de envio
         self._lock = threading.Lock()  # Lock para acesso thread-safe a self.peers
 
+        # Estado de saude observavel (lido pela GUI a cada 10s para banner)
+        self.health = {
+            'bound_port': None,         # Porta UDP onde recv socket bindou
+            'bind_fallback': False,     # True se caiu em porta aleatoria
+            'multicast_joined': False,  # True se IGMP join deu certo
+            'packets_received': 0,      # Contador de pacotes MBChat processados
+            'packets_sent': 0,          # Contador de sendto bem-sucedidos
+            'sendto_errors': 0,         # Contador de falhas em sendto
+            'last_peer_seen_at': None,  # Timestamp do ultimo peer anunciado
+            'started_at': None,         # Timestamp do start() — uptime
+            'bind_errors': [],          # Lista de (port, errno_str) nas tentativas
+        }
+
     # Inicia o discovery: sockets, threads e primeiro announce
     def start(self):
         self.running = True
+        self.health['started_at'] = time.time()
+        _log().info('UDPDiscovery.start() user_id=%s name=%s',
+                    self.user_id, self.display_name)
 
         # --- Socket de recebimento (bind na porta UDP) ---
         self._sock_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
@@ -222,13 +335,29 @@ class UDPDiscovery:
             try:
                 self._sock_recv.bind(('', port))  # '' = todas as interfaces
                 bound = True
+                self.health['bound_port'] = port
+                _log().info('bind OK port=%d', port)
                 break
-            except PermissionError:
-                continue  # Porta ocupada por outro processo
-            except OSError:
+            except PermissionError as e:
+                self.health['bind_errors'].append((port, f'Perm:{e}'))
+                _log().error('bind failed port=%d PermissionError: %s', port, e)
+                continue
+            except OSError as e:
+                self.health['bind_errors'].append((port, f'OS:{e}'))
+                _log().error('bind failed port=%d OSError: %s', port, e)
                 continue
         if not bound:
-            self._sock_recv.bind(('', 0))  # Ultimo recurso: porta aleatoria
+            # Ultimo recurso: porta aleatoria. Discovery esta EFETIVAMENTE quebrado
+            # porque outros PCs mandam para UDP_PORT, nao para a aleatoria.
+            self._sock_recv.bind(('', 0))
+            rand_port = self._sock_recv.getsockname()[1]
+            self.health['bound_port'] = rand_port
+            self.health['bind_fallback'] = True
+            _log().critical(
+                'bind FALLBACK to random port=%d — DISCOVERY BROKEN '
+                '(nenhuma das portas %d/%d/%d disponiveis). '
+                'Outros PCs nao conseguirao entregar announces a este host.',
+                rand_port, UDP_PORT, UDP_PORT + 10, UDP_PORT + 20)
 
         # Junta ao grupo multicast para receber announcements
         # Tenta com IP local especifico primeiro, depois INADDR_ANY como fallback
@@ -241,9 +370,16 @@ class UDPDiscovery:
                 self._sock_recv.setsockopt(socket.IPPROTO_IP,
                                            socket.IP_ADD_MEMBERSHIP, mreq)
                 multicast_joined = True
+                self.health['multicast_joined'] = True
+                _log().info('IGMP join OK iface=%s group=%s',
+                            iface_ip, MULTICAST_GROUP)
                 break
-            except Exception:
+            except Exception as e:
+                _log().warning('IGMP join failed iface=%s err=%s', iface_ip, e)
                 continue
+        if not multicast_joined:
+            _log().warning(
+                'IGMP join FAILED em todas as interfaces — dependente de broadcast')
         # Se nao juntou ao multicast, broadcast sera o unico meio de discovery
 
         # Aumenta buffer UDP para suportar 30+ peers simultaneos
@@ -358,21 +494,40 @@ class UDPDiscovery:
     # - Broadcast: funciona em qualquer rede, mas gera mais trafego
     def _send_announce(self):
         pkt = self._make_packet(MT_ANNOUNCE)
+        ok_any = False
         try:
             self._sock_send.sendto(pkt, (MULTICAST_GROUP, UDP_PORT))
-        except Exception:
-            pass  # Multicast pode falhar em algumas redes
+            ok_any = True
+        except Exception as e:
+            self.health['sendto_errors'] += 1
+            _log().warning('sendto multicast failed: %s', e)
         try:
             self._sock_send.sendto(pkt, (BROADCAST_ADDR, UDP_PORT))
-        except Exception:
-            pass  # Broadcast global pode ser bloqueado
+            ok_any = True
+        except Exception as e:
+            self.health['sendto_errors'] += 1
+            _log().warning('sendto broadcast failed: %s', e)
         # Subnet-directed broadcast (mais confiavel em algumas redes Windows)
         subnet_bcast = _get_subnet_broadcast()
         if subnet_bcast and subnet_bcast != BROADCAST_ADDR:
             try:
                 self._sock_send.sendto(pkt, (subnet_bcast, UDP_PORT))
-            except Exception:
-                pass
+                ok_any = True
+            except Exception as e:
+                self.health['sendto_errors'] += 1
+                _log().warning('sendto subnet_bcast failed: %s', e)
+        if ok_any:
+            self.health['packets_sent'] += 1
+
+    # Retorna copia do dict de saude para a GUI inspecionar.
+    # Inclui uptime e contagem de peers atuais (calculados on-the-fly).
+    def get_health(self):
+        h = dict(self.health)
+        started = h.get('started_at')
+        h['uptime'] = (time.time() - started) if started else 0
+        with self._lock:
+            h['peers_count'] = len(self.peers)
+        return h
 
     # Envia pacote de saida (depart) para todos os peers
     def _send_depart(self):
@@ -418,6 +573,9 @@ class UDPDiscovery:
             return  # Pacote de outro app, ignora
         if pkt.get('user_id') == self.user_id:
             return  # Pacote proprio (eco), ignora
+
+        self.health['packets_received'] += 1
+        self.health['last_peer_seen_at'] = time.time()
 
         uid = pkt['user_id']
         msg_type = pkt.get('type')
