@@ -1716,6 +1716,19 @@ class PreferencesWindow(tk.Toplevel):
                  font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW).pack(
                      anchor='w', pady=4)
 
+        diag_lf = tk.LabelFrame(parent, text='Diagnóstico', font=FONT,
+                                bg=BG_WINDOW, padx=10, pady=8)
+        diag_lf.pack(fill='x', padx=10, pady=(0, 8))
+        tk.Label(diag_lf,
+                 text='Abre uma janela com status do discovery, lista de peers '
+                      'conhecidos e log de rede.',
+                 font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW,
+                 wraplength=360, justify='left').pack(anchor='w', pady=(0, 6))
+        tk.Button(diag_lf, text='Abrir diagnóstico de rede...',
+                  font=FONT,
+                  command=lambda: self.app._open_network_diag()
+                  ).pack(anchor='w')
+
     # ----- TRANSFERÊNCIA -----
     def _build_transferencia(self, parent):
         tk.Label(parent, text='Transferência de Arquivos', font=FONT_SECTION,
@@ -2635,6 +2648,152 @@ class FileTransfersWindow(tk.Toplevel):
 # - Indicador de digitação: envia MT_TYPING para o peer ao detectar keystrokes
 # - Histórico: carrega mensagens não lidas ao abrir; botão abre janela de histórico completo
 # - Scrollbar automática: aparece ao passar o mouse, some ao sair
+
+
+# Dialogo de encaminhar: compartilhado por ChatWindow e GroupChatWindow.
+# - Lista peers online + grupos abertos em ORDEM ALFABETICA
+# - Multi-selecao via circulo clicavel (○ vazio / ● preenchido)
+# - Formato da mensagem encaminhada: "Encaminhado:\n\nmsg1\n\nmsg2"
+# - Espelha no destino aberto (ChatWindow/GroupChatWindow) para o remetente
+#   ver o que encaminhou como se tivesse digitado.
+def _show_forward_dialog(parent, app, messenger, messages, exclude_group_id=None):
+    dlg = tk.Toplevel(parent)
+    dlg.title('Encaminhar mensagens')
+    dlg.configure(bg='#f5f7fa')
+    dlg.geometry('340x460')
+    dlg.transient(parent)
+    dlg.grab_set()
+    tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
+             font=('Segoe UI', 10, 'bold'),
+             bg='#f5f7fa', fg='#1a202c').pack(padx=12, pady=(12, 6), anchor='w')
+
+    # Coleta destinos
+    targets = []  # [(kind, id, name)]
+    for uid, info in app.peer_info.items():
+        if uid == messenger.user_id:
+            continue
+        status = info.get('status', 'offline')
+        if status == 'offline':
+            continue
+        name = info.get('display_name', uid) or uid
+        targets.append(('peer', uid, name))
+    for gid, gw in app.group_windows.items():
+        if exclude_group_id and gid == exclude_group_id:
+            continue
+        try:
+            name = gw.group_info.get('name', gid)
+        except Exception:
+            name = gid
+        targets.append(('group', gid, name))
+    # Ordem alfabetica case-insensitive por nome
+    targets.sort(key=lambda t: (t[2] or '').lower())
+
+    # Scrollable frame de checkboxes circulares
+    list_outer = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
+    list_outer.pack(fill='both', expand=True, padx=12, pady=4)
+    canvas = tk.Canvas(list_outer, bg='#ffffff', highlightthickness=0)
+    scrollbar = tk.Scrollbar(list_outer, orient='vertical', command=canvas.yview)
+    inner = tk.Frame(canvas, bg='#ffffff')
+    inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side='left', fill='both', expand=True)
+    scrollbar.pack(side='right', fill='y')
+
+    def _on_inner_cfg(e):
+        canvas.configure(scrollregion=canvas.bbox('all'))
+    inner.bind('<Configure>', _on_inner_cfg)
+
+    def _on_canvas_cfg(e):
+        canvas.itemconfigure(inner_id, width=e.width)
+    canvas.bind('<Configure>', _on_canvas_cfg)
+
+    def _on_mousewheel(e):
+        canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
+    canvas.bind('<MouseWheel>', _on_mousewheel)
+    inner.bind('<MouseWheel>', _on_mousewheel)
+
+    selected = set()  # indices em targets
+    bullets = []      # [(Label bullet, Frame row)]
+
+    EMPTY = '\u25cb'   # ○
+    FILLED = '\u25cf'  # ●
+
+    def _toggle(i):
+        if i in selected:
+            selected.remove(i)
+            bullets[i][0].configure(text=EMPTY, fg='#94a3b8')
+            bullets[i][1].configure(bg='#ffffff')
+            bullets[i][2].configure(bg='#ffffff')
+            bullets[i][0].configure(bg='#ffffff')
+        else:
+            selected.add(i)
+            bullets[i][0].configure(text=FILLED, fg='#1a3f7a')
+            bullets[i][1].configure(bg='#eef3fb')
+            bullets[i][2].configure(bg='#eef3fb')
+            bullets[i][0].configure(bg='#eef3fb')
+
+    for i, (kind, ident, name) in enumerate(targets):
+        row = tk.Frame(inner, bg='#ffffff', cursor='hand2')
+        row.pack(fill='x', padx=0, pady=0)
+        bullet = tk.Label(row, text=EMPTY, font=('Segoe UI', 14),
+                          bg='#ffffff', fg='#94a3b8')
+        bullet.pack(side='left', padx=(10, 8), pady=6)
+        icon_char = '\U0001f465' if kind == 'group' else '\U0001f464'
+        lbl = tk.Label(row, text=f'{icon_char}  {name}',
+                       font=('Segoe UI', 10),
+                       bg='#ffffff', fg='#1a202c', anchor='w')
+        lbl.pack(side='left', fill='x', expand=True, pady=6)
+        bullets.append((bullet, row, lbl))
+        handler = lambda e, idx=i: _toggle(idx)
+        row.bind('<Button-1>', handler)
+        bullet.bind('<Button-1>', handler)
+        lbl.bind('<Button-1>', handler)
+        row.bind('<MouseWheel>', _on_mousewheel)
+        bullet.bind('<MouseWheel>', _on_mousewheel)
+        lbl.bind('<MouseWheel>', _on_mousewheel)
+
+    btn_frame = tk.Frame(dlg, bg='#f5f7fa')
+    btn_frame.pack(fill='x', padx=12, pady=10)
+
+    def _send():
+        if not selected:
+            return
+        body = 'Encaminhado:\n\n' + '\n\n'.join(messages)
+        for i in sorted(selected):
+            kind, ident, _name = targets[i]
+            try:
+                if kind == 'peer':
+                    messenger.send_message(ident, body)
+                    cw = app.chat_windows.get(ident)
+                    if cw:
+                        try:
+                            cw._append_message(messenger.display_name, body, True)
+                        except Exception:
+                            pass
+                else:
+                    messenger.send_group_message(ident, body)
+                    gw = app.group_windows.get(ident)
+                    if gw:
+                        try:
+                            gw._append_message(messenger.display_name, body, True)
+                        except Exception:
+                            pass
+            except Exception:
+                log.exception('Erro ao encaminhar')
+        dlg.destroy()
+
+    tk.Button(btn_frame, text='Enviar', font=('Segoe UI', 9, 'bold'),
+              bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
+              cursor='hand2', padx=14, pady=4,
+              activebackground='#2451a0', activeforeground='#ffffff',
+              command=_send).pack(side='right', padx=4)
+    tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
+              bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
+              cursor='hand2', padx=14, pady=4,
+              command=dlg.destroy).pack(side='right', padx=4)
+    dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+
 class ChatWindow(tk.Toplevel):
 
     def __init__(self, parent_app, peer_id, peer_name, start_hidden=False, **kw):
@@ -2795,11 +2954,18 @@ class ChatWindow(tk.Toplevel):
         # tk.Text é usado (não tk.Entry) para suportar múltiplas linhas e imagens (emojis)
         # Altura adaptativa: inicia em 1 linha e cresce ate INPUT_MAX_H conforme
         # o conteudo (_adjust_input_height chamado no <<Modified>>).
+        # wrap='char' (nao 'word'): garante quebra mesmo em strings sem espaco
+        # (ex: "aaaaaaa..."). Com 'word' o conteudo passaria do campo e o texto
+        # "sumia" pra esquerda — bug reportado pelo usuario.
+        # width=1: Text tem width default=80 chars. Se o container for menor, o
+        # widget pode manter tamanho natural e horizontal-scroll em vez de wrap.
+        # Setar width=1 forca o widget a iniciar minusculo; fill='both' expande
+        # ate o container — wrap passa a funcionar corretamente.
         self.entry = tk.Text(input_outer, font=('Segoe UI', 10),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
-                             relief='flat', bd=0, height=1,
-                             wrap='word', padx=8, pady=6,
+                             relief='flat', bd=0, height=1, width=1,
+                             wrap='char', padx=8, pady=6,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
@@ -2819,6 +2985,8 @@ class ChatWindow(tk.Toplevel):
         self.entry.bind('<<Modified>>', self._on_modified)
         # <KeyRelease> usado apenas para o indicador de digitação (não para emojis)
         self.entry.bind('<KeyRelease>', self._on_key_typing)
+        # Resize do widget muda largura de wrap -> re-ajusta altura
+        self.entry.bind('<Configure>', lambda e: self.after_idle(self._adjust_input_height))
         self.entry.focus_set()
 
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
@@ -2965,6 +3133,10 @@ class ChatWindow(tk.Toplevel):
 
         # Tag visual para mensagem selecionada em modo seleção multi-mensagem
         self.chat_text.tag_configure('selected_msg', background='#fff3b0')
+        # Label "Encaminhado" estilizado (nao parte do corpo)
+        self.chat_text.tag_configure('fwd_label',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     foreground='#64748b')
         try:
             self.chat_text.tag_raise('sel')
         except tk.TclError:
@@ -2978,6 +3150,7 @@ class ChatWindow(tk.Toplevel):
         self._long_press_after = None
         self._long_press_origin = None
         self._long_press_msg_idx = None
+        self._selection_bullets = {}   # idx -> Label widget (bolinha clicavel)
 
         # Botao de copiar que aparece no hover da mensagem
         self._hover_copy_btn = tk.Label(
@@ -3271,6 +3444,11 @@ class ChatWindow(tk.Toplevel):
         # para cobrir o balao inteiro (nome + horario + corpo).
         header_start = self.chat_text.index('end-1c')
 
+        # Detecta mensagem encaminhada para exibir label "Encaminhado" estilizado
+        # (nao como texto normal do corpo)
+        is_forwarded = text.startswith('Encaminhado:\n\n')
+        body_text = text[len('Encaminhado:\n\n'):] if is_forwarded else text
+
         if style == 'bubble':
             # --- Modo bolha (WhatsApp-style) ---
             # Tags diferentes para lado esquerdo (peer) e direito (próprio)
@@ -3285,7 +3463,10 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.insert('end', f'{sender}', name_tag)
             self.chat_text.insert('end', f'  {ts}\n', time_tag)
             body_start = self.chat_text.index('end-1c')
-            self._insert_text_with_emojis(text, msg_tag)
+            if is_forwarded:
+                self.chat_text.insert('end', '\u21AA Encaminhado\n',
+                                      ('fwd_label', msg_tag))
+            self._insert_text_with_emojis(body_text, msg_tag)
             body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', msg_tag)
         else:
@@ -3294,7 +3475,10 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.insert('end', f'{sender}', tag)
             self.chat_text.insert('end', f'  {ts}\n', 'time')
             body_start = self.chat_text.index('end-1c')
-            self._insert_text_with_emojis(text, 'msg')
+            if is_forwarded:
+                self.chat_text.insert('end', '\u21AA Encaminhado\n',
+                                      ('fwd_label', 'msg'))
+            self._insert_text_with_emojis(body_text, 'msg')
             body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', 'msg')
 
@@ -3392,26 +3576,41 @@ class ChatWindow(tk.Toplevel):
             pass
         # Agenda scan com delay para que o widget esteja estável após a modificação
         self.after(30, self._do_emoji_scan)
-        self._adjust_input_height()
+        # Delay 30ms: tk precisa de tempo real (nao so idle) para calcular wrap.
+        self.after(30, self._adjust_input_height)
 
     # Ajusta a altura do campo de entrada conforme o conteudo (1..8 linhas).
+    # Mede wrap manualmente com tkfont — count -displaylines do tk retorna
+    # valor pre-layout em alguns casos; medir em pixels e mais confiavel.
     def _adjust_input_height(self):
+        n = 1
         try:
-            info = self.entry.count('1.0', 'end-1c', 'displaylines')
-            if isinstance(info, tuple):
-                dl = info[0] if info else 1
-            else:
-                dl = info if info else 1
+            self.entry.update_idletasks()
+            wpx = self.entry.winfo_width()
+            # padx=8 dos dois lados + bd + margem de seguranca
+            avail = max(10, wpx - 20)
+            f = tkfont.Font(root=self.entry, font=self.entry.cget('font'))
+            content = self.entry.get('1.0', 'end-1c')
+            total = 0
+            for line in content.split('\n'):
+                if not line:
+                    total += 1
+                    continue
+                tw = f.measure(line)
+                # ceil(tw/avail): quantas linhas quebradas ocupa
+                total += max(1, (tw + avail - 1) // avail)
+            n = max(1, min(8, total))
         except Exception:
             try:
                 content = self.entry.get('1.0', 'end-1c')
-                dl = max(1, content.count('\n') + 1)
+                n = max(1, min(8, content.count('\n') + 1))
             except Exception:
-                dl = 1
-        n = max(1, min(8, int(dl or 1)))
+                n = 1
         try:
             if int(self.entry.cget('height')) != n:
                 self.entry.configure(height=n)
+                # Apos crescer, reset de scroll pra mostrar desde o inicio.
+                self.entry.yview_moveto(0)
         except Exception:
             pass
 
@@ -3681,7 +3880,36 @@ class ChatWindow(tk.Toplevel):
         self._selection_set = set()
         self._hide_hover_copy()
         self._build_selection_bar()
+        self._insert_selection_bullets()
         self._toggle_msg_selection(initial_idx)
+
+    # Insere uma bolinha clicavel (○) no inicio de cada mensagem.
+    # Iteracao reversa para que insercoes nao afetem posicoes anteriores.
+    def _insert_selection_bullets(self):
+        self.chat_text.configure(state='normal')
+        try:
+            for idx in range(len(self._msg_data) - 1, -1, -1):
+                tag = f'msg_{idx}'
+                ranges = self.chat_text.tag_ranges(tag)
+                if not ranges:
+                    continue
+                pos = str(ranges[0])
+                bullet = tk.Label(self.chat_text, text='\u25cb',
+                                  font=('Segoe UI', 14, 'bold'),
+                                  bg=self.chat_text['bg'],
+                                  fg='#64748b',
+                                  cursor='hand2',
+                                  borderwidth=0, padx=2, pady=0)
+                bullet.bind('<Button-1>',
+                            lambda e, i=idx: self._toggle_msg_selection(i))
+                try:
+                    self.chat_text.window_create(pos, window=bullet,
+                                                 align='center', padx=6)
+                except Exception:
+                    pass
+                self._selection_bullets[idx] = bullet
+        finally:
+            self.chat_text.configure(state='disabled')
 
     def _build_selection_bar(self):
         if self._selection_bar is not None:
@@ -3729,9 +3957,16 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.tag_add('selected_msg',
                                    self.chat_text.index(sm),
                                    self.chat_text.index(em))
+        b = self._selection_bullets.get(idx)
+        if b is not None:
+            try:
+                if idx in self._selection_set:
+                    b.configure(text='\u25cf', fg='#1a3f7a')
+                else:
+                    b.configure(text='\u25cb', fg='#64748b')
+            except Exception:
+                pass
         self._update_selection_count()
-        if not self._selection_set:
-            self._exit_selection_mode()
 
     def _update_selection_count(self):
         if self._sel_count_lbl:
@@ -3753,6 +3988,7 @@ class ChatWindow(tk.Toplevel):
                 except Exception:
                     pass
         self._selection_set.clear()
+        self._remove_selection_bullets()
         self._selection_mode = False
         if self._selection_bar is not None:
             try:
@@ -3761,6 +3997,32 @@ class ChatWindow(tk.Toplevel):
                 pass
             self._selection_bar = None
             self._sel_count_lbl = None
+
+    def _remove_selection_bullets(self):
+        if not self._selection_bullets:
+            return
+        try:
+            self.chat_text.configure(state='normal')
+        except Exception:
+            pass
+        try:
+            for b in list(self._selection_bullets.values()):
+                try:
+                    name = str(b)
+                    idx_pos = self.chat_text.index(name)
+                    self.chat_text.delete(idx_pos, f'{idx_pos} +1c')
+                except Exception:
+                    pass
+                try:
+                    b.destroy()
+                except Exception:
+                    pass
+        finally:
+            try:
+                self.chat_text.configure(state='disabled')
+            except Exception:
+                pass
+            self._selection_bullets.clear()
 
     def _on_escape_selection(self, event):
         if self._selection_mode:
@@ -3795,70 +4057,8 @@ class ChatWindow(tk.Toplevel):
         self._exit_selection_mode()
 
     def _open_forward_dialog(self, messages):
-        dlg = tk.Toplevel(self)
-        dlg.title('Encaminhar mensagens')
-        dlg.configure(bg='#f5f7fa')
-        dlg.geometry('320x420')
-        dlg.transient(self)
-        dlg.grab_set()
-        tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
-                 font=('Segoe UI', 10, 'bold'),
-                 bg='#f5f7fa', fg='#1a202c').pack(padx=12, pady=(12, 6), anchor='w')
-        list_frame = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
-        list_frame.pack(fill='both', expand=True, padx=12, pady=4)
-        lb = tk.Listbox(list_frame, font=('Segoe UI', 9),
-                        bg='#ffffff', fg='#1a202c',
-                        selectbackground='#1e66d0',
-                        selectforeground='#ffffff',
-                        bd=0, relief='flat', activestyle='none')
-        lb.pack(fill='both', expand=True)
-        targets = []  # list of (kind, id, label)
-        # Contatos online
-        for uid, info in self.app.peer_info.items():
-            if uid == self.messenger.user_id:
-                continue
-            name = info.get('display_name', uid)
-            status = info.get('status', 'offline')
-            if status == 'offline':
-                continue
-            targets.append(('peer', uid, f'\U0001f464 {name}'))
-        # Grupos abertos
-        for gid, gw in self.app.group_windows.items():
-            try:
-                name = gw.group_info.get('name', gid)
-            except Exception:
-                name = gid
-            targets.append(('group', gid, f'\U0001f465 {name}'))
-        for t in targets:
-            lb.insert('end', t[2])
-        btn_frame = tk.Frame(dlg, bg='#f5f7fa')
-        btn_frame.pack(fill='x', padx=12, pady=10)
-
-        def _send():
-            sel = lb.curselection()
-            if not sel:
-                return
-            kind, ident, _ = targets[sel[0]]
-            body = '[Encaminhada]\n' + '\n'.join(messages)
-            try:
-                if kind == 'peer':
-                    self.messenger.send_message(ident, body)
-                else:
-                    self.messenger.send_group_message(ident, body)
-            except Exception:
-                log.exception('Erro ao encaminhar')
-            dlg.destroy()
-
-        tk.Button(btn_frame, text='Enviar', font=('Segoe UI', 9, 'bold'),
-                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
-                  cursor='hand2', padx=14, pady=4,
-                  activebackground='#2451a0', activeforeground='#ffffff',
-                  command=_send).pack(side='right', padx=4)
-        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
-                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
-                  cursor='hand2', padx=14, pady=4,
-                  command=dlg.destroy).pack(side='right', padx=4)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        _show_forward_dialog(self, self.app, self.messenger, messages,
+                             exclude_group_id=None)
 
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
@@ -5121,11 +5321,15 @@ class GroupChatWindow(tk.Toplevel):
         input_outer = self._input_outer
 
         # Altura adaptativa igual a ChatWindow: inicia em 1 e cresce com o texto.
+        # wrap='char': quebra em qualquer posicao; evita overflow horizontal em
+        # strings sem espaco. Mesmo motivo da ChatWindow.
+        # width=1: forca widget a respeitar largura do container (default=80
+        # chars causaria overflow horizontal em janelas estreitas).
         self.entry = tk.Text(input_outer, font=('Segoe UI', 11),
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
-                             relief='flat', bd=0, height=1,
-                             wrap='word', padx=8, pady=6,
+                             relief='flat', bd=0, height=1, width=1,
+                             wrap='char', padx=8, pady=6,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
@@ -5142,6 +5346,8 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.bind('<KeyRelease>', self._on_entry_key)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         self.entry.bind('<<Modified>>', self._on_modified)
+        # Resize do widget muda largura de wrap -> re-ajusta altura
+        self.entry.bind('<Configure>', lambda e: self.after_idle(self._adjust_input_height))
         self.entry.focus_set()
 
         self._image_cache = {}  # path -> PhotoImage para imagens no chat
@@ -5276,6 +5482,10 @@ class GroupChatWindow(tk.Toplevel):
                                      font=('Segoe UI', 10, 'bold'))
 
         self.chat_text.tag_configure('selected_msg', background='#fff3b0')
+        # Label "Encaminhado" estilizado (nao parte do corpo)
+        self.chat_text.tag_configure('fwd_label',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     foreground='#64748b')
         try:
             self.chat_text.tag_raise('sel')
         except tk.TclError:
@@ -5288,6 +5498,7 @@ class GroupChatWindow(tk.Toplevel):
         self._selection_set = set()
         self._selection_bar = None
         self._sel_count_lbl = None
+        self._selection_bullets = {}
         self._long_press_after = None
         self._long_press_origin = None
         self._long_press_msg_idx = None
@@ -5877,6 +6088,10 @@ class GroupChatWindow(tk.Toplevel):
         # ate cobrir nome+horario+corpo (hover dispara sobre balao inteiro).
         header_start = self.chat_text.index('end-1c')
 
+        # Detecta mensagem encaminhada para exibir label "Encaminhado" estilizado
+        is_forwarded = text.startswith('Encaminhado:\n\n')
+        body_text = text[len('Encaminhado:\n\n'):] if is_forwarded else text
+
         if style == 'bubble':
             if is_mine:
                 name_tag = 'my_bubble_name'
@@ -5889,7 +6104,10 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.insert('end', f'{sender}', name_tag)
             self.chat_text.insert('end', f'  {ts}\n', time_tag)
             body_start = self.chat_text.index('end-1c')
-            self._insert_text_with_mentions(text, msg_tag, mentions)
+            if is_forwarded:
+                self.chat_text.insert('end', '\u21AA Encaminhado\n',
+                                      ('fwd_label', msg_tag))
+            self._insert_text_with_mentions(body_text, msg_tag, mentions)
             body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n', msg_tag)
         else:
@@ -5897,7 +6115,10 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.insert('end', sender, name_tag)
             self.chat_text.insert('end', f'  {ts}\n', 'time')
             body_start = self.chat_text.index('end-1c')
-            self._insert_text_with_mentions(text, 'msg', mentions)
+            if is_forwarded:
+                self.chat_text.insert('end', '\u21AA Encaminhado\n',
+                                      ('fwd_label', 'msg'))
+            self._insert_text_with_mentions(body_text, 'msg', mentions)
             body_end = self.chat_text.index('end-1c')
             self.chat_text.insert('end', '\n')
 
@@ -5968,26 +6189,36 @@ class GroupChatWindow(tk.Toplevel):
         except Exception:
             pass
         self.after(30, self._do_emoji_scan)
-        self._adjust_input_height()
+        # Delay 30ms: tk precisa de tempo real para calcular wrap.
+        self.after(30, self._adjust_input_height)
 
-    # Ajusta altura do campo de entrada conforme o conteudo (1..8 linhas).
+    # Mede wrap manualmente com tkfont — mais confiavel que count -displaylines.
     def _adjust_input_height(self):
+        n = 1
         try:
-            info = self.entry.count('1.0', 'end-1c', 'displaylines')
-            if isinstance(info, tuple):
-                dl = info[0] if info else 1
-            else:
-                dl = info if info else 1
+            self.entry.update_idletasks()
+            wpx = self.entry.winfo_width()
+            avail = max(10, wpx - 20)
+            f = tkfont.Font(root=self.entry, font=self.entry.cget('font'))
+            content = self.entry.get('1.0', 'end-1c')
+            total = 0
+            for line in content.split('\n'):
+                if not line:
+                    total += 1
+                    continue
+                tw = f.measure(line)
+                total += max(1, (tw + avail - 1) // avail)
+            n = max(1, min(8, total))
         except Exception:
             try:
                 content = self.entry.get('1.0', 'end-1c')
-                dl = max(1, content.count('\n') + 1)
+                n = max(1, min(8, content.count('\n') + 1))
             except Exception:
-                dl = 1
-        n = max(1, min(8, int(dl or 1)))
+                n = 1
         try:
             if int(self.entry.cget('height')) != n:
                 self.entry.configure(height=n)
+                self.entry.yview_moveto(0)
         except Exception:
             pass
 
@@ -6212,7 +6443,31 @@ class GroupChatWindow(tk.Toplevel):
         self._selection_set = set()
         self._hide_hover_copy()
         self._build_selection_bar()
+        self._insert_selection_bullets()
         self._toggle_msg_selection(initial_idx)
+
+    def _insert_selection_bullets(self):
+        self.chat_text.configure(state='normal')
+        try:
+            for idx in range(len(self._msg_data) - 1, -1, -1):
+                tag = f'msg_{idx}'
+                ranges = self.chat_text.tag_ranges(tag)
+                if not ranges:
+                    continue
+                pos = str(ranges[0])
+                bullet = tk.Label(self.chat_text, text='\u25cb',
+                                  font=('Segoe UI', 14, 'bold'),
+                                  bg=self.chat_text['bg'],
+                                  fg='#64748b',
+                                  cursor='hand2',
+                                  borderwidth=0, padx=2, pady=0)
+                bullet.bind('<Button-1>',
+                            lambda e, i=idx: self._toggle_msg_selection(i))
+                self.chat_text.window_create(pos, window=bullet,
+                                             align='center', padx=6)
+                self._selection_bullets[idx] = bullet
+        finally:
+            self.chat_text.configure(state='disabled')
 
     def _build_selection_bar(self):
         if self._selection_bar is not None:
@@ -6260,9 +6515,16 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.tag_add('selected_msg',
                                    self.chat_text.index(sm),
                                    self.chat_text.index(em))
+        b = self._selection_bullets.get(idx)
+        if b is not None:
+            try:
+                if idx in self._selection_set:
+                    b.configure(text='\u25cf', fg='#1a3f7a')
+                else:
+                    b.configure(text='\u25cb', fg='#64748b')
+            except Exception:
+                pass
         self._update_selection_count()
-        if not self._selection_set:
-            self._exit_selection_mode()
 
     def _update_selection_count(self):
         if self._sel_count_lbl:
@@ -6283,6 +6545,7 @@ class GroupChatWindow(tk.Toplevel):
                 except Exception:
                     pass
         self._selection_set.clear()
+        self._remove_selection_bullets()
         self._selection_mode = False
         if self._selection_bar is not None:
             try:
@@ -6291,6 +6554,32 @@ class GroupChatWindow(tk.Toplevel):
                 pass
             self._selection_bar = None
             self._sel_count_lbl = None
+
+    def _remove_selection_bullets(self):
+        if not self._selection_bullets:
+            return
+        try:
+            self.chat_text.configure(state='normal')
+        except Exception:
+            pass
+        try:
+            for b in list(self._selection_bullets.values()):
+                try:
+                    name = str(b)
+                    idx_pos = self.chat_text.index(name)
+                    self.chat_text.delete(idx_pos, f'{idx_pos} +1c')
+                except Exception:
+                    pass
+                try:
+                    b.destroy()
+                except Exception:
+                    pass
+        finally:
+            try:
+                self.chat_text.configure(state='disabled')
+            except Exception:
+                pass
+            self._selection_bullets.clear()
 
     def _on_escape_selection(self, event):
         if self._selection_mode:
@@ -6325,70 +6614,8 @@ class GroupChatWindow(tk.Toplevel):
         self._exit_selection_mode()
 
     def _open_forward_dialog(self, messages):
-        dlg = tk.Toplevel(self)
-        dlg.title('Encaminhar mensagens')
-        dlg.configure(bg='#f5f7fa')
-        dlg.geometry('320x420')
-        dlg.transient(self)
-        dlg.grab_set()
-        tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
-                 font=('Segoe UI', 10, 'bold'),
-                 bg='#f5f7fa', fg='#1a202c').pack(padx=12, pady=(12, 6), anchor='w')
-        list_frame = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
-        list_frame.pack(fill='both', expand=True, padx=12, pady=4)
-        lb = tk.Listbox(list_frame, font=('Segoe UI', 9),
-                        bg='#ffffff', fg='#1a202c',
-                        selectbackground='#1e66d0',
-                        selectforeground='#ffffff',
-                        bd=0, relief='flat', activestyle='none')
-        lb.pack(fill='both', expand=True)
-        targets = []
-        for uid, info in self.app.peer_info.items():
-            if uid == self.messenger.user_id:
-                continue
-            name = info.get('display_name', uid)
-            status = info.get('status', 'offline')
-            if status == 'offline':
-                continue
-            targets.append(('peer', uid, f'\U0001f464 {name}'))
-        for gid, gw in self.app.group_windows.items():
-            if gid == self.group_id:
-                continue
-            try:
-                name = gw.group_info.get('name', gid)
-            except Exception:
-                name = gid
-            targets.append(('group', gid, f'\U0001f465 {name}'))
-        for t in targets:
-            lb.insert('end', t[2])
-        btn_frame = tk.Frame(dlg, bg='#f5f7fa')
-        btn_frame.pack(fill='x', padx=12, pady=10)
-
-        def _send():
-            sel = lb.curselection()
-            if not sel:
-                return
-            kind, ident, _ = targets[sel[0]]
-            body = '[Encaminhada]\n' + '\n'.join(messages)
-            try:
-                if kind == 'peer':
-                    self.messenger.send_message(ident, body)
-                else:
-                    self.messenger.send_group_message(ident, body)
-            except Exception:
-                log.exception('Erro ao encaminhar')
-            dlg.destroy()
-
-        tk.Button(btn_frame, text='Enviar', font=('Segoe UI', 9, 'bold'),
-                  bg='#1a3f7a', fg='#ffffff', relief='flat', bd=0,
-                  cursor='hand2', padx=14, pady=4,
-                  activebackground='#2451a0', activeforeground='#ffffff',
-                  command=_send).pack(side='right', padx=4)
-        tk.Button(btn_frame, text='Cancelar', font=('Segoe UI', 9),
-                  bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
-                  cursor='hand2', padx=14, pady=4,
-                  command=dlg.destroy).pack(side='right', padx=4)
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        _show_forward_dialog(self, self.app, self.messenger, messages,
+                             exclude_group_id=self.group_id)
 
     # Callback do windnd: arquivos arrastados para a janela do grupo
     def _on_drop_files(self, files):
@@ -7150,8 +7377,6 @@ class LanMessengerApp:
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
         m2.add_separator()
-        m2.add_command(label='Diagnostico de rede...',
-                       command=self._open_network_diag)
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -7377,7 +7602,6 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
         m2.add_separator()
-        m2.add_command(label='Diagnostico de rede...', command=self._open_network_diag)
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
@@ -11448,7 +11672,7 @@ class LanMessengerApp:
                     'Nao foi possivel confirmar a criacao das regras.\n\n'
                     'Se voce clicou "Nao" na janela de permissao, rode o '
                     'MB Chat como administrador uma vez ou acesse '
-                    'Ferramentas > Diagnostico de rede.',
+                    'Messenger > Preferencias > Rede.',
                     parent=self.root))
         threading.Thread(target=_do, daemon=True).start()
 
@@ -11544,15 +11768,40 @@ class LanMessengerApp:
         except Exception:
             pass
 
-    # Janela Ferramentas > Diagnostico de rede
+    # Janela de diagnostico (acessada via Preferencias > Rede)
     def _open_network_diag(self):
+        # Se foi aberto a partir de uma janela modal (Preferencias),
+        # pega o grab atual, libera, e devolve quando o diag fechar.
+        prev_grab = None
+        try:
+            prev_grab = self.root.grab_current()
+        except Exception:
+            prev_grab = None
+        if prev_grab is not None:
+            try: prev_grab.grab_release()
+            except Exception: pass
+
         dlg = tk.Toplevel(self.root)
         dlg.title('Diagnostico de rede')
         dlg.geometry('640x520')
         dlg.configure(bg='#f8fafc')
-        try: dlg.transient(self.root)
+        try: dlg.transient(prev_grab or self.root)
         except Exception: pass
-        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        def _on_close():
+            try: dlg.grab_release()
+            except Exception: pass
+            dlg.destroy()
+            if prev_grab is not None:
+                try: prev_grab.grab_set()
+                except Exception: pass
+
+        dlg.protocol('WM_DELETE_WINDOW', _on_close)
+        dlg.bind('<Escape>', lambda e: _on_close())
+        try:
+            dlg.after(50, dlg.grab_set)
+        except Exception:
+            pass
 
         header = tk.Frame(dlg, bg='#0f2a5c', height=42)
         header.pack(fill='x')
@@ -11663,7 +11912,7 @@ class LanMessengerApp:
                       side='right', padx=(0, 8))
         tk.Button(btns, text='Fechar', font=('Segoe UI', 9),
                   bg='#e2e8f0', fg='#1a202c', bd=0, padx=14, pady=6,
-                  cursor='hand2', command=dlg.destroy).pack(
+                  cursor='hand2', command=_on_close).pack(
                       side='right', padx=(0, 8))
 
         try:

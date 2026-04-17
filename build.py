@@ -204,6 +204,40 @@ def _do_installer():
     return True
 
 
+# Stub de instalador que baixa a versao mais recente do MBChat_Setup.exe
+# do GitHub Releases e executa. Uso: usuario baixa uma vez e sempre que
+# executar pega a versao atual, sem precisar atualizar depois no app.
+def _do_web_installer():
+    stub_src = os.path.join(HERE, 'installer_stub.py')
+    if not os.path.isfile(stub_src):
+        print('AVISO: installer_stub.py nao encontrado, pulando web installer.')
+        return False
+
+    print('Gerando MBChat_WebInstaller (stub que baixa versao mais recente)...')
+    cmd = [
+        sys.executable, '-m', 'PyInstaller',
+        '--noconfirm', '--onefile', '--console',
+        f'--icon={ICON}',
+        '--distpath', os.path.join(HERE, 'dist'),
+        '--workpath', os.path.join(HERE, 'build', 'web_installer'),
+        '--specpath', os.path.join(HERE, 'build'),
+        '--name=MBChat_WebInstaller',
+        '--clean',
+        stub_src,
+    ]
+    result = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f'Erro no build do web installer (codigo {result.returncode})')
+        if result.stderr:
+            print(result.stderr[-500:])
+        return False
+    out = os.path.join(HERE, 'dist', 'MBChat_WebInstaller.exe')
+    if os.path.isfile(out):
+        print(f'Web installer gerado! -> {out}')
+        return True
+    return False
+
+
 def _do_release(version):
     try:
         subprocess.run(['gh', '--version'], capture_output=True, check=True)
@@ -213,6 +247,7 @@ def _do_release(version):
 
     update_zip = os.path.join(HERE, 'dist', 'MBChat_update.zip')
     setup = os.path.join(HERE, 'dist', 'MBChat_Setup.exe')
+    web_inst = os.path.join(HERE, 'dist', 'MBChat_WebInstaller.exe')
     tag = f'v{version}'
 
     assets = []
@@ -220,6 +255,8 @@ def _do_release(version):
         assets.append(update_zip)
     if os.path.isfile(setup):
         assets.append(setup)
+    if os.path.isfile(web_inst):
+        assets.append(web_inst)
 
     if not assets:
         print('AVISO: nenhum asset encontrado para upload.')
@@ -298,6 +335,7 @@ def _interactive():
         print(f'\nBuildando versao {new_ver}...')
         if _do_build():
             _do_installer()
+            _do_web_installer()
             _do_release(new_ver)
             print(f'\nVersao: {new_ver}')
     elif choice == '5':
@@ -328,6 +366,8 @@ def build():
 
     if _do_build():
         _do_installer()
+        if args.release:
+            _do_web_installer()
         print(f'Versao: {version}')
         if args.deploy:
             _deploy(args.deploy, version)
