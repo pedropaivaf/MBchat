@@ -16,6 +16,7 @@ import sqlite3    # Banco de dados embutido no Python
 import os         # Manipulação de caminhos e diretórios
 import time       # Timestamps para registros
 import threading  # threading.local() para conexão por thread
+import getpass    # Username Windows para migracao de user_id
 import calendar as _cal_mod
 from datetime import datetime as _dt, timedelta as _td
 from pathlib import Path  # Manipulação moderna de caminhos
@@ -218,7 +219,7 @@ class Database:
             pass
 
         # Migration: department e private_note em contacts
-        for col in ('department', 'private_note', 'ramal'):
+        for col in ('department', 'private_note', 'ramal', 'winuser'):
             try:
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT DEFAULT ''")
                 c.commit()
@@ -284,6 +285,186 @@ class Database:
     # LOCAL USER — Dados do usuário local
     # ========================================
 
+    # Renomeia um user_id em todas as tabelas que tem referencias a usuarios.
+    # Usado tanto pela migracao do local_user (mac_host -> mac_host_winuser)
+    # quanto pelo merge de contatos quando um peer atualiza.
+    def _rename_user_id_everywhere(self, old_uid, new_uid):
+        if not old_uid or not new_uid or old_uid == new_uid:
+            return
+        c = self.conn
+        try:
+            # local_user
+            try:
+                c.execute("UPDATE local_user SET user_id=? WHERE user_id=?",
+                          (new_uid, old_uid))
+            except Exception:
+                pass
+            # contacts: se ja existe entry para new_uid, deletar a antiga
+            # (preservando ip/last_seen/note do mais recente). Senao, renomeia.
+            try:
+                row_new = c.execute(
+                    "SELECT 1 FROM contacts WHERE user_id=?", (new_uid,)
+                ).fetchone()
+                if row_new:
+                    c.execute("DELETE FROM contacts WHERE user_id=?", (old_uid,))
+                else:
+                    c.execute(
+                        "UPDATE contacts SET user_id=? WHERE user_id=?",
+                        (new_uid, old_uid)
+                    )
+            except Exception:
+                pass
+            # messages
+            try:
+                c.execute("UPDATE messages SET from_user=? WHERE from_user=?",
+                          (new_uid, old_uid))
+                c.execute("UPDATE messages SET to_user=? WHERE to_user=?",
+                          (new_uid, old_uid))
+            except Exception:
+                pass
+            # file_transfers
+            try:
+                c.execute("UPDATE file_transfers SET from_user=? WHERE from_user=?",
+                          (new_uid, old_uid))
+                c.execute("UPDATE file_transfers SET to_user=? WHERE to_user=?",
+                          (new_uid, old_uid))
+            except Exception:
+                pass
+            # group_members: se ja existe (group_id, new_uid) na PK, apaga old
+            try:
+                rows = c.execute(
+                    "SELECT group_id FROM group_members WHERE uid=?", (old_uid,)
+                ).fetchall()
+                for r in rows:
+                    gid = r['group_id']
+                    exist = c.execute(
+                        "SELECT 1 FROM group_members WHERE group_id=? AND uid=?",
+                        (gid, new_uid)
+                    ).fetchone()
+                    if exist:
+                        c.execute(
+                            "DELETE FROM group_members WHERE group_id=? AND uid=?",
+                            (gid, old_uid)
+                        )
+                    else:
+                        c.execute(
+                            "UPDATE group_members SET uid=? WHERE group_id=? AND uid=?",
+                            (new_uid, gid, old_uid)
+                        )
+            except Exception:
+                pass
+            # polls / poll_votes
+            try:
+                c.execute("UPDATE polls SET creator_uid=? WHERE creator_uid=?",
+                          (new_uid, old_uid))
+            except Exception:
+                pass
+            try:
+                rows = c.execute(
+                    "SELECT poll_id FROM poll_votes WHERE voter_uid=?", (old_uid,)
+                ).fetchall()
+                for r in rows:
+                    pid = r['poll_id']
+                    exist = c.execute(
+                        "SELECT 1 FROM poll_votes WHERE poll_id=? AND voter_uid=?",
+                        (pid, new_uid)
+                    ).fetchone()
+                    if exist:
+                        c.execute(
+                            "DELETE FROM poll_votes WHERE poll_id=? AND voter_uid=?",
+                            (pid, old_uid)
+                        )
+                    else:
+                        c.execute(
+                            "UPDATE poll_votes SET voter_uid=? WHERE poll_id=? AND voter_uid=?",
+                            (new_uid, pid, old_uid)
+                        )
+            except Exception:
+                pass
+            c.commit()
+        except Exception:
+            pass
+
+    # Migra user_id do local_user de versoes antigas (mac_host, sem winuser)
+    # para o formato atual (mac_host_winuser). Sem essa migracao, mensagens,
+    # contatos e grupos ficam orfaos pos-update porque a query usa o NOVO
+    # user_id mas os dados estao gravados com o ANTIGO.
+    # Idempotente: se ja esta no formato novo, nao faz nada.
+    # Cobre dois cenarios:
+    #  (a) v1.4.59 -> v1.4.61: local_user tem mac_host, novo e mac_host_win.
+    #      Renomeia local_user + mensagens + grupos.
+    #  (b) v1.4.60 -> v1.4.61: local_user ja tem mac_host_win, MAS mensagens
+    #      antigas ficaram com from/to=mac_host (v1.4.60 nao migrou). Detecta
+    #      orfas e renomeia.
+    def migrate_user_ids_add_winuser_suffix(self, new_uid):
+        try:
+            row = self.conn.execute(
+                "SELECT user_id FROM local_user WHERE id=1"
+            ).fetchone()
+            if not row:
+                return
+            stored = row['user_id']
+            # Caso (a): local_user no formato antigo
+            if stored != new_uid and new_uid.startswith(stored + '_'):
+                self._rename_user_id_everywhere(stored, new_uid)
+                return
+            # Caso (b): local_user ja no formato novo, mas mensagens/grupos
+            # antigos podem ter referencias ao formato sem suffix. Usa o
+            # getpass.getuser() atual para descobrir qual sufixo remover
+            # (assim username com underscore tipo "pedro_paiva" funciona).
+            if stored == new_uid:
+                try:
+                    winuser = (getpass.getuser() or '').strip()
+                except Exception:
+                    winuser = ''
+                if winuser and new_uid.endswith('_' + winuser):
+                    old_uid = new_uid[:-(len(winuser) + 1)]
+                    if old_uid and old_uid != new_uid:
+                        # So renomeia se houver pelo menos uma orfa para evitar
+                        # falsos positivos (hostname com underscore proprio)
+                        has_orphan = False
+                        for q in (
+                            "SELECT 1 FROM messages WHERE from_user=? LIMIT 1",
+                            "SELECT 1 FROM messages WHERE to_user=? LIMIT 1",
+                            "SELECT 1 FROM file_transfers WHERE from_user=? LIMIT 1",
+                            "SELECT 1 FROM file_transfers WHERE to_user=? LIMIT 1",
+                            "SELECT 1 FROM group_members WHERE uid=? LIMIT 1",
+                        ):
+                            try:
+                                r = self.conn.execute(q, (old_uid,)).fetchone()
+                                if r:
+                                    has_orphan = True
+                                    break
+                            except Exception:
+                                pass
+                        if has_orphan:
+                            self._rename_user_id_everywhere(old_uid, new_uid)
+        except Exception:
+            pass
+
+    # Quando um peer anuncia com user_id no formato novo (mac_host_winuser)
+    # e ja temos um contato no formato antigo (mac_host) sem o suffix, faz
+    # merge: renomeia todas as referencias do antigo para o novo. Roda em
+    # _on_peer_found do Messenger. peer_winuser vem do announce do peer.
+    def merge_legacy_contact(self, new_uid, peer_winuser=''):
+        try:
+            if not new_uid or not peer_winuser:
+                return
+            tail = '_' + peer_winuser
+            if not new_uid.endswith(tail):
+                return
+            old_uid = new_uid[:-len(tail)]
+            if not old_uid or old_uid == new_uid:
+                return
+            row = self.conn.execute(
+                "SELECT 1 FROM contacts WHERE user_id=?", (old_uid,)
+            ).fetchone()
+            if not row:
+                return
+            self._rename_user_id_everywhere(old_uid, new_uid)
+        except Exception:
+            pass
+
     # Retorna dados do usuário local ou None se não configurado
     def get_local_user(self):
         row = self.conn.execute("SELECT * FROM local_user WHERE id=1").fetchone()
@@ -347,13 +528,13 @@ class Database:
     # UPSERT: cria novos e atualiza existentes. Não atualiza first_seen em updates
     def upsert_contact(self, user_id, display_name, ip_address,
                        hostname='', os_info='', status='online', note='',
-                       avatar_index=0, avatar_data=''):
+                       avatar_index=0, avatar_data='', winuser=''):
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
                                   os_info, status, note, avatar_index,
-                                  avatar_data, last_seen, first_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  avatar_data, winuser, last_seen, first_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name=excluded.display_name,
                 ip_address=excluded.ip_address,
@@ -363,9 +544,10 @@ class Database:
                 note=excluded.note,
                 avatar_index=excluded.avatar_index,
                 avatar_data=excluded.avatar_data,
+                winuser=excluded.winuser,
                 last_seen=excluded.last_seen
         """, (user_id, display_name, ip_address, hostname, os_info, status,
-              note, avatar_index, avatar_data, now, now))
+              note, avatar_index, avatar_data, winuser or '', now, now))
         self.conn.commit()
 
     # Retorna nota pessoal de um contato específico

@@ -8016,6 +8016,7 @@ class LanMessengerApp:
                     'display_name': name,
                     'ip': c.get('ip_address', ''),
                     'hostname': c.get('hostname', ''),
+                    'winuser': c.get('winuser', ''),
                     'status': status,
                     'note': note,
                 }
@@ -8033,6 +8034,7 @@ class LanMessengerApp:
                 'display_name': name,
                 'ip': c.get('ip_address', ''),
                 'hostname': c.get('hostname', ''),
+                'winuser': c.get('winuser', ''),
                 'status': status,
                 'note': note,
                 'department': dept,
@@ -9165,10 +9167,14 @@ class LanMessengerApp:
             dept = i.get('department', '')
             contact = self.messenger.db.get_contact(uid)
             pnote = contact.get('private_note', '') if contact else ''
+            wu = i.get('winuser', '') or (contact.get('winuser', '') if contact else '')
             info_text = (
                 f"Nome: {i.get('display_name','?')}\n"
                 f"IP: {i.get('ip','?')}\n"
-                f"Host: {i.get('hostname','?')}\n"
+                f"Host: {i.get('hostname','?')}\n")
+            if wu:
+                info_text += f"Usuário Windows: {wu}\n"
+            info_text += (
                 f"OS: {i.get('os','?')}\n"
                 f"Status: {i.get('status','?')}")
             if dept:

@@ -88,7 +88,15 @@ class Messenger:
         self._groups = {}
 
         # === Setup do usuario local ===
-        self.user_id = generate_user_id()  # ID baseado em MAC+hostname
+        self.user_id = generate_user_id()  # ID = MAC+hostname+winuser
+        # Migracao: usuarios pre-1.4.60 tem user_id no formato mac_host
+        # (sem winuser). Renomeia tudo para o formato novo para que historico,
+        # contatos e grupos continuem funcionando pos-update.
+        # Idempotente: se ja esta no formato novo, no-op.
+        try:
+            self.db.migrate_user_ids_add_winuser_suffix(self.user_id)
+        except Exception:
+            pass
         local = self.db.get_local_user()   # Tenta carregar do banco
 
         # Prioridade do nome: argumento > banco > login do OS
@@ -181,6 +189,14 @@ class Messenger:
     # Salva no banco e notifica a GUI
     # Chamado a cada announce recebido (nao so novos peers)
     def _on_peer_found(self, uid, info):
+        # Merge: se este peer atualizou de mac_host -> mac_host_winuser, traz
+        # historico/grupos do contato antigo para o user_id novo. No-op se
+        # nao houver contato legado correspondente. peer_winuser e usado
+        # como sufixo a remover (preciso, suporta nomes com underscore).
+        try:
+            self.db.merge_legacy_contact(uid, info.get('winuser', ''))
+        except Exception:
+            pass
         self.db.upsert_contact(
             uid, info['display_name'], info['ip'],
             hostname=info.get('hostname', ''),
@@ -188,7 +204,8 @@ class Messenger:
             status=info.get('status', 'online'),
             note=info.get('note', ''),
             avatar_index=info.get('avatar_index', 0),
-            avatar_data=info.get('avatar_data', '')
+            avatar_data=info.get('avatar_data', ''),
+            winuser=info.get('winuser', '')
         )
         dept = info.get('department', '')
         if dept:

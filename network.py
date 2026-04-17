@@ -249,8 +249,13 @@ def _get_subnet_broadcast():
 # vistos como peers distintos (ex: 1 PC compartilhado de manha/tarde por
 # pessoas diferentes aparece como 2 contatos separados para os outros).
 def generate_user_id():
-    mac = uuid.getnode()  # MAC address como inteiro
-    host = socket.gethostname()  # Nome da maquina
+    # Formato: mac_host_winuser para suportar 2+ usuarios Windows na mesma
+    # maquina (cada um tem seu APPDATA, seu DB e precisa de identidade unica
+    # para announces na LAN — sem o winuser, dois usuarios no mesmo PC
+    # colidiriam). Migracao automatica do formato antigo (mac_host) e feita
+    # em Database.migrate_user_ids_add_winuser_suffix().
+    mac = uuid.getnode()
+    host = socket.gethostname()
     try:
         winuser = (getpass.getuser() or '').strip()
     except Exception:
@@ -258,6 +263,14 @@ def generate_user_id():
     if winuser:
         return f"{mac:012x}_{host}_{winuser}"
     return f"{mac:012x}_{host}"
+
+
+# Retorna o usuario Windows logado (para exibir em UI: "qual conta esta usando")
+def get_windows_user():
+    try:
+        return (getpass.getuser() or '').strip()
+    except Exception:
+        return ''
 
 
 # Retorna informacoes da maquina local como dict
@@ -489,6 +502,7 @@ class UDPDiscovery:
             'ramal': getattr(self, 'ramal', ''),  # Ramal (4 digitos)
             'ip': get_local_ip(),       # IP local atual
             'hostname': socket.gethostname(),   # Nome da maquina
+            'winuser': get_windows_user(),  # Conta Windows logada (multi-user)
             'os': f"{platform.system()} {platform.release()}",  # OS info
             'tcp_port': getattr(self, 'tcp_port', TCP_PORT),       # Porta TCP para mensagens
             'time': time.time()         # Timestamp do pacote
@@ -605,6 +619,7 @@ class UDPDiscovery:
                 'display_name': pkt.get('display_name', 'Unknown'),
                 'ip': pkt.get('ip', addr[0]),  # IP do pacote ou do socket
                 'hostname': pkt.get('hostname', ''),
+                'winuser': pkt.get('winuser', ''),  # Conta Windows do peer
                 'os': pkt.get('os', ''),
                 'status': pkt.get('status', 'online'),
                 'note': pkt.get('note', ''),
