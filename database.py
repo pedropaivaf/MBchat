@@ -210,6 +210,13 @@ class Database:
         except Exception:
             pass
 
+        # Migration: file_path em messages (clique no chat abre a pasta do arquivo)
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN file_path TEXT DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
+
         # Migration: department e private_note em contacts
         for col in ('department', 'private_note', 'ramal'):
             try:
@@ -611,14 +618,15 @@ class Database:
 
     def save_message(self, msg_id, from_user, to_user, content,
                      msg_type='text', is_sent=False, timestamp=None,
-                     reply_to_id=''):
+                     reply_to_id='', file_path=''):
         ts = timestamp or time.time()
         self.conn.execute("""
             INSERT INTO messages (msg_id, from_user, to_user, content,
-                                  msg_type, timestamp, is_sent, reply_to_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  msg_type, timestamp, is_sent, reply_to_id,
+                                  file_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (msg_id, from_user, to_user, content, msg_type, ts,
-              int(is_sent), reply_to_id or ''))
+              int(is_sent), reply_to_id or '', file_path or ''))
         self.conn.commit()
 
     def get_message_by_id(self, msg_id):

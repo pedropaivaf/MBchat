@@ -103,6 +103,23 @@ _URL_RE = re.compile(
 )
 
 
+# Abre o Explorer destacando o arquivo (ou abre a pasta se o arquivo nao existir mais).
+# Usado pelo clique em mensagens de arquivo no chat.
+def _open_file_location(filepath):
+    if not filepath:
+        return
+    try:
+        if os.path.isfile(filepath):
+            import subprocess
+            subprocess.Popen(['explorer', '/select,', os.path.normpath(filepath)])
+        else:
+            folder = os.path.dirname(filepath)
+            if os.path.isdir(folder):
+                os.startfile(folder)
+    except Exception:
+        log.exception('Erro ao abrir local do arquivo')
+
+
 # Abre uma URL no browser; normaliza www. para http://www.
 def _open_url(url):
     # Remove pontuacao trailing (., ,, ), ], !, ?)
@@ -786,6 +803,54 @@ def _apply_rounded_corners(win):
         pass  # Windows 10 ou anterior — API não disponível, ignorar silenciosamente
 
 
+# Instala menu de contexto (Recortar/Copiar/Colar/Selecionar tudo) em TODOS os
+# widgets Entry/ttk.Entry/Text do app via bind_class. Chamado uma vez apos criar
+# a janela root. Se um widget ja tem bind proprio de <Button-3> (ex: chat_text
+# com menu de mensagem), esse handler nao interfere.
+def _install_entry_ctx_menu(root):
+    def _show(event):
+        w = event.widget
+        try:
+            if str(w.bind('<Button-3>')).strip():
+                return  # widget ja tem menu proprio, nao sobrescreve
+        except Exception:
+            pass
+        menu = tk.Menu(w, tearoff=0, font=FONT)
+        # Detecta se e Text (event_generate usa <<Cut>>/<<Copy>>/<<Paste>>)
+        is_text = isinstance(w, tk.Text)
+        def _cut():
+            try: w.event_generate('<<Cut>>')
+            except Exception: pass
+        def _copy():
+            try: w.event_generate('<<Copy>>')
+            except Exception: pass
+        def _paste():
+            try: w.event_generate('<<Paste>>')
+            except Exception: pass
+        def _select_all():
+            try:
+                if is_text:
+                    w.tag_add('sel', '1.0', 'end-1c')
+                    w.mark_set('insert', 'end-1c')
+                else:
+                    w.select_range(0, 'end')
+                    w.icursor('end')
+            except Exception:
+                pass
+        menu.add_command(label='Recortar', command=_cut)
+        menu.add_command(label='Copiar', command=_copy)
+        menu.add_command(label='Colar', command=_paste)
+        menu.add_separator()
+        menu.add_command(label='Selecionar tudo', command=_select_all)
+        try:
+            w.focus_set()
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+    for cls in ('Entry', 'TEntry', 'Text'):
+        root.bind_class(cls, '<Button-3>', _show)
+
+
 # Libera WM_DROPFILES atraves do filtro UIPI para permitir drop do Explorer
 # mesmo quando os integrity levels entre processos diferem (Win7+).
 # Aplica tanto no HWND filho (winfo_id) quanto no top-level pai — Explorer
@@ -822,28 +887,78 @@ def _allow_uipi_drop(widget):
 
 
 # Formata automaticamente um campo de entrada como dd/mm/aaaa durante a digitação.
-# Intercepta cada tecla liberada, extrai apenas os dígitos e reinsere o texto
-# formatado com as barras nos lugares corretos. Teclas de navegação são ignoradas
-# para não interferir com BackSpace, setas, etc.
-def _bind_date_mask(entry, var):
-    def on_key(event):
-        if event.keysym in ('BackSpace', 'Delete', 'Left', 'Right',
-                            'Home', 'End', 'Tab'):
+# Estrategia (KeyPress, sem reformatar agressivo):
+# - Bloqueia teclas que nao sao digito ou navegacao
+# - Ao digitar 2o ou 5o caractere no fim, insere '/' automaticamente
+# - Backspace logo apos um '/' apaga a barra + o digito anterior (UX natural)
+# - Edicao no meio do texto e livre (nao destroi o que o usuario esta editando)
+# - Cap de 8 digitos (10 chars com as barras)
+# - <<Paste>> reformata o texto colado
+def _bind_date_mask(entry, var, placeholder=''):
+    NAV_KEYS = ('Left', 'Right', 'Home', 'End', 'Tab', 'Up', 'Down',
+                'Escape', 'Return', 'Shift_L', 'Shift_R',
+                'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Caps_Lock')
+
+    def reformat_now():
+        val = entry.get()
+        if placeholder and val == placeholder:
             return
-        val = var.get()
-        digits = ''.join(c for c in val if c.isdigit())
-        digits = digits[:8]  # máximo de 8 dígitos (ddmmaaaa)
+        digits = ''.join(c for c in val if c.isdigit())[:8]
         formatted = ''
         for i, d in enumerate(digits):
-            if i == 2 or i == 4:
+            if i in (2, 4):
                 formatted += '/'
             formatted += d
         if formatted != val:
+            entry.delete(0, 'end')
+            entry.insert(0, formatted)
+            entry.icursor('end')
+
+    def on_keypress(event):
+        if event.keysym in NAV_KEYS:
+            return
+        if event.state & 0x4:  # Ctrl - permite Ctrl+C/V/X/A
+            return
+        if event.keysym == 'BackSpace':
+            try:
+                cursor = entry.index('insert')
+                if cursor > 0:
+                    val = entry.get()
+                    if cursor - 1 < len(val) and val[cursor - 1] == '/':
+                        entry.delete(cursor - 2, cursor)
+                        entry.icursor(cursor - 2)
+                        return 'break'
+            except (tk.TclError, ValueError):
+                pass
+            return  # default handle: apaga 1 char
+        if event.keysym == 'Delete':
+            return
+        if not event.char or not event.char.isdigit():
+            return 'break'  # bloqueia letras/simbolos
+        val = entry.get()
+        if placeholder and val == placeholder:
+            entry.delete(0, 'end')
+            val = ''
+        digit_count = sum(1 for c in val if c.isdigit())
+        if digit_count >= 8:
+            return 'break'
+        try:
             cursor = entry.index('insert')
-            var.set(formatted)
-            new_pos = min(cursor + (len(formatted) - len(val)), len(formatted))
-            entry.icursor(new_pos)
-    entry.bind('<KeyRelease>', on_key)
+        except (tk.TclError, ValueError):
+            cursor = len(val)
+        entry.insert(cursor, event.char)
+        try:
+            new_pos = entry.index('insert')
+            new_val = entry.get()
+            if new_pos == len(new_val) and len(new_val) in (2, 5):
+                entry.insert('end', '/')
+                entry.icursor('end')
+        except (tk.TclError, ValueError):
+            pass
+        return 'break'
+
+    entry.bind('<KeyPress>', on_keypress)
+    entry.bind('<<Paste>>', lambda e: entry.after_idle(reformat_now))
 
 
 # Exibe um mini-calendário popup para seleção de data.
@@ -2924,7 +3039,9 @@ class ChatWindow(tk.Toplevel):
             self._append_message(sender, msg['content'], is_mine,
                                  timestamp=msg['timestamp'],
                                  msg_id=msg.get('msg_id', ''),
-                                 reply_to=msg.get('reply_to_id', ''))
+                                 reply_to=msg.get('reply_to_id', ''),
+                                 msg_type=msg.get('msg_type', 'text'),
+                                 file_path=msg.get('file_path', ''))
         # Marca todas as mensagens deste contato como lidas no banco
         self.messenger.mark_as_read(self.peer_id)
 
@@ -3130,7 +3247,7 @@ class ChatWindow(tk.Toplevel):
     # O widget fica em state='disabled' para bloquear edição pelo usuário. É
     # temporariamente habilitado para inserir a mensagem e depois desabilitado novamente.
     def _append_message(self, sender, text, is_mine, timestamp=None,
-                        msg_id='', reply_to=''):
+                        msg_id='', reply_to='', msg_type='text', file_path=''):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')  # habilita temporariamente para inserção
 
@@ -3200,6 +3317,20 @@ class ChatWindow(tk.Toplevel):
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
                                 lambda e, idx=n: self._on_msg_hover_leave(idx))
+
+        # Mensagem de arquivo: aplica tag clicavel sobre o corpo do texto.
+        # Click esquerdo abre a pasta do arquivo no Explorer.
+        if msg_type == 'file' and file_path:
+            file_tag = f'file_{n}'
+            self.chat_text.tag_add(file_tag, body_start, body_end)
+            self.chat_text.tag_configure(file_tag, underline=True,
+                                         foreground='#0066cc')
+            self.chat_text.tag_bind(file_tag, '<Button-1>',
+                lambda e, fp=file_path: _open_file_location(fp))
+            self.chat_text.tag_bind(file_tag, '<Enter>',
+                lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(file_tag, '<Leave>',
+                lambda e: self.chat_text.config(cursor=''))
 
         self._msg_ranges.append(text)        # salva texto para funcionalidade copiar
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
@@ -3842,6 +3973,10 @@ class ChatWindow(tk.Toplevel):
         date_from.bind('<FocusOut>', lambda e: _on_focus_out(date_from, date_from_var, ph))
         date_to.bind('<FocusIn>', lambda e: _on_focus_in(date_to, date_to_var, ph))
         date_to.bind('<FocusOut>', lambda e: _on_focus_out(date_to, date_to_var, ph))
+
+        # Auto-formata digitos para dd/mm/aaaa durante a digitacao
+        _bind_date_mask(date_from, date_from_var, placeholder=ph)
+        _bind_date_mask(date_to, date_to_var, placeholder=ph)
 
         # Separador
         tk.Frame(win, bg='#cccccc', height=1).pack(fill='x', padx=8)
@@ -5722,7 +5857,8 @@ class GroupChatWindow(tk.Toplevel):
     # Adiciona uma mensagem na area de chat com nome, horario e emojis coloridos.
     # Suporta modo linear (padrao) e modo bolha (WhatsApp style) conforme preferencia.
     def _append_message(self, sender, text, is_mine, timestamp=None,
-                        msg_id='', reply_to='', mentions=None):
+                        msg_id='', reply_to='', mentions=None,
+                        msg_type='text', file_path=''):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
 
@@ -5781,6 +5917,19 @@ class GroupChatWindow(tk.Toplevel):
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
                                 lambda e, idx=n: self._on_msg_hover_leave(idx))
+
+        # Mensagem de arquivo no grupo: clicavel para abrir a pasta no Explorer.
+        if msg_type == 'file' and file_path:
+            file_tag = f'gfile_{n}'
+            self.chat_text.tag_add(file_tag, body_start, body_end)
+            self.chat_text.tag_configure(file_tag, underline=True,
+                                         foreground='#0066cc')
+            self.chat_text.tag_bind(file_tag, '<Button-1>',
+                lambda e, fp=file_path: _open_file_location(fp))
+            self.chat_text.tag_bind(file_tag, '<Enter>',
+                lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(file_tag, '<Leave>',
+                lambda e: self.chat_text.config(cursor=''))
 
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
                                'text': text, 'is_mine': is_mine,
@@ -6796,6 +6945,9 @@ class LanMessengerApp:
         self.root.configure(bg=BG_WINDOW)
         self.root.update_idletasks()         # Força render para pegar dimensões
         _apply_rounded_corners(self.root)    # Bordas arredondadas no Windows 11+
+        # Menu de contexto (Recortar/Copiar/Colar/Selecionar tudo) em todos os
+        # Entry/Text do app — responde ao clique com botao direito do mouse
+        _install_entry_ctx_menu(self.root)
 
         # Captura exceções não tratadas do tkinter para o log
         def _tk_exception(exc_type, exc_value, exc_tb):
@@ -7673,7 +7825,9 @@ class LanMessengerApp:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
             name_font = ImageFont.truetype(font_name, 16)
             note_font = ImageFont.truetype('segoeui.ttf', 13)
-            dept_font = ImageFont.truetype('segoeui.ttf', 12)
+            ramal_font = ImageFont.truetype('segoeui.ttf', 12)
+            # Setor: fonte bem pequena (9px) para ficar discreta acima do nome
+            sector_font = ImageFont.truetype('segoeui.ttf', 9)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
             emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
@@ -7686,7 +7840,8 @@ class LanMessengerApp:
         }
         name_color = status_colors.get(status, '#1a202c')
         note_color = '#718096'
-        dept_color = '#5a7bb5'
+        ramal_color = '#5a7bb5'
+        sector_color = '#94a3b8'  # cinza claro, discreto
 
         name_text = name
         if unread_count > 0:
@@ -7698,13 +7853,20 @@ class LanMessengerApp:
         name_bbox = d.textbbox((0, 0), name_text, font=name_font)
         name_w = name_bbox[2] - name_bbox[0]
 
-        # Ramal badge (substituiu badge de Departamento)
-        dept_w = 0
-        dept_text = ''
+        # Ramal badge ao lado do nome
+        ramal_w = 0
+        ramal_text = ''
         if ramal:
-            dept_text = f'[{ramal}]'
-            db = d.textbbox((0, 0), dept_text, font=dept_font)
-            dept_w = db[2] - db[0] + 6
+            ramal_text = f'[{ramal}]'
+            rb = d.textbbox((0, 0), ramal_text, font=ramal_font)
+            ramal_w = rb[2] - rb[0] + 6
+
+        # Setor (department) acima do nome, texto pequeno em caixa-alta
+        sector_text = dept.strip().upper() if dept else ''
+        sector_w = 0
+        if sector_text:
+            sb = d.textbbox((0, 0), sector_text, font=sector_font)
+            sector_w = sb[2] - sb[0]
 
         # Segmentos da nota (texto e emoji separados)
         note_segments = []
@@ -7736,11 +7898,14 @@ class LanMessengerApp:
                 note_segments.append(('text', part, w))
                 total_note_w += w
 
-        # Monta imagem composta
+        # Monta imagem composta.
+        # Setor acima do nome aumenta a altura para caber as duas linhas sem
+        # apertar o avatar (36px). Sem setor, mantem 46px original.
         av_size = 36
         gap = 10
-        total_w = av_size + gap + name_w + dept_w + total_note_w + 10
-        height = 46
+        has_sector = bool(sector_text)
+        height = 52 if has_sector else 46
+        total_w = av_size + gap + max(name_w + ramal_w, sector_w) + total_note_w + 10
 
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
 
@@ -7752,17 +7917,26 @@ class LanMessengerApp:
             img.paste(avatar_pil, (0, av_y), avatar_pil)
 
         draw = ImageDraw.Draw(img)
-        text_y = (height - 18) // 2  # centro vertical para texto ~16px
+        # Com setor: nome em cima (y=6), setor logo abaixo (y=28).
+        # Sem setor: nome centralizado como antes.
+        if has_sector:
+            text_y = 6
+            sector_y = 30
+            draw.text((av_size + gap, sector_y), sector_text,
+                      fill=sector_color, font=sector_font)
+        else:
+            text_y = (height - 18) // 2
 
         # Nome
         x = av_size + gap
         draw.text((x, text_y), name_text, fill=name_color, font=name_font)
         x += name_w
 
-        # Departamento
-        if dept_text:
-            draw.text((x + 4, text_y + 2), dept_text, fill=dept_color, font=dept_font)
-            x += dept_w
+        # Ramal badge ao lado do nome
+        if ramal_text:
+            draw.text((x + 4, text_y + 2), ramal_text,
+                      fill=ramal_color, font=ramal_font)
+            x += ramal_w
 
         # Nota com emojis coloridos
         for seg_type, seg_text, seg_w in note_segments:
@@ -7847,8 +8021,6 @@ class LanMessengerApp:
                 }
                 continue
             parent = self.group_general
-            if dept:
-                parent = self._get_dept_node(dept)
             if row_img:
                 iid = self.tree.insert(parent, 'end', text='', tags=(tag,), image=row_img)
             else:
@@ -7960,13 +8132,10 @@ class LanMessengerApp:
                 tags = self.tree.item(iid, 'tags')
                 if 'offline' in tags:
                     continue  # offline permanece escondido
-                info = self.peer_info.get(uid, {})
-                dept = info.get('department', '')
-                parent = self._get_dept_node(dept) if dept else self.group_general
                 cur_parent = self.tree.parent(iid)
                 if not cur_parent:
-                    # Item estava detachado (filtrado), reattach na posicao correta
-                    self.tree.reattach(iid, parent, 'end')
+                    # Item estava detachado (filtrado), reattach em Geral
+                    self.tree.reattach(iid, self.group_general, 'end')
                 # Se ja esta no parent correto, nao move (evita pipocar)
             return
         for uid, iid in self.peer_items.items():
@@ -7980,9 +8149,7 @@ class LanMessengerApp:
                 # Match: garantir que esta visivel sem mover de posicao
                 cur_parent = self.tree.parent(iid)
                 if not cur_parent:
-                    dept = info.get('department', '')
-                    parent = self._get_dept_node(dept) if dept else self.group_general
-                    self.tree.reattach(iid, parent, 'end')
+                    self.tree.reattach(iid, self.group_general, 'end')
             else:
                 self.tree.detach(iid)
 
@@ -8548,10 +8715,19 @@ class LanMessengerApp:
     def _sort_tree_children(self, parent):
         # Obtém a seleção atual para restaurá-la após a movimentação
         current_sel = self.tree.selection()
-        
+
         items = list(self.tree.get_children(parent))
-        # Ordena alfabeticamente ignorando maiúsculas/minúsculas
-        sorted_items = sorted(items, key=lambda x: self.tree.item(x, 'text').lower())
+        # Reverse lookup iid -> uid para ordenar pelo display_name em peer_info,
+        # ja que a linha usa image (text=''). Fallback para tree.item('text').
+        iid_to_uid = {iid: uid for uid, iid in self.peer_items.items()}
+        def _sort_key(iid):
+            uid = iid_to_uid.get(iid)
+            if uid:
+                name = self.peer_info.get(uid, {}).get('display_name', '')
+                if name:
+                    return name.lower()
+            return (self.tree.item(iid, 'text') or '').lower()
+        sorted_items = sorted(items, key=_sort_key)
         
         # Só move se a ordem realmente mudou para evitar flicker visual (piscar)
         needs_reorder = False
@@ -8645,11 +8821,10 @@ class LanMessengerApp:
         dept = info.get('department', '')
         ramal = info.get('ramal', '')
 
-        # Determina o grupo pai correto (departamento > Geral; offline = detach)
+        # Determina o grupo pai (offline = detach; online/away/busy = Geral).
+        # Setor do contato e exibido na propria linha (acima do nome), nao como secao.
         if tag == 'offline':
             parent = None  # offline nao aparece no TreeView
-        elif dept:
-            parent = self._get_dept_node(dept)
         else:
             parent = self.group_general
 
@@ -9079,6 +9254,12 @@ class LanMessengerApp:
             for msg in unread:
                 if msg.get('msg_type') == 'image':
                     cw.receive_image(msg['content'], msg['timestamp'])
+                elif msg.get('msg_type') == 'file':
+                    cw._append_message(name, msg['content'], False,
+                                       timestamp=msg['timestamp'],
+                                       msg_id=msg.get('msg_id', ''),
+                                       msg_type='file',
+                                       file_path=msg.get('file_path', ''))
                 else:
                     cw.receive_message(msg['content'], msg['timestamp'],
                                        reply_to=msg.get('reply_to_id', ''),
@@ -9188,16 +9369,18 @@ class LanMessengerApp:
         ph = 'dd/mm/aaaa'
         tk.Label(filter_frame, text='De:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
-        date_from_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12)
+        date_from_var = tk.StringVar(value=ph)
+        date_from_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12,
+                                    textvariable=date_from_var)
         date_from_entry.pack(side='left', padx=(4, 12))
-        date_from_entry.insert(0, ph)
         date_from_entry.config(fg='#999999')
 
         tk.Label(filter_frame, text='Até:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
-        date_to_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12)
+        date_to_var = tk.StringVar(value=ph)
+        date_to_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12,
+                                  textvariable=date_to_var)
         date_to_entry.pack(side='left', padx=(4, 0))
-        date_to_entry.insert(0, ph)
         date_to_entry.config(fg='#999999')
 
         def _on_focus_in(entry):
@@ -9213,6 +9396,10 @@ class LanMessengerApp:
         date_from_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_from_entry))
         date_to_entry.bind('<FocusIn>', lambda e: _on_focus_in(date_to_entry))
         date_to_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_to_entry))
+
+        # Auto-formata digitos para dd/mm/aaaa durante a digitacao
+        _bind_date_mask(date_from_entry, date_from_var, placeholder=ph)
+        _bind_date_mask(date_to_entry, date_to_var, placeholder=ph)
 
         # Separador
         tk.Frame(win, bg='#cccccc', height=1).pack(fill='x', padx=8)
@@ -9333,6 +9520,20 @@ class LanMessengerApp:
             msg_text.delete('1.0', 'end')
             match_count = 0
             query_lower = query.lower() if query else ''
+
+            if not msgs:
+                hint = []
+                if query:
+                    hint.append(f'busca: "{query}"')
+                if d_from:
+                    hint.append(f"De {d_from.strftime('%d/%m/%Y')}")
+                if d_to:
+                    hint.append(f"Até {d_to.strftime('%d/%m/%Y')}")
+                if selected_contact and selected_contact != 'Todos':
+                    hint.append(f'Contato: {selected_contact}')
+                msg_text.insert('end', '  Nenhuma mensagem encontrada\n\n', 'contact_header')
+                if hint:
+                    msg_text.insert('end', '  Filtros: ' + '  ·  '.join(hint) + '\n', 'ts')
 
             for peer, peer_msgs in grouped.items():
                 peer_name = _resolve_name(peer)
@@ -10103,7 +10304,7 @@ class LanMessengerApp:
         if fp:
             self._start_file_send(uid, fp)
 
-    # Inicia envio de arquivo com dialogo de progresso.
+    # Inicia envio de arquivo: cria entrada na janela Transferencias de Arquivos.
     def _start_file_send(self, peer_id, filepath):
         fid = self.messenger.send_file(peer_id, filepath)
         if fid:
@@ -10117,14 +10318,10 @@ class LanMessengerApp:
                     self._open_chat(peer_id)
                 except Exception:
                     pass
-            dlg = FileTransferDialog(
-                self.root, fid, fname, name,
-                direction='send', filesize=fsize,
-                on_cancel=self.messenger.cancel_file
-            )
-            self._file_dialogs[fid] = dlg
             self._add_transfer_entry(fid, fname, name, 'send', fsize,
-                                      'pending', peer_id=peer_id)
+                                      'pending', peer_id=peer_id,
+                                      filepath=filepath)
+            self._show_transfers_window()
 
     # Envia arquivo para todos os membros de um grupo (chamado pelo DnD)
     def _start_group_file_send(self, group_id, filepath):
@@ -11820,16 +12017,11 @@ class LanMessengerApp:
                           filename, filesize):
         # Callback: solicitacao de transferencia de arquivo recebida (MT_FILE_REQ).
         #
-        # Abre o dialogo de transferencia + surfacea a janela de chat do peer
-        # do tray com flash (mesmo padrao de mensagem chegando).
-        dlg = FileTransferDialog(
-            self.root, file_id, filename, display_name,
-            direction='receive', filesize=filesize,
-            on_cancel=lambda fid: self.messenger.cancel_file(fid)
-        )
-        self._file_dialogs[file_id] = dlg
+        # Adiciona na janela Transferencias de Arquivos + surfacea a janela
+        # de chat do peer do tray com flash (mesmo padrao de mensagem chegando).
         self._add_transfer_entry(file_id, filename, display_name,
                                   'receive', filesize, 'pending', peer_id=from_user)
+        self._show_transfers_window()
         SoundPlayer.play_file_start()
         try:
             if self.messenger.db.get_setting('notif_file', '1') == '1':
@@ -11857,30 +12049,18 @@ class LanMessengerApp:
                 pass
 
     # Callback: progresso de transferencia atualizado.
-    #
-    # Atualiza a barra de progresso do dialogo ativo e o status na lista
-    # de historico de transferencias para 'transferindo'.
+    # Marca a entrada como 'transferindo' (a janela Transferencias atualiza ao vivo).
     def _on_file_progress(self, file_id, transferred, total):
-        if file_id in self._file_dialogs:                                        # dialogo aberto?
-            self._file_dialogs[file_id].update_progress(transferred, total)  # atualiza progresso
-        self._update_transfer_entry(file_id, 'transferring')                  # atualiza historico
+        self._update_transfer_entry(file_id, 'transferring')
 
     # Callback: transferencia de arquivo concluida com sucesso.
-    #
-    # Notifica o dialogo ativo (exibe botao Abrir Pasta para receptor)
-    # e marca o status como 'concluido' no historico.
     def _on_file_complete(self, file_id, filepath):
-        if file_id in self._file_dialogs:
-            self._file_dialogs[file_id].finish(success=True, filepath=filepath)
         self._update_transfer_entry(file_id, 'completed', filepath=filepath)
         self._save_file_chat_message(file_id, 'completed')
         SoundPlayer.play_file_done()
 
     # Callback: transferencia de arquivo falhou ou foi cancelada.
     def _on_file_error(self, file_id, error):
-        if file_id in self._file_dialogs:
-            self._file_dialogs[file_id].finish(success=False)
-            del self._file_dialogs[file_id]
         self._update_transfer_entry(file_id, 'error')
         status = 'declined' if 'recus' in str(error).lower() else 'cancelled'
         self._save_file_chat_message(file_id, status)
@@ -11906,31 +12086,42 @@ class LanMessengerApp:
             text = f'\U0001f4c4 {fname} \u2014 Cancelado'
         is_sent = entry['direction'] == 'send'
         peer_id = entry['peer_id']
+        file_path = entry.get('filepath', '') if status == 'completed' else ''
         import uuid as _uuid
         msg_id = str(_uuid.uuid4())
         self.messenger.db.save_message(
             msg_id, self.messenger.user_id if is_sent else peer_id,
             peer_id if is_sent else self.messenger.user_id,
-            text, msg_type='file', is_sent=is_sent)
-        # Garante que a janela de chat esteja aberta (pode ter sido fechada durante o envio)
-        # e surfacea do tray + pisca como acontece com mensagens normais
-        if status == 'completed' and peer_id not in self.chat_windows:
+            text, msg_type='file', is_sent=is_sent, file_path=file_path)
+        # Garante que a janela de chat esteja aberta. Se nao estava: surfacea
+        # do tray (o _open_chat carrega a msg recem-salva via unread loader,
+        # ja com file_path clicavel) — nao chama _append_message para evitar
+        # duplicar. Se ja estava aberta: append direto.
+        window_was_open = peer_id in self.chat_windows
+        if status == 'completed' and not window_was_open:
             try:
                 def _create():
                     return self._open_chat(peer_id, surface_only=True)
                 self._surface_chat_from_tray(_create)
             except Exception:
                 pass
-        if peer_id in self.chat_windows:
+        if window_was_open and peer_id in self.chat_windows:
             name = 'Você' if is_sent else entry.get('peer_name', '')
             cw = self.chat_windows[peer_id]
-            cw._append_message(name, text, is_sent, msg_id=msg_id)
+            cw._append_message(name, text, is_sent, msg_id=msg_id,
+                               msg_type='file', file_path=file_path)
             # Para o sender tambem: pisca a janela de chat na taskbar (igual a mensagem recebida)
             if status == 'completed':
                 try:
                     self._flash_window(cw, gate_key='flash_taskbar_file')
                 except Exception:
                     pass
+        elif status == 'completed' and peer_id in self.chat_windows:
+            cw = self.chat_windows[peer_id]
+            try:
+                self._flash_window(cw, gate_key='flash_taskbar_file')
+            except Exception:
+                pass
 
     @staticmethod
     def _format_filesize(size):
@@ -11942,14 +12133,15 @@ class LanMessengerApp:
             return f'{size / (1024 * 1024):.1f} MB'
 
     def _add_transfer_entry(self, file_id, filename, peer_name,
-                             direction, filesize, status, peer_id=''):
+                             direction, filesize, status, peer_id='',
+                             filepath=''):
         # Adiciona nova entrada no historico de transferencias e atualiza a janela de transfers.
         #
         # Cria um dicionario com todos os dados da transferencia e o append em
         # self._transfer_history. Se a janela de transfers estiver aberta, atualiza ela.
         entry = {'file_id': file_id, 'filename': filename,  # dicionario com dados da transferencia
                  'peer_name': peer_name, 'direction': direction,
-                 'filesize': filesize, 'status': status, 'filepath': '',
+                 'filesize': filesize, 'status': status, 'filepath': filepath,
                  'peer_id': peer_id}
         self._transfer_history.append(entry)
         if self._transfers_window:

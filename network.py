@@ -25,6 +25,7 @@ import os          # Caminhos de arquivos
 import sys         # sys.executable para caminho do exe (UAC firewall fix)
 import platform    # Deteccao de OS
 import subprocess  # Execucao de netsh para firewall
+import getpass     # Username do Windows (multi-user no mesmo PC)
 import logging     # Log rotativo em %APPDATA%\.mbchat\network.log
 import logging.handlers
 from pathlib import Path  # Manipulacao de caminhos
@@ -242,13 +243,21 @@ def _get_subnet_broadcast():
     return None
 
 
-# Gera ID unico baseado no MAC address + hostname.
-# Formato: "mac12digitos_hostname"
-# Garante que o mesmo PC sempre gere o mesmo ID.
+# Gera ID unico baseado no MAC + hostname + username do Windows.
+# Formato: "mac12digitos_hostname_winuser"
+# Inclui winuser para que usuarios diferentes logados na mesma maquina sejam
+# vistos como peers distintos (ex: 1 PC compartilhado de manha/tarde por
+# pessoas diferentes aparece como 2 contatos separados para os outros).
 def generate_user_id():
     mac = uuid.getnode()  # MAC address como inteiro
     host = socket.gethostname()  # Nome da maquina
-    return f"{mac:012x}_{host}"  # MAC em hex (12 digitos) + underscore + hostname
+    try:
+        winuser = (getpass.getuser() or '').strip()
+    except Exception:
+        winuser = ''
+    if winuser:
+        return f"{mac:012x}_{host}_{winuser}"
+    return f"{mac:012x}_{host}"
 
 
 # Retorna informacoes da maquina local como dict
