@@ -25,7 +25,9 @@ from network import (
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
-    MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE, TCP_PORT
+    MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
+    MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE,
+    TCP_PORT
 )
 from database import Database  # Banco de dados local
 
@@ -59,7 +61,8 @@ class Messenger:
                  on_file_progress=None, on_file_complete=None,
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
-                 on_group_join=None, on_image=None, on_poll=None):
+                 on_group_join=None, on_image=None, on_poll=None,
+                 on_reminder_invite=None, on_reminder_response=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -82,6 +85,8 @@ class Messenger:
         self.on_group_join = on_group_join      # Membro entrou no grupo
         self.on_image = on_image                # Imagem recebida
         self.on_poll = on_poll                  # Enquete recebida/voto
+        self.on_reminder_invite = on_reminder_invite      # Convite lembrete recebido
+        self.on_reminder_response = on_reminder_response  # Resposta de convite (accept/decline)
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -160,9 +165,16 @@ class Messenger:
         self.tcp_server.start()     # Comeca a aceitar conexoes TCP (descobre porta real)
         # Informa o discovery qual foi a porta TCP efetiva (caso tenha usado fallback)
         self.discovery.tcp_port = getattr(self.tcp_server, 'port', TCP_PORT)
-        
+
         self.discovery.start()      # Comeca a enviar/receber announces UDP
         self._file_receiver.start()  # Comeca a aceitar arquivos
+
+        # Carrega peers manuais persistidos (cenario VPN/fora-da-LAN).
+        # Lista vazia = no-op (caminho da LAN intocado, zero overhead).
+        try:
+            self._reload_manual_peers()
+        except Exception:
+            pass
 
     # Para todos os servicos e limpa estado
     def stop(self):
@@ -432,6 +444,65 @@ class Messenger:
                     'action': 'vote', 'poll_id': poll_id,
                     'voter': msg.get('display_name', from_user),
                     'option_index': option_index
+                })
+
+        # --- Convite de lembrete compartilhado ---
+        elif msg_type == MT_REMINDER_INVITE:
+            external_id = msg.get('external_id', '')
+            if not external_id:
+                return
+            # Idempotencia: se ja recebi este invite antes, ignora
+            existing = self.db.get_reminder_by_external_id(external_id)
+            if existing:
+                return
+            text = msg.get('text', '')
+            remind_at = float(msg.get('remind_at', 0))
+            recurrence_rule = msg.get('recurrence_rule', '') or ''
+            recurrence_int = int(msg.get('recurrence_interval_seconds', 0) or 0)
+            creator_uid = msg.get('from_user', '')
+            creator_name = msg.get('display_name', '') or msg.get('creator_name', '')
+            invited_uids = msg.get('invited_uids', []) or []
+            self.db.add_shared_reminder(
+                text=text, remind_at=remind_at,
+                creator_uid=creator_uid, creator_name=creator_name,
+                external_id=external_id,
+                invited_uids=invited_uids,
+                recurrence_rule=recurrence_rule,
+                recurrence_interval_seconds=recurrence_int,
+                share_status='pending_accept')
+            # Grava cartao "Lembrete recebido" no historico do chat com o criador
+            try:
+                card_text = self._format_reminder_card(
+                    text, remind_at, recurrence_rule)
+                msg_id = f'rem_{external_id}_in'
+                self.db.save_message(msg_id, creator_uid, self.user_id,
+                                     card_text, 'reminder_card',
+                                     is_sent=False)
+            except Exception:
+                pass
+            if self.on_reminder_invite:
+                self.on_reminder_invite({
+                    'external_id': external_id,
+                    'text': text, 'remind_at': remind_at,
+                    'creator_uid': creator_uid,
+                    'creator_name': creator_name,
+                })
+
+        # --- Resposta de convite (aceitar/recusar) — chega no criador ---
+        elif msg_type in (MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE):
+            external_id = msg.get('external_id', '')
+            if not external_id:
+                return
+            responder_uid = msg.get('from_user', '')
+            responder_name = msg.get('display_name', '')
+            if msg_type == MT_REMINDER_ACCEPT:
+                self.db.mark_reminder_accepted(external_id, responder_uid)
+            if self.on_reminder_response:
+                self.on_reminder_response({
+                    'external_id': external_id,
+                    'responder_uid': responder_uid,
+                    'responder_name': responder_name,
+                    'accepted': msg_type == MT_REMINDER_ACCEPT,
                 })
 
     # ========================================
@@ -903,3 +974,161 @@ class Messenger:
     # Marca todas as mensagens de um peer como lidas
     def mark_as_read(self, from_user_id):
         self.db.mark_as_read(self.user_id, from_user_id)
+
+    # ========================================
+    # MANUAL PEERS / VPN — Acesso para a GUI
+    # ========================================
+    # Cenario: usuario fora da LAN (home-office com VPN). Multicast/broadcast nao
+    # cruzam VPN, entao discovery normal falha. Solucao: cadastrar manualmente o
+    # IP de UM peer "ancora" do escritorio. Daquele peer, peer-exchange propaga
+    # a LAN inteira automaticamente. Lista vazia = caminho da LAN intocado.
+
+    def add_manual_peer(self, ip, note=''):
+        ok = self.db.add_manual_peer(ip, note)
+        if ok:
+            self._reload_manual_peers()
+        return ok
+
+    def remove_manual_peer(self, ip):
+        self.db.remove_manual_peer(ip)
+        self._reload_manual_peers()
+
+    def get_manual_peers(self):
+        return self.db.get_manual_peers()
+
+    # Toggle on/off persistente. Default OFF — a lista fica salva mas so aplica
+    # em discovery.set_manual_peers quando ativado. Assim o usuario cadastra
+    # uma vez e liga/desliga conforme esta no escritorio ou em VPN.
+    def is_vpn_enabled(self):
+        val = self.db.get_setting('vpn_enabled', '0')
+        return str(val) in ('1', 'true', 'True')
+
+    def set_vpn_enabled(self, enabled):
+        self.db.set_setting('vpn_enabled', '1' if enabled else '0')
+        self._reload_manual_peers()
+
+    # ========================================
+    # SHARED REMINDERS — Convite, accept, decline
+    # ========================================
+
+    # Cria lembrete compartilhado localmente (status='active' para o criador)
+    # e envia MT_REMINDER_INVITE pra cada uid em invited_uids.
+    # Retorna external_id (uuid) gerado.
+    def create_shared_reminder(self, text, remind_at, invited_uids,
+                                recurrence_rule='',
+                                recurrence_interval_seconds=0):
+        external_id = self.db.add_shared_reminder(
+            text=text, remind_at=remind_at,
+            creator_uid=self.user_id,
+            creator_name=self.display_name,
+            invited_uids=invited_uids,
+            recurrence_rule=recurrence_rule,
+            recurrence_interval_seconds=recurrence_interval_seconds,
+            share_status='active')
+        # Envia convite para cada peer + grava cartao no historico do chat
+        card_text = self._format_reminder_card(text, remind_at, recurrence_rule)
+        for uid in (invited_uids or []):
+            if uid == self.user_id:
+                continue
+            contact = self.db.get_contact(uid)
+            if not contact:
+                continue
+            payload = {
+                'type': MT_REMINDER_INVITE,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'creator_name': self.display_name,
+                'external_id': external_id,
+                'text': text,
+                'remind_at': remind_at,
+                'recurrence_rule': recurrence_rule or '',
+                'recurrence_interval_seconds': recurrence_interval_seconds or 0,
+                'invited_uids': invited_uids,
+            }
+            try:
+                TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+            except Exception:
+                pass
+            # Grava cartao "Lembrete enviado" no historico (lado criador)
+            try:
+                msg_id = f'rem_{external_id}_{uid}'
+                self.db.save_message(msg_id, self.user_id, uid,
+                                     card_text, 'reminder_card',
+                                     is_sent=True)
+            except Exception:
+                pass
+        return external_id
+
+    # Formata um cartao de lembrete para exibir no historico do chat.
+    def _format_reminder_card(self, text, remind_at, recurrence_rule=''):
+        from datetime import datetime as _dt
+        if remind_at and remind_at > 0:
+            try:
+                dt = _dt.fromtimestamp(float(remind_at))
+                when = dt.strftime('%d/%m/%Y %H:%M')
+            except Exception:
+                when = ''
+        else:
+            when = 'sem data'
+        suffix = ''
+        if recurrence_rule:
+            suffix = ' (recorrente)'
+        return f'📌 Lembrete compartilhado: "{text}" — {when}{suffix}'
+
+    # Aceita um convite recebido. Atualiza status localmente para 'active'
+    # (lembrete passa a disparar) + notifica o criador.
+    def accept_reminder_invite(self, external_id):
+        rem = self.db.get_reminder_by_external_id(external_id)
+        if not rem:
+            return False
+        self.db.update_reminder_share_status(external_id, 'active')
+        creator_uid = rem.get('creator_uid', '')
+        if creator_uid:
+            contact = self.db.get_contact(creator_uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_REMINDER_ACCEPT,
+                        'from_user': self.user_id,
+                        'display_name': self.display_name,
+                        'external_id': external_id,
+                    })
+                except Exception:
+                    pass
+        return True
+
+    def decline_reminder_invite(self, external_id):
+        rem = self.db.get_reminder_by_external_id(external_id)
+        if not rem:
+            return False
+        self.db.update_reminder_share_status(external_id, 'declined')
+        creator_uid = rem.get('creator_uid', '')
+        if creator_uid:
+            contact = self.db.get_contact(creator_uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_REMINDER_DECLINE,
+                        'from_user': self.user_id,
+                        'display_name': self.display_name,
+                        'external_id': external_id,
+                    })
+                except Exception:
+                    pass
+        return True
+
+    def _reload_manual_peers(self):
+        # Se VPN desligada, envia lista vazia para o discovery (zero overhead,
+        # os IPs ficam salvos no DB mas nao sao anunciados).
+        if not self.is_vpn_enabled():
+            try:
+                self.discovery.set_manual_peers([])
+            except Exception:
+                pass
+            return
+        peers = self.db.get_manual_peers()
+        ips = [p['ip'] for p in peers]
+        try:
+            self.discovery.set_manual_peers(ips)
+        except Exception:
+            pass

@@ -102,6 +102,69 @@ _URL_RE = re.compile(
     re.IGNORECASE
 )
 
+# Bloco de codigo triplo backtick: ```lang\ncontent``` ou ```content```
+_CODE_BLOCK_RE = re.compile(r'```([A-Za-z0-9_+-]*)?\s*\n?(.*?)```', re.DOTALL)
+# Codigo inline: `texto` (uma linha so, sem aspas duplicadas)
+_CODE_INLINE_RE = re.compile(r'`([^`\n]+)`')
+
+# Conjuntos de palavras-chave para syntax highlighting.
+_PY_KEYWORDS = {
+    'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await',
+    'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except',
+    'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is',
+    'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try',
+    'while', 'with', 'yield', 'match', 'case',
+}
+_PY_BUILTINS = {
+    'abs', 'all', 'any', 'ascii', 'bin', 'bool', 'bytearray', 'bytes',
+    'callable', 'chr', 'classmethod', 'complex', 'dict', 'dir', 'divmod',
+    'enumerate', 'eval', 'exec', 'filter', 'float', 'format', 'frozenset',
+    'getattr', 'globals', 'hasattr', 'hash', 'help', 'hex', 'id', 'input',
+    'int', 'isinstance', 'issubclass', 'iter', 'len', 'list', 'locals',
+    'map', 'max', 'memoryview', 'min', 'next', 'object', 'oct', 'open',
+    'ord', 'pow', 'print', 'property', 'range', 'repr', 'reversed',
+    'round', 'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str',
+    'sum', 'super', 'tuple', 'type', 'vars', 'zip', '__name__', '__main__',
+    '__init__', '__str__', '__repr__', 'Exception', 'ValueError',
+    'TypeError', 'KeyError', 'IndexError', 'AttributeError', 'RuntimeError',
+}
+_JS_KEYWORDS = {
+    'var', 'let', 'const', 'function', 'class', 'extends', 'super',
+    'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+    'default', 'break', 'continue', 'new', 'this', 'try', 'catch',
+    'finally', 'throw', 'typeof', 'instanceof', 'in', 'of', 'delete',
+    'void', 'yield', 'async', 'await', 'import', 'export', 'from', 'as',
+    'true', 'false', 'null', 'undefined', 'static', 'get', 'set',
+}
+_JS_BUILTINS = {
+    'console', 'document', 'window', 'Math', 'JSON', 'Array', 'Object',
+    'String', 'Number', 'Boolean', 'Date', 'RegExp', 'Map', 'Set',
+    'Promise', 'Symbol', 'Error', 'parseInt', 'parseFloat', 'isNaN',
+    'fetch', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+}
+_BASH_KEYWORDS = {
+    'if', 'then', 'elif', 'else', 'fi', 'for', 'in', 'do', 'done',
+    'while', 'until', 'case', 'esac', 'function', 'return', 'break',
+    'continue', 'exit', 'export', 'local', 'readonly', 'declare', 'set',
+    'unset', 'source', 'eval', 'true', 'false',
+}
+_BASH_BUILTINS = {
+    'echo', 'cd', 'ls', 'pwd', 'cat', 'grep', 'sed', 'awk', 'find',
+    'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'touch', 'chmod', 'chown',
+    'curl', 'wget', 'git', 'npm', 'pip', 'python', 'node', 'docker',
+    'kubectl', 'ssh', 'scp', 'tar', 'zip', 'unzip', 'sudo',
+}
+_SQL_KEYWORDS = {
+    'select', 'from', 'where', 'insert', 'update', 'delete', 'into',
+    'values', 'set', 'and', 'or', 'not', 'in', 'like', 'between',
+    'is', 'null', 'as', 'on', 'join', 'left', 'right', 'inner', 'outer',
+    'full', 'cross', 'group', 'by', 'order', 'having', 'limit', 'offset',
+    'union', 'all', 'distinct', 'create', 'table', 'drop', 'alter',
+    'add', 'column', 'index', 'primary', 'key', 'foreign', 'references',
+    'default', 'constraint', 'unique', 'check', 'with', 'case', 'when',
+    'then', 'else', 'end',
+}
+
 
 # Abre o Explorer destacando o arquivo (ou abre a pasta se o arquivo nao existir mais).
 # Usado pelo clique em mensagens de arquivo no chat.
@@ -2001,10 +2064,18 @@ class AccountWindow(tk.Toplevel):
         self.resizable(False, False)
         self.transient(app.root)
         self.grab_set()
-        self.configure(bg=BG_WINDOW)
         self.bind('<Escape>', lambda e: self.destroy())
 
-        _center_window(self, 340, 420)
+        # Paleta moderna
+        NAVY = '#0f2a5c'
+        CARD = '#ffffff'
+        BG = '#f1f5f9'
+        MUTED = '#64748b'
+        TEXT = '#1e293b'
+        ACCENT = '#2563eb'
+
+        self.configure(bg=BG)
+        _center_window(self, 500, 460)
         _apply_rounded_corners(self)
 
         db = self.messenger.db
@@ -2014,81 +2085,141 @@ class AccountWindow(tk.Toplevel):
         self.var_custom_avatar = tk.StringVar(
             value=db.get_setting('custom_avatar', ''))
 
-        content = tk.Frame(self, bg=BG_WINDOW)
-        content.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+        # --- Header navy com titulo
+        header = tk.Frame(self, bg=NAVY, height=46)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        tk.Label(header, text='Minha Conta', bg=NAVY, fg='white',
+                 font=('Segoe UI', 12, 'bold')
+                 ).pack(side='left', padx=16, pady=12)
 
-        # Nome
-        lf = tk.LabelFrame(content, text='Perfil', font=FONT,
-                            bg=BG_WINDOW, padx=10, pady=8)
-        lf.pack(fill='x', pady=(0, 8))
+        content = tk.Frame(self, bg=BG)
+        content.pack(fill='both', expand=True, padx=12, pady=10)
 
-        row = tk.Frame(lf, bg=BG_WINDOW)
-        row.pack(fill='x', pady=4)
-        tk.Label(row, text='Nome de exibição:', font=FONT,
-                 bg=BG_WINDOW).pack(side='left')
-        tk.Entry(row, font=FONT, width=18,
-                 textvariable=self.var_display_name).pack(side='right')
+        # === Card 1: Perfil (campos compactos, ~metade da largura) ===
+        card1 = tk.Frame(content, bg=CARD, bd=0, highlightthickness=1,
+                         highlightbackground='#e2e8f0')
+        card1.pack(fill='x', pady=(0, 8))
+        tk.Label(card1, text='Perfil', font=('Segoe UI', 10, 'bold'),
+                 bg=CARD, fg=TEXT).pack(anchor='w', padx=12, pady=(8, 4))
 
-        # Foto de perfil
-        lf2 = tk.LabelFrame(content, text='Foto de Perfil', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=8)
-        lf2.pack(fill='x', pady=(0, 8))
+        # Linha unica: Nome (esq) + Setor (dir) lado a lado
+        fields = tk.Frame(card1, bg=CARD)
+        fields.pack(fill='x', padx=12, pady=(0, 10))
 
-        tk.Label(lf2, text='Escolha um avatar ou envie uma foto:',
-                 font=FONT_SMALL, bg=BG_WINDOW).pack(anchor='w', pady=(0, 6))
+        # Coluna nome
+        ncol = tk.Frame(fields, bg=CARD)
+        ncol.pack(side='left', fill='x', expand=True, padx=(0, 8))
+        tk.Label(ncol, text='Nome de exibição', font=('Segoe UI', 9),
+                 bg=CARD, fg=MUTED).pack(anchor='w')
+        name_ent = tk.Entry(ncol, font=('Segoe UI', 10),
+                            textvariable=self.var_display_name,
+                            relief='solid', bd=1, bg='#ffffff',
+                            highlightthickness=1,
+                            highlightbackground='#cbd5e1',
+                            highlightcolor=ACCENT)
+        name_ent.pack(fill='x', pady=(4, 0), ipady=3)
 
-        grid = tk.Frame(lf2, bg=BG_WINDOW)
-        grid.pack(anchor='w', pady=(0, 8))
+        # Coluna setor
+        dcol = tk.Frame(fields, bg=CARD)
+        dcol.pack(side='left', fill='x', expand=True)
+        tk.Label(dcol, text='Setor / Departamento', font=('Segoe UI', 9),
+                 bg=CARD, fg=MUTED).pack(anchor='w')
+        self._dept_combo = ttk.Combobox(
+            dcol, font=('Segoe UI', 10), state='readonly',
+            values=['(Nenhum)', 'Administrativo', 'CS', 'Comercial',
+                    'Contábil', 'Fiscal', 'Marketing', 'Pessoal',
+                    'Processos', 'Recepção', 'TI'])
+        cur_dept = db.get_setting('department', '')
+        self._dept_combo.set(cur_dept if cur_dept else '(Nenhum)')
+        self._dept_combo.pack(fill='x', pady=(4, 0))
+        self._dept_combo.bind('<<ComboboxSelected>>', self._on_dept_changed)
+
+        # === Card 2: Foto de Perfil (avatares a esq + foto/botoes a dir) ===
+        card2 = tk.Frame(content, bg=CARD, bd=0, highlightthickness=1,
+                         highlightbackground='#e2e8f0')
+        card2.pack(fill='x', pady=(0, 8))
+        tk.Label(card2, text='Foto de Perfil', font=('Segoe UI', 10, 'bold'),
+                 bg=CARD, fg=TEXT).pack(anchor='w', padx=12, pady=(8, 4))
+        tk.Label(card2, text='Escolha um avatar ou envie uma foto.',
+                 font=('Segoe UI', 9), bg=CARD, fg=MUTED
+                 ).pack(anchor='w', padx=12, pady=(0, 8))
+
+        # Layout 3 colunas: avatares | divisor | foto+botoes (centralizados)
+        body_row = tk.Frame(card2, bg=CARD)
+        body_row.pack(fill='x', padx=12, pady=(0, 12))
+
+        # --- Coluna 0: grid de avatares 6x2 ---
+        grid = tk.Frame(body_row, bg=CARD)
+        grid.grid(row=0, column=0, sticky='nw', padx=(0, 12))
 
         self._avatar_canvases = []
         for i, (color, letter) in enumerate(AVATAR_COLORS):
-            c = tk.Canvas(grid, width=36, height=36, bg=BG_WINDOW,
+            c = tk.Canvas(grid, width=34, height=34, bg=CARD,
                           highlightthickness=0, cursor='hand2')
             r = i // 6
             col = i % 6
             c.grid(row=r, column=col, padx=2, pady=2)
-            c.create_rectangle(2, 2, 34, 34, fill=color, outline='#999999')
-            initial = self.messenger.display_name[0].upper() if self.messenger.display_name else 'U'
-            c.create_text(18, 18, text=initial, fill='white',
+            c.create_oval(2, 2, 32, 32, fill=color, outline='')
+            initial = self.messenger.display_name[0].upper() \
+                if self.messenger.display_name else 'U'
+            c.create_text(17, 17, text=initial, fill='white',
                           font=('Segoe UI', 11, 'bold'))
             if i == self.var_avatar_index.get() and not self.var_custom_avatar.get():
-                c.create_rectangle(1, 1, 35, 35, outline='#0066cc', width=2)
+                c.create_oval(0, 0, 33, 33, outline=ACCENT, width=2,
+                              tags='selection')
             c.bind('<Button-1>', lambda e, idx=i: self._select_avatar(idx))
             self._avatar_canvases.append(c)
 
-        photo_row = tk.Frame(lf2, bg=BG_WINDOW)
-        photo_row.pack(fill='x', pady=4)
+        # --- Coluna 1: divisor vertical ---
+        divider = tk.Frame(body_row, bg='#e2e8f0', width=1)
+        divider.grid(row=0, column=1, sticky='ns', padx=8, pady=4)
 
-        self._custom_preview = tk.Canvas(photo_row, width=36, height=36,
-                                         bg=BG_WINDOW, highlightthickness=0)
-        self._custom_preview.pack(side='left', padx=(0, 8))
+        # --- Coluna 2: foto custom (centralizada) ---
+        photo_col = tk.Frame(body_row, bg=CARD)
+        photo_col.grid(row=0, column=2, sticky='nsew', padx=(8, 0))
+        body_row.grid_columnconfigure(2, weight=1)
 
         custom = self.var_custom_avatar.get()
+        self._custom_preview = tk.Canvas(photo_col, width=56, height=56,
+                                         bg=CARD, highlightthickness=0)
+        self._custom_preview.pack(anchor='center', pady=(0, 4))
+        # Ajusta tamanho do show_preview pro novo canvas 56x56
         self._show_preview(custom)
 
-        btn_frame = tk.Frame(photo_row, bg=BG_WINDOW)
-        btn_frame.pack(side='left')
-
-        tk.Button(btn_frame, text='Enviar foto...', font=FONT_SMALL,
-                  command=self._upload_avatar).pack(anchor='w')
+        tk.Button(photo_col, text='⤓ Enviar foto',
+                  font=('Segoe UI', 8, 'bold'),
+                  bg='#e0e7ff', fg='#1e3a8a', bd=0,
+                  padx=10, pady=3,
+                  cursor='hand2', activebackground='#c7d2fe',
+                  command=self._upload_avatar
+                  ).pack(anchor='center', pady=(0, 2))
 
         self._lbl_custom_path = tk.Label(
-            btn_frame,
+            photo_col,
             text=os.path.basename(custom) if custom else 'Nenhuma foto',
-            font=FONT_SMALL, bg=BG_WINDOW, fg=FG_GRAY)
-        self._lbl_custom_path.pack(anchor='w')
+            font=('Segoe UI', 8), bg=CARD, fg=MUTED)
+        self._lbl_custom_path.pack(anchor='center', pady=(2, 0))
 
+        self._btn_remove_photo = None
         if custom:
-            tk.Button(btn_frame, text='Remover foto', font=FONT_SMALL,
-                      fg=FG_RED, command=self._remove_custom_avatar
-                      ).pack(anchor='w', pady=2)
+            self._btn_remove_photo = tk.Button(
+                photo_col, text='Remover foto', font=('Segoe UI', 8),
+                bg=CARD, fg='#dc2626', bd=0, cursor='hand2',
+                activebackground=CARD,
+                command=self._remove_custom_avatar)
+            self._btn_remove_photo.pack(anchor='center', pady=(2, 0))
 
-        # Bottom buttons
-        bottom = tk.Frame(self, bg=BG_WINDOW)
-        bottom.pack(fill='x', padx=10, pady=8)
-        tk.Button(bottom, text='Cancelar', font=FONT, width=10,
+        # === Bottom buttons ===
+        bottom = tk.Frame(self, bg=BG)
+        bottom.pack(fill='x', padx=12, pady=(0, 12))
+        tk.Button(bottom, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg=TEXT, bd=0, padx=16, pady=5,
+                  cursor='hand2', activebackground='#cbd5e1',
                   command=self.destroy).pack(side='right', padx=4)
-        tk.Button(bottom, text='OK', font=FONT, width=10,
+        tk.Button(bottom, text='OK', font=('Segoe UI', 9, 'bold'),
+                  bg=NAVY, fg='white', bd=0, padx=22, pady=5,
+                  cursor='hand2', activebackground='#1e40af',
                   command=self._save).pack(side='right', padx=4)
 
     def _show_preview(self, path):
@@ -2097,22 +2228,22 @@ class AccountWindow(tk.Toplevel):
             try:
                 if HAS_PIL:
                     img = Image.open(path)
-                    img = img.resize((32, 32), Image.LANCZOS)
+                    img = img.resize((52, 52), Image.LANCZOS)
                     self._preview_img = ImageTk.PhotoImage(img)
-                    self._custom_preview.create_image(18, 18,
+                    self._custom_preview.create_image(28, 28,
                                                       image=self._preview_img)
                     return
             except Exception:
                 pass
-            self._custom_preview.create_rectangle(2, 2, 34, 34,
-                                                  fill='#228822', outline='#999')
-            self._custom_preview.create_text(18, 18, text='✓', fill='white',
-                                             font=('Segoe UI', 14, 'bold'))
+            self._custom_preview.create_oval(2, 2, 54, 54,
+                                             fill='#22c55e', outline='')
+            self._custom_preview.create_text(28, 28, text='✓', fill='white',
+                                             font=('Segoe UI', 18, 'bold'))
         else:
-            self._custom_preview.create_rectangle(2, 2, 34, 34,
-                                                  fill='#dddddd', outline='#999')
-            self._custom_preview.create_text(18, 18, text='?', fill='#999',
-                                             font=('Segoe UI', 12))
+            self._custom_preview.create_oval(2, 2, 54, 54,
+                                             fill='#e2e8f0', outline='')
+            self._custom_preview.create_text(28, 28, text='?', fill='#94a3b8',
+                                             font=('Segoe UI', 16))
 
     def _select_avatar(self, idx):
         self.var_avatar_index.set(idx)
@@ -2120,8 +2251,8 @@ class AccountWindow(tk.Toplevel):
         for i, c in enumerate(self._avatar_canvases):
             c.delete('selection')
             if i == idx:
-                c.create_rectangle(1, 1, 35, 35, outline='#0066cc',
-                                   width=2, tags='selection')
+                c.create_oval(0, 0, 33, 33, outline='#2563eb',
+                              width=2, tags='selection')
 
     def _upload_avatar(self):
         path = filedialog.askopenfilename(
@@ -2138,11 +2269,37 @@ class AccountWindow(tk.Toplevel):
         for c in self._avatar_canvases:
             c.delete('selection')
         self._show_preview(dest)
+        # Garante que botao Remover apareca apos upload
+        if self._btn_remove_photo is None:
+            parent = self._lbl_custom_path.master
+            self._btn_remove_photo = tk.Button(
+                parent, text='Remover foto', font=('Segoe UI', 8),
+                bg='#ffffff', fg='#dc2626', bd=0, cursor='hand2',
+                activebackground='#ffffff',
+                command=self._remove_custom_avatar)
+            self._btn_remove_photo.pack(anchor='w', pady=(2, 0))
 
     def _remove_custom_avatar(self):
         self.var_custom_avatar.set('')
         self._lbl_custom_path.config(text='Nenhuma foto')
         self._show_preview('')
+        if self._btn_remove_photo is not None:
+            try:
+                self._btn_remove_photo.destroy()
+            except Exception:
+                pass
+            self._btn_remove_photo = None
+
+    # Aplica e propaga o departamento assim que seleciona no combobox.
+    def _on_dept_changed(self, event=None):
+        dept = self._dept_combo.get().strip()
+        if dept == '(Nenhum)':
+            dept = ''
+        try:
+            self.messenger.db.set_setting('department', dept)
+            self.messenger.discovery.update_department(dept)
+        except Exception:
+            log.exception('Erro ao aplicar departamento em AccountWindow')
 
     def _save(self):
         db = self.messenger.db
@@ -2660,7 +2817,7 @@ def _show_forward_dialog(parent, app, messenger, messages, exclude_group_id=None
     dlg = tk.Toplevel(parent)
     dlg.title('Encaminhar mensagens')
     dlg.configure(bg='#f5f7fa')
-    dlg.geometry('340x460')
+    dlg.geometry('360x520')
     dlg.transient(parent)
     dlg.grab_set()
     tk.Label(dlg, text=f'Encaminhar {len(messages)} mensagem(ns) para:',
@@ -2688,6 +2845,20 @@ def _show_forward_dialog(parent, app, messenger, messages, exclude_group_id=None
     # Ordem alfabetica case-insensitive por nome
     targets.sort(key=lambda t: (t[2] or '').lower())
 
+    # Caixa de busca (filtra a lista em tempo real)
+    search_frame = tk.Frame(dlg, bg='#f5f7fa')
+    search_frame.pack(fill='x', padx=12, pady=(0, 6))
+    search_box = tk.Frame(search_frame, bg='#ffffff', bd=1, relief='solid')
+    search_box.pack(fill='x')
+    tk.Label(search_box, text='\U0001f50d', font=('Segoe UI', 10),
+             bg='#ffffff', fg='#64748b').pack(side='left', padx=(8, 4), pady=4)
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(search_box, textvariable=search_var,
+                            font=('Segoe UI', 10), bd=0, relief='flat',
+                            bg='#ffffff')
+    search_entry.pack(side='left', fill='x', expand=True, padx=(0, 8), pady=4)
+    search_entry.focus_set()
+
     # Scrollable frame de checkboxes circulares
     list_outer = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
     list_outer.pack(fill='both', expand=True, padx=12, pady=4)
@@ -2712,45 +2883,71 @@ def _show_forward_dialog(parent, app, messenger, messages, exclude_group_id=None
     canvas.bind('<MouseWheel>', _on_mousewheel)
     inner.bind('<MouseWheel>', _on_mousewheel)
 
-    selected = set()  # indices em targets
-    bullets = []      # [(Label bullet, Frame row)]
+    selected = set()  # indices em targets (persiste mesmo quando filtra)
+    bullets = {}      # idx -> (Label bullet, Frame row, Label lbl)
 
-    EMPTY = '\u25cb'   # ○
-    FILLED = '\u25cf'  # ●
+    EMPTY = '○'   # *
+    FILLED = '●'  # *
 
     def _toggle(i):
         if i in selected:
             selected.remove(i)
-            bullets[i][0].configure(text=EMPTY, fg='#94a3b8')
-            bullets[i][1].configure(bg='#ffffff')
-            bullets[i][2].configure(bg='#ffffff')
-            bullets[i][0].configure(bg='#ffffff')
         else:
             selected.add(i)
-            bullets[i][0].configure(text=FILLED, fg='#1a3f7a')
-            bullets[i][1].configure(bg='#eef3fb')
-            bullets[i][2].configure(bg='#eef3fb')
-            bullets[i][0].configure(bg='#eef3fb')
+        widgets = bullets.get(i)
+        if not widgets:
+            return
+        b, row, lbl = widgets
+        if i in selected:
+            b.configure(text=FILLED, fg='#1a3f7a', bg='#eef3fb')
+            row.configure(bg='#eef3fb')
+            lbl.configure(bg='#eef3fb')
+        else:
+            b.configure(text=EMPTY, fg='#94a3b8', bg='#ffffff')
+            row.configure(bg='#ffffff')
+            lbl.configure(bg='#ffffff')
 
-    for i, (kind, ident, name) in enumerate(targets):
-        row = tk.Frame(inner, bg='#ffffff', cursor='hand2')
-        row.pack(fill='x', padx=0, pady=0)
-        bullet = tk.Label(row, text=EMPTY, font=('Segoe UI', 14),
-                          bg='#ffffff', fg='#94a3b8')
-        bullet.pack(side='left', padx=(10, 8), pady=6)
-        icon_char = '\U0001f465' if kind == 'group' else '\U0001f464'
-        lbl = tk.Label(row, text=f'{icon_char}  {name}',
-                       font=('Segoe UI', 10),
-                       bg='#ffffff', fg='#1a202c', anchor='w')
-        lbl.pack(side='left', fill='x', expand=True, pady=6)
-        bullets.append((bullet, row, lbl))
-        handler = lambda e, idx=i: _toggle(idx)
-        row.bind('<Button-1>', handler)
-        bullet.bind('<Button-1>', handler)
-        lbl.bind('<Button-1>', handler)
-        row.bind('<MouseWheel>', _on_mousewheel)
-        bullet.bind('<MouseWheel>', _on_mousewheel)
-        lbl.bind('<MouseWheel>', _on_mousewheel)
+    def _render_rows(query=''):
+        for w in list(inner.winfo_children()):
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        bullets.clear()
+        q = (query or '').strip().lower()
+        for i, (kind, ident, name) in enumerate(targets):
+            if q and q not in (name or '').lower():
+                continue
+            is_sel = i in selected
+            bg_row = '#eef3fb' if is_sel else '#ffffff'
+            row = tk.Frame(inner, bg=bg_row, cursor='hand2')
+            row.pack(fill='x', padx=0, pady=0)
+            bullet = tk.Label(row,
+                              text=FILLED if is_sel else EMPTY,
+                              font=('Segoe UI', 14),
+                              bg=bg_row,
+                              fg='#1a3f7a' if is_sel else '#94a3b8')
+            bullet.pack(side='left', padx=(10, 8), pady=6)
+            icon_char = '👥' if kind == 'group' else '👤'
+            lbl = tk.Label(row, text=f'{icon_char}  {name}',
+                           font=('Segoe UI', 10),
+                           bg=bg_row, fg='#1a202c', anchor='w')
+            lbl.pack(side='left', fill='x', expand=True, pady=6)
+            bullets[i] = (bullet, row, lbl)
+            handler = lambda e, idx=i: _toggle(idx)
+            row.bind('<Button-1>', handler)
+            bullet.bind('<Button-1>', handler)
+            lbl.bind('<Button-1>', handler)
+            row.bind('<MouseWheel>', _on_mousewheel)
+            bullet.bind('<MouseWheel>', _on_mousewheel)
+            lbl.bind('<MouseWheel>', _on_mousewheel)
+
+    _render_rows()
+
+    # Filtro em tempo real conforme o usuario digita
+    def _on_search_changed(*_):
+        _render_rows(search_var.get())
+    search_var.trace_add('write', _on_search_changed)
 
     btn_frame = tk.Frame(dlg, bg='#f5f7fa')
     btn_frame.pack(fill='x', padx=12, pady=10)
@@ -2929,6 +3126,15 @@ class ChatWindow(tk.Toplevel):
                       command=self._show_emoji_picker, cursor='hand2')
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
         _Tooltip(btn_emoji, 'Emojis')
+
+        # Botao <> para inserir bloco de codigo (triplo backtick)
+        btn_code = tk.Button(btn_frame, text='</>',
+                             font=('Consolas', 9, 'bold'),
+                             bg=win_bg, fg=flat_fg, relief='flat', bd=0,
+                             cursor='hand2', padx=4, pady=2,
+                             command=self._wrap_selection_code)
+        btn_code.pack(side='left', pady=2, padx=(0, 2))
+        _Tooltip(btn_code, 'Bloco de codigo (```)')
 
         # Ícone Anexo/Clipe (U+E723)
         ico_attach = self._create_mdl2_icon('\uE723', icon_size, flat_fg) if HAS_PIL else None
@@ -3137,6 +3343,64 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_configure('fwd_label',
                                      font=('Segoe UI', 8, 'italic'),
                                      foreground='#64748b')
+        # Cartao 'Lembrete compartilhado' no historico do chat (amarelo)
+        self.chat_text.tag_configure('reminder_card',
+                                     background='#fef3c7',
+                                     foreground='#78350f',
+                                     font=('Segoe UI', 9, 'bold'),
+                                     lmargin1=14, lmargin2=14, rmargin=14,
+                                     spacing1=6, spacing3=6)
+        # Codigo: bloco escuro estilo Discord/Notion
+        self.chat_text.tag_configure('code_block',
+                                     background='#1e293b',
+                                     foreground='#e2e8f0',
+                                     font=('Consolas', 9),
+                                     lmargin1=10, lmargin2=10,
+                                     rmargin=10,
+                                     spacing1=4, spacing3=4)
+        self.chat_text.tag_configure('code_inline',
+                                     background='#e2e8f0',
+                                     foreground='#0c4a6e',
+                                     font=('Consolas', 9))
+        # JSON syntax highlighting (keys/strings/numbers/booleans)
+        self.chat_text.tag_configure('code_json_key',
+                                     background='#1e293b',
+                                     foreground='#7dd3fc',
+                                     font=('Consolas', 9, 'bold'))
+        self.chat_text.tag_configure('code_json_str',
+                                     background='#1e293b',
+                                     foreground='#86efac',
+                                     font=('Consolas', 9))
+        self.chat_text.tag_configure('code_json_num',
+                                     background='#1e293b',
+                                     foreground='#fca5a5',
+                                     font=('Consolas', 9))
+        self.chat_text.tag_configure('code_json_bool',
+                                     background='#1e293b',
+                                     foreground='#a78bfa',
+                                     font=('Consolas', 9, 'bold'))
+        self.chat_text.tag_configure('code_lang',
+                                     background='#0f172a',
+                                     foreground='#94a3b8',
+                                     font=('Consolas', 8, 'italic'),
+                                     lmargin1=10, lmargin2=10,
+                                     spacing3=2)
+        # Syntax highlighting estilo VSCode dark+
+        for _tag, _fg in [
+            ('code_py_keyword',   '#c586c0'),
+            ('code_py_builtin',   '#4ec9b0'),
+            ('code_py_string',    '#ce9178'),
+            ('code_py_number',    '#b5cea8'),
+            ('code_py_comment',   '#6a9955'),
+            ('code_py_funcname',  '#dcdcaa'),
+            ('code_py_classname', '#4ec9b0'),
+            ('code_py_decorator', '#dcdcaa'),
+            ('code_py_self',      '#569cd6'),
+        ]:
+            self.chat_text.tag_configure(_tag,
+                                         background='#1e293b',
+                                         foreground=_fg,
+                                         font=('Consolas', 9))
         try:
             self.chat_text.tag_raise('sel')
         except tk.TclError:
@@ -3347,6 +3611,28 @@ class ChatWindow(tk.Toplevel):
         else:
             self.entry.insert(pos, emoji_char)  # fallback: texto unicode puro
 
+    # Insere bloco de codigo triplo backtick. Se ha selecao no input, embrulha.
+    # Senao insere ```\n\n``` e posiciona cursor entre os backticks.
+    def _wrap_selection_code(self):
+        try:
+            try:
+                sel_start = self.entry.index('sel.first')
+                sel_end = self.entry.index('sel.last')
+                sel_text = self.entry.get(sel_start, sel_end)
+            except Exception:
+                sel_start = sel_end = None
+                sel_text = ''
+            if sel_text:
+                self.entry.delete(sel_start, sel_end)
+                self.entry.insert(sel_start, '```\n' + sel_text + '\n```')
+            else:
+                cur = self.entry.index('insert')
+                self.entry.insert(cur, '```\n\n```')
+                self.entry.mark_set('insert', f'{cur}+4c')
+            self.entry.focus_set()
+        except Exception:
+            log.exception('erro em _wrap_selection_code')
+
     # Lê o conteúdo do campo de entrada reconstruindo emojis a partir das imagens.
     # Percorre todos os tokens do widget Text (texto puro e imagens embutidas).
     # Imagens são convertidas de volta ao caractere emoji via o mapa interno.
@@ -3365,9 +3651,37 @@ class ChatWindow(tk.Toplevel):
     # Insere texto no chat substituindo emojis Unicode por imagens PIL coloridas.
     # Divide o texto com regex: partes textuais recebem 'tag'; emojis viram imagens inline.
     # Fallback para texto simples se PIL não disponível ou emoji não renderizável.
+    # Detecta blocos de codigo ```...``` (com linguagem opcional) e codigo inline `...`.
+    # Auto-formata JSON dentro de blocos com syntax highlighting.
     def _insert_text_with_emojis(self, text, tag):
         bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
-        # Primeiro divide por URL; cada pedaco nao-URL passa pelo render de emoji
+        # Primeiro divide por blocos de codigo triplo backtick
+        pos = 0
+        for m in _CODE_BLOCK_RE.finditer(text):
+            before = text[pos:m.start()]
+            if before:
+                self._insert_inline_code_or_text(before, tag, bg)
+            lang = (m.group(1) or '').strip()
+            code = m.group(2) or ''
+            self._insert_code_block(code, lang)
+            pos = m.end()
+        if pos < len(text):
+            self._insert_inline_code_or_text(text[pos:], tag, bg)
+
+    # Trata texto SEM blocos triplos: detecta inline `...` e processa o resto via emoji+url.
+    def _insert_inline_code_or_text(self, text, tag, bg):
+        pos = 0
+        for m in _CODE_INLINE_RE.finditer(text):
+            before = text[pos:m.start()]
+            if before:
+                self._insert_text_with_urls(before, tag, bg)
+            self.chat_text.insert('end', m.group(1), 'code_inline')
+            pos = m.end()
+        if pos < len(text):
+            self._insert_text_with_urls(text[pos:], tag, bg)
+
+    # Texto puro: divide por URL, restante por emojis (logica original).
+    def _insert_text_with_urls(self, text, tag, bg):
         last = 0
         for m in _URL_RE.finditer(text):
             if m.start() > last:
@@ -3377,6 +3691,452 @@ class ChatWindow(tk.Toplevel):
             last = m.end()
         if last < len(text):
             self._insert_emoji_run(text[last:], tag, bg)
+
+    # Renderiza um bloco de codigo estilo IDE como Frame embedded (header + corpo
+    # num unico cartao). Largura preenche o chat_text e ajusta no resize.
+    def _insert_code_block(self, code, lang=''):
+        import json as _json
+        code = code.strip('\n')
+        # Auto-deteccao de JSON
+        is_json = False
+        stripped = code.strip()
+        if (lang.lower() in ('json', '')
+                and stripped
+                and stripped[0] in '{[' and stripped[-1] in '}]'):
+            try:
+                parsed = _json.loads(stripped)
+                code = _json.dumps(parsed, indent=2, ensure_ascii=False)
+                is_json = True
+                if not lang:
+                    lang = 'json'
+            except Exception:
+                pass
+        try:
+            last_char = self.chat_text.get('end-2c', 'end-1c')
+        except Exception:
+            last_char = ''
+        if last_char and last_char != '\n':
+            self.chat_text.insert('end', '\n')
+
+        # === Container do bloco inteiro ===
+        container = tk.Frame(self.chat_text, bg='#1e293b', bd=0,
+                             highlightthickness=0)
+
+        # Header
+        header = tk.Frame(container, bg='#0f172a', height=24)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        tk.Label(header, text=f'  {lang or "codigo"}', bg='#0f172a',
+                 fg='#94a3b8', font=('Consolas', 8, 'italic')
+                 ).pack(side='left')
+
+        btn = tk.Label(header, text='⧉ Copiar', bg='#0f172a',
+                       fg='#94a3b8', cursor='hand2',
+                       font=('Segoe UI', 8), padx=10)
+
+        def _do_copy(e=None, c=code, b=btn):
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(c)
+                self.update()
+                b.config(text='✓ Copiado', fg='#22c55e')
+                b.after(1500,
+                        lambda: b.config(text='⧉ Copiar', fg='#94a3b8'))
+            except Exception:
+                pass
+
+        btn.bind('<Button-1>', _do_copy)
+        btn.bind('<Enter>', lambda e: btn.config(fg='#cbd5e1'))
+        btn.bind('<Leave>', lambda e: btn.config(fg='#94a3b8'))
+        btn.pack(side='right')
+
+        # Corpo: Text widget com codigo + syntax highlighting
+        line_count = max(1, code.count('\n') + 1)
+        body = tk.Text(container, bg='#1e293b', fg='#e2e8f0',
+                       font=('Consolas', 9), bd=0, padx=10, pady=6,
+                       wrap='none', height=line_count,
+                       relief='flat', highlightthickness=0,
+                       cursor='arrow', insertwidth=0)
+        body.pack(fill='x')
+
+        # Configura tags de syntax no body widget
+        self._configure_code_tags_on(body)
+
+        # Highlighting
+        lang_norm = (lang or '').lower()
+        if is_json:
+            self._highlight_json_into(body, code)
+        elif lang_norm in ('python', 'py'):
+            self._highlight_python_into(body, code)
+        elif lang_norm in ('js', 'javascript', 'ts', 'typescript',
+                           'jsx', 'tsx'):
+            self._highlight_generic_into(body, code,
+                                         _JS_KEYWORDS, _JS_BUILTINS)
+        elif lang_norm in ('bash', 'sh', 'shell', 'zsh'):
+            self._highlight_generic_into(body, code,
+                                         _BASH_KEYWORDS, _BASH_BUILTINS)
+        elif lang_norm in ('sql',):
+            self._highlight_generic_into(body, code,
+                                         _SQL_KEYWORDS, set(),
+                                         case_insensitive=True)
+        else:
+            body.insert('end', code)
+
+        body.config(state='disabled')
+
+        # Calcula altura necessaria, fixa propagation pra largura responsiva.
+        try:
+            container.update_idletasks()
+            needed_h = container.winfo_reqheight()
+            container.pack_propagate(False)
+            self.chat_text.update_idletasks()
+            w = self.chat_text.winfo_width() - 24
+            if w < 100:
+                w = 600
+            container.config(width=w, height=needed_h)
+        except Exception:
+            pass
+
+        # Repassa scroll do mouse para o chat_text quando hover esta no bloco.
+        # Sem isso o Text interno (mesmo disabled) intercepta MouseWheel e o
+        # chat principal nao rola — usuario sente que travou.
+        def _wheel_to_chat(event):
+            try:
+                self.chat_text.yview_scroll(
+                    int(-1 * (event.delta / 120)), 'units')
+            except Exception:
+                pass
+            return 'break'
+
+        for w_ in (container, header, body, btn):
+            try:
+                w_.bind('<MouseWheel>', _wheel_to_chat)
+                w_.bind('<Button-4>',
+                        lambda e: self.chat_text.yview_scroll(-1, 'units'))
+                w_.bind('<Button-5>',
+                        lambda e: self.chat_text.yview_scroll(1, 'units'))
+            except Exception:
+                pass
+        # Tambem nos children do header (lang label)
+        for child in header.winfo_children():
+            try:
+                child.bind('<MouseWheel>', _wheel_to_chat)
+            except Exception:
+                pass
+
+        # Body nao deve ser focavel nem aceitar input
+        try:
+            body.config(takefocus=0)
+        except Exception:
+            pass
+
+        # Track para resize
+        if not hasattr(self, '_code_frames'):
+            self._code_frames = []
+            self.chat_text.bind('<Configure>',
+                                self._on_chat_resize_update_code, add='+')
+        self._code_frames.append(container)
+
+        # Insere o container na linha + quebra
+        self.chat_text.window_create('end', window=container,
+                                      align='top', stretch=1)
+        self.chat_text.insert('end', '\n')
+
+    # Atualiza a largura de todos os blocos de codigo embedded quando o chat resize.
+    def _on_chat_resize_update_code(self, event=None):
+        try:
+            w = self.chat_text.winfo_width() - 24
+            if w < 100:
+                return
+            for f in list(self._code_frames):
+                try:
+                    if f.winfo_exists():
+                        f.config(width=w)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Configura as tags de syntax highlighting no widget passado (Text body).
+    def _configure_code_tags_on(self, widget):
+        for tag, fg in [
+            ('code_py_keyword',   '#c586c0'),
+            ('code_py_builtin',   '#4ec9b0'),
+            ('code_py_string',    '#ce9178'),
+            ('code_py_number',    '#b5cea8'),
+            ('code_py_comment',   '#6a9955'),
+            ('code_py_funcname',  '#dcdcaa'),
+            ('code_py_classname', '#4ec9b0'),
+            ('code_py_decorator', '#dcdcaa'),
+            ('code_py_self',      '#569cd6'),
+            ('code_json_key',     '#7dd3fc'),
+            ('code_json_str',     '#86efac'),
+            ('code_json_num',     '#fca5a5'),
+            ('code_json_bool',    '#a78bfa'),
+        ]:
+            try:
+                widget.tag_configure(tag, foreground=fg,
+                                     font=('Consolas', 9))
+            except Exception:
+                pass
+
+    # === Highlighters (operam em qualquer widget Text) ===
+    def _highlight_json_into(self, widget, code):
+        import re as _re
+        token_re = _re.compile(
+            r'("[^"\\]*(?:\\.[^"\\]*)*")(\s*:)?'
+            r'|(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)'
+            r'|\b(true|false|null)\b'
+        )
+        for line in code.split('\n'):
+            pos = 0
+            for m in token_re.finditer(line):
+                start = m.start()
+                if start > pos:
+                    widget.insert('end', line[pos:start])
+                if m.group(1):
+                    if m.group(2):
+                        widget.insert('end', m.group(1), 'code_json_key')
+                        widget.insert('end', m.group(2))
+                    else:
+                        widget.insert('end', m.group(1), 'code_json_str')
+                elif m.group(3):
+                    widget.insert('end', m.group(3), 'code_json_num')
+                elif m.group(4):
+                    widget.insert('end', m.group(4), 'code_json_bool')
+                pos = m.end()
+            if pos < len(line):
+                widget.insert('end', line[pos:])
+            widget.insert('end', '\n')
+
+    def _highlight_python_into(self, widget, code):
+        import re as _re
+        token_re = _re.compile(
+            r'(#[^\n]*)'
+            r'|(\'\'\'[\s\S]*?\'\'\'|"""[\s\S]*?""")'
+            r'|([rRbBfFuU]{0,2}"(?:[^"\\\n]|\\.)*"|'
+            r"[rRbBfFuU]{0,2}'(?:[^'\\\n]|\\.)*')"
+            r'|(@[A-Za-z_][A-Za-z0-9_.]*)'
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'
+        )
+        prev_kw = None
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                widget.insert('end', code[pos:start])
+            if m.group(1):
+                widget.insert('end', m.group(1), 'code_py_comment')
+                prev_kw = None
+            elif m.group(2):
+                widget.insert('end', m.group(2), 'code_py_string')
+                prev_kw = None
+            elif m.group(3):
+                widget.insert('end', m.group(3), 'code_py_string')
+                prev_kw = None
+            elif m.group(4):
+                widget.insert('end', m.group(4), 'code_py_decorator')
+                prev_kw = None
+            elif m.group(5):
+                widget.insert('end', m.group(5), 'code_py_number')
+                prev_kw = None
+            elif m.group(6):
+                ident = m.group(6)
+                if prev_kw == 'def':
+                    widget.insert('end', ident, 'code_py_funcname')
+                    prev_kw = None
+                elif prev_kw == 'class':
+                    widget.insert('end', ident, 'code_py_classname')
+                    prev_kw = None
+                elif ident in _PY_KEYWORDS:
+                    widget.insert('end', ident, 'code_py_keyword')
+                    prev_kw = ident
+                elif ident in ('self', 'cls'):
+                    widget.insert('end', ident, 'code_py_self')
+                    prev_kw = None
+                elif ident in _PY_BUILTINS:
+                    widget.insert('end', ident, 'code_py_builtin')
+                    prev_kw = None
+                else:
+                    widget.insert('end', ident)
+                    prev_kw = None
+            pos = m.end()
+        if pos < len(code):
+            widget.insert('end', code[pos:])
+
+    def _highlight_generic_into(self, widget, code, keywords, builtins,
+                                case_insensitive=False):
+        import re as _re
+        token_re = _re.compile(
+            r'(//[^\n]*|#[^\n]*|--[^\n]*)'
+            r'|(/\*[\s\S]*?\*/)'
+            r'|("(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\]|\\.)*`)'
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'
+        )
+        kw_set = (set(k.lower() for k in keywords)
+                  if case_insensitive else keywords)
+        bt_set = (set(b.lower() for b in builtins)
+                  if case_insensitive else builtins)
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                widget.insert('end', code[pos:start])
+            if m.group(1) or m.group(2):
+                widget.insert('end', m.group(0), 'code_py_comment')
+            elif m.group(3):
+                widget.insert('end', m.group(3), 'code_py_string')
+            elif m.group(4):
+                widget.insert('end', m.group(4), 'code_py_number')
+            elif m.group(5):
+                ident = m.group(5)
+                check = ident.lower() if case_insensitive else ident
+                if check in kw_set:
+                    widget.insert('end', ident, 'code_py_keyword')
+                elif check in bt_set:
+                    widget.insert('end', ident, 'code_py_builtin')
+                else:
+                    widget.insert('end', ident)
+            pos = m.end()
+        if pos < len(code):
+            widget.insert('end', code[pos:])
+
+    # Insere JSON com syntax highlighting (keys, strings, numbers, booleans).
+    def _insert_json_colored(self, code):
+        import re as _re
+        token_re = _re.compile(
+            r'("[^"\\]*(?:\\.[^"\\]*)*")(\s*:)?'
+            r'|(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)'
+            r'|\b(true|false|null)\b'
+        )
+        for line in code.split('\n'):
+            pos = 0
+            for m in token_re.finditer(line):
+                start = m.start()
+                if start > pos:
+                    self.chat_text.insert('end', line[pos:start], 'code_block')
+                if m.group(1):
+                    is_key = bool(m.group(2))
+                    if is_key:
+                        self.chat_text.insert('end', m.group(1), 'code_json_key')
+                        self.chat_text.insert('end', m.group(2), 'code_block')
+                    else:
+                        self.chat_text.insert('end', m.group(1), 'code_json_str')
+                elif m.group(3):
+                    self.chat_text.insert('end', m.group(3), 'code_json_num')
+                elif m.group(4):
+                    self.chat_text.insert('end', m.group(4), 'code_json_bool')
+                pos = m.end()
+            if pos < len(line):
+                self.chat_text.insert('end', line[pos:], 'code_block')
+            self.chat_text.insert('end', '\n', 'code_block')
+
+    # Syntax highlighting estilo VSCode dark+ para Python.
+    # Detecta: keywords, builtins, strings, numeros, comentarios, decorators,
+    # nomes de funcao apos 'def', nomes de classe apos 'class', self/cls.
+    def _insert_python_colored(self, code):
+        import re as _re
+        token_re = _re.compile(
+            r'(#[^\n]*)'                                                   # 1: comment
+            r'|(\'\'\'[\s\S]*?\'\'\'|"""[\s\S]*?""")'                      # 2: triple string
+            r'|([rRbBfFuU]{0,2}"(?:[^"\\\n]|\\.)*"|'                        # 3: string ""
+            r"[rRbBfFuU]{0,2}'(?:[^'\\\n]|\\.)*')"                          # 3: string ''
+            r'|(@[A-Za-z_][A-Za-z0-9_.]*)'                                 # 4: decorator
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'                        # 5: number
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'                                # 6: identifier
+        )
+        prev_kw = None
+        # Strings triplas atravessam linhas — processa o codigo inteiro de uma vez.
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                # Texto cru (operadores, espacos, pontuacao)
+                self.chat_text.insert('end', code[pos:start], 'code_block')
+            if m.group(1):
+                self.chat_text.insert('end', m.group(1), 'code_py_comment')
+                prev_kw = None
+            elif m.group(2):
+                self.chat_text.insert('end', m.group(2), 'code_py_string')
+                prev_kw = None
+            elif m.group(3):
+                self.chat_text.insert('end', m.group(3), 'code_py_string')
+                prev_kw = None
+            elif m.group(4):
+                self.chat_text.insert('end', m.group(4), 'code_py_decorator')
+                prev_kw = None
+            elif m.group(5):
+                self.chat_text.insert('end', m.group(5), 'code_py_number')
+                prev_kw = None
+            elif m.group(6):
+                ident = m.group(6)
+                if prev_kw == 'def':
+                    self.chat_text.insert('end', ident, 'code_py_funcname')
+                    prev_kw = None
+                elif prev_kw == 'class':
+                    self.chat_text.insert('end', ident, 'code_py_classname')
+                    prev_kw = None
+                elif ident in _PY_KEYWORDS:
+                    self.chat_text.insert('end', ident, 'code_py_keyword')
+                    prev_kw = ident
+                elif ident in ('self', 'cls'):
+                    self.chat_text.insert('end', ident, 'code_py_self')
+                    prev_kw = None
+                elif ident in _PY_BUILTINS:
+                    self.chat_text.insert('end', ident, 'code_py_builtin')
+                    prev_kw = None
+                else:
+                    self.chat_text.insert('end', ident, 'code_block')
+                    prev_kw = None
+            pos = m.end()
+        if pos < len(code):
+            self.chat_text.insert('end', code[pos:], 'code_block')
+        if not code.endswith('\n'):
+            self.chat_text.insert('end', '\n', 'code_block')
+
+    # Highlighter generico parametrizado por listas de keywords e builtins.
+    # Funciona razoavelmente para JS, TS, Bash, SQL etc.
+    def _insert_generic_colored(self, code, keywords, builtins,
+                                case_insensitive=False):
+        import re as _re
+        token_re = _re.compile(
+            r'(//[^\n]*|#[^\n]*|--[^\n]*)'                                  # 1: comment
+            r'|(/\*[\s\S]*?\*/)'                                            # 2: block comment
+            r'|("(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\]|\\.)*`)'  # 3: string
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'                         # 4: number
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'                                 # 5: identifier
+        )
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                self.chat_text.insert('end', code[pos:start], 'code_block')
+            if m.group(1) or m.group(2):
+                self.chat_text.insert('end', m.group(0), 'code_py_comment')
+            elif m.group(3):
+                self.chat_text.insert('end', m.group(3), 'code_py_string')
+            elif m.group(4):
+                self.chat_text.insert('end', m.group(4), 'code_py_number')
+            elif m.group(5):
+                ident = m.group(5)
+                check = ident.lower() if case_insensitive else ident
+                kw_set = (set(k.lower() for k in keywords)
+                          if case_insensitive else keywords)
+                bt_set = (set(b.lower() for b in builtins)
+                          if case_insensitive else builtins)
+                if check in kw_set:
+                    self.chat_text.insert('end', ident, 'code_py_keyword')
+                elif check in bt_set:
+                    self.chat_text.insert('end', ident, 'code_py_builtin')
+                else:
+                    self.chat_text.insert('end', ident, 'code_block')
+            pos = m.end()
+        if pos < len(code):
+            self.chat_text.insert('end', code[pos:], 'code_block')
+        if not code.endswith('\n'):
+            self.chat_text.insert('end', '\n', 'code_block')
 
     # Insere um pedaco de texto (sem URLs) aplicando emojis coloridos.
     def _insert_emoji_run(self, text, tag, bg):
@@ -3423,6 +4183,16 @@ class ChatWindow(tk.Toplevel):
                         msg_id='', reply_to='', msg_type='text', file_path=''):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')  # habilita temporariamente para inserção
+
+        # Cartao "Lembrete compartilhado" — render distintivo (amarelo)
+        if msg_type == 'reminder_card':
+            self.chat_text.insert('end', f'\n{text}\n\n', 'reminder_card')
+            try:
+                self.chat_text.see('end')
+            except Exception:
+                pass
+            self.chat_text.configure(state='disabled')
+            return
 
         # Renderiza quote de reply se houver
         if reply_to:
@@ -3770,13 +4540,20 @@ class ChatWindow(tk.Toplevel):
     def _show_hover_copy(self, idx):
         if idx < 0 or idx >= len(self._msg_ranges_idx):
             return
+        # Mensagens com bloco de codigo ja tem botao Copiar proprio no header.
+        # Nao mostra o hover-copy global para evitar sobreposicao visual.
+        try:
+            txt = self._msg_data[idx].get('text', '') if idx < len(self._msg_data) else ''
+            if '```' in txt:
+                return
+        except Exception:
+            pass
         start_mark, end_mark = self._msg_ranges_idx[idx]
         try:
             bbox = self.chat_text.bbox(start_mark)
             if not bbox:
                 return
             x, y, w, h = bbox
-            # Posiciona no canto superior direito da linha da mensagem
             chat_w = self.chat_text.winfo_width()
             btn_x = max(4, chat_w - 32)
             btn_y = max(2, y - 2)
@@ -3883,17 +4660,21 @@ class ChatWindow(tk.Toplevel):
         self._insert_selection_bullets()
         self._toggle_msg_selection(initial_idx)
 
-    # Insere uma bolinha clicavel (○) no inicio de cada mensagem.
-    # Iteracao reversa para que insercoes nao afetem posicoes anteriores.
+    # Insere uma bolinha clicavel (○) ao lado do CORPO da mensagem.
+    # Usa o mark 'mstart_N' que aponta para body_start, evitando que a bolinha
+    # aparece junto ao nome/timestamp. Iteracao reversa para preservar posicoes.
     def _insert_selection_bullets(self):
         self.chat_text.configure(state='normal')
         try:
             for idx in range(len(self._msg_data) - 1, -1, -1):
-                tag = f'msg_{idx}'
-                ranges = self.chat_text.tag_ranges(tag)
-                if not ranges:
-                    continue
-                pos = str(ranges[0])
+                start_mark = f'mstart_{idx}'
+                try:
+                    pos = self.chat_text.index(start_mark)
+                except Exception:
+                    ranges = self.chat_text.tag_ranges(f'msg_{idx}')
+                    if not ranges:
+                        continue
+                    pos = str(ranges[0])
                 bullet = tk.Label(self.chat_text, text='\u25cb',
                                   font=('Segoe UI', 14, 'bold'),
                                   bg=self.chat_text['bg'],
@@ -3904,7 +4685,7 @@ class ChatWindow(tk.Toplevel):
                             lambda e, i=idx: self._toggle_msg_selection(i))
                 try:
                     self.chat_text.window_create(pos, window=bullet,
-                                                 align='center', padx=6)
+                                                 align='center', padx=4)
                 except Exception:
                     pass
                 self._selection_bullets[idx] = bullet
@@ -4049,8 +4830,25 @@ class ChatWindow(tk.Toplevel):
         self._exit_selection_mode()
 
     def _selection_forward(self):
-        msgs = [self._msg_data[i]['text'] for i in sorted(self._selection_set)
-                if i < len(self._msg_data) and self._msg_data[i].get('text')]
+        # WhatsApp-like: cada msg encaminhada inclui autor original + horario
+        msgs = []
+        for i in sorted(self._selection_set):
+            if i >= len(self._msg_data):
+                continue
+            d = self._msg_data[i]
+            text = d.get('text', '')
+            if not text:
+                continue
+            sender = d.get('sender', '') or ''
+            ts_raw = d.get('timestamp', time.time())
+            try:
+                ts = datetime.fromtimestamp(float(ts_raw)).strftime('%H:%M')
+            except Exception:
+                ts = ''
+            header = f'De: {sender}'
+            if ts:
+                header += f' • {ts}'
+            msgs.append(f'{header}\n{text}')
         if not msgs:
             return
         self._open_forward_dialog(msgs)
@@ -4219,7 +5017,8 @@ class ChatWindow(tk.Toplevel):
             match_count = 0
             total = 0
 
-            for m in all_history:
+            # Mais recente no topo, mais antigas descendo
+            for m in reversed(all_history):
                 ts_dt = datetime.fromtimestamp(m['timestamp'])
                 if d_from and ts_dt < d_from:
                     continue
@@ -4503,23 +5302,36 @@ class ChatWindow(tk.Toplevel):
             font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             if not os.path.exists(font_path):
                 return None
-            clean = emoji_char.replace('\ufe0f', '')
+            # Tenta manter VS16 (alguns emojis renderizam colorido so com ele).
+            # Se falhar, tenta sem.
             font = ImageFont.truetype(font_path, size)
             tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
             d = ImageDraw.Draw(tmp)
+            clean = emoji_char
             bbox = d.textbbox((0, 0), clean, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            canvas_sz = size + 4
+            if tw <= 0 or th <= 0:
+                clean = emoji_char.replace('\ufe0f', '')
+                bbox = d.textbbox((0, 0), clean, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                if tw <= 0 or th <= 0:
+                    return None
+            # Canvas grande o bastante pra caber o glyph COMPLETO.
+            # Alguns emojis renderizam com bbox > size e ficavam cortados.
+            render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
             if bg_color:
                 r, g, b = self._hex_to_rgb(bg_color)
                 bg = (r, g, b, 255)
             else:
                 bg = (255, 255, 255, 0)
-            img = Image.new('RGBA', (canvas_sz, canvas_sz), bg)
+            img = Image.new('RGBA', (render_sz, render_sz), bg)
             draw = ImageDraw.Draw(img)
-            x = (canvas_sz - tw) // 2 - bbox[0]
-            y = (canvas_sz - th) // 2 - bbox[1]
+            x = (render_sz - tw) // 2 - bbox[0]
+            y = (render_sz - th) // 2 - bbox[1]
             draw.text((x, y), clean, font=font, embedded_color=True)
+            display_sz = size + 4
+            if render_sz != display_sz:
+                img = img.resize((display_sz, display_sz), Image.LANCZOS)
             return ImageTk.PhotoImage(img)
         except Exception:
             log.exception('Erro ao renderizar emoji')
@@ -4529,6 +5341,62 @@ class ChatWindow(tk.Toplevel):
     def _hex_to_rgb(hex_color):
         hex_color = hex_color.lstrip('#')
         return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    # Helpers para lista de emojis recentes, persistida em settings como JSON.
+    # Limite: 16 emojis, ordem MRU (mais recente no topo).
+    def _get_emoji_recents(self):
+        try:
+            import json as _json
+            raw = self.messenger.db.get_setting('emoji_recents', '') or ''
+            if not raw:
+                return []
+            lst = _json.loads(raw)
+            return [e for e in lst if isinstance(e, str) and e][:16]
+        except Exception:
+            return []
+
+    def _record_emoji_recent(self, emoji_char):
+        try:
+            import json as _json
+            recents = self._get_emoji_recents()
+            if emoji_char in recents:
+                recents.remove(emoji_char)
+            recents.insert(0, emoji_char)
+            recents = recents[:16]
+            self.messenger.db.set_setting('emoji_recents',
+                                          _json.dumps(recents, ensure_ascii=False))
+            # Incrementa contador global de uso (para "Mais usados")
+            try:
+                raw = self.messenger.db.get_setting('emoji_counts', '') or ''
+                counts = _json.loads(raw) if raw else {}
+                if not isinstance(counts, dict):
+                    counts = {}
+            except Exception:
+                counts = {}
+            counts[emoji_char] = int(counts.get(emoji_char, 0)) + 1
+            try:
+                self.messenger.db.set_setting(
+                    'emoji_counts',
+                    _json.dumps(counts, ensure_ascii=False))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # Retorna os N emojis mais usados (ordenados por contagem desc).
+    def _get_emoji_most_used(self, limit=10):
+        try:
+            import json as _json
+            raw = self.messenger.db.get_setting('emoji_counts', '') or ''
+            if not raw:
+                return []
+            counts = _json.loads(raw)
+            if not isinstance(counts, dict):
+                return []
+            pairs = sorted(counts.items(), key=lambda kv: -int(kv[1]))
+            return [e for e, _c in pairs[:limit]]
+        except Exception:
+            return []
 
     # Cria o popup do seletor de emojis com grade clicável e campo de busca.
     #
@@ -4544,7 +5412,7 @@ class ChatWindow(tk.Toplevel):
 
         x = self.winfo_rootx() + 10
         y = self.winfo_rooty() + 50
-        popup.geometry(f'280x230+{x}+{y}')
+        popup.geometry(f'360x380+{x}+{y}')
 
         # Cache de imagens de emoji para evitar garbage collection
         popup._emoji_images = {}
@@ -4730,6 +5598,25 @@ class ChatWindow(tk.Toplevel):
                 '\U0001f62b', '\U0001f633', '\U0001f632', '\U0001f61e',
                 '\U0001f613', '\U0001f635', '\U0001f608', '\U0001f47f',
                 '\U0001f4a9', '\U0001f921', '\U0001f47b', '\U0001f480',
+                '\U0001f970', '\U0001f972', '\U0001f929', '\U0001f973',
+                '\U0001f60f', '\U0001f615', '\U0001f61f', '\U0001f641',
+                '\u2639\ufe0f', '\U0001f623', '\U0001f627', '\U0001f626',
+                '\U0001f62e', '\U0001f62f', '\U0001f632', '\U0001f92f',
+                '\U0001f92b', '\U0001f92d', '\U0001f971', '\U0001f928',
+                '\U0001f9d0', '\U0001f913', '\U0001f920', '\U0001f9d1',
+                '\U0001f47d', '\U0001f47e', '\U0001f916', '\U0001f478',
+                '\U0001f934', '\U0001f482', '\U0001f575\ufe0f', '\U0001f477',
+                '\U0001f473', '\U0001f472', '\U0001f9d5', '\U0001f470',
+                '\U0001f935', '\U0001f385', '\U0001f936', '\U0001f9d9',
+                '\U0001f9da', '\U0001f9db', '\U0001f9dd', '\U0001f9de',
+                '\U0001f9df', '\U0001f47c', '\U0001f63a', '\U0001f638',
+                '\U0001f639', '\U0001f63b', '\U0001f63c', '\U0001f63d',
+                '\U0001f640', '\U0001f63f', '\U0001f63e', '\U0001f48b',
+                '\U0001f48c',
+                '\U0001f48d', '\U0001f48e', '\U0001f442', '\U0001f443',
+                '\U0001f445', '\U0001f444', '\U0001f441\ufe0f', '\U0001f440',
+                '\U0001f463', '\U0001f9e0', '\U0001f9b7', '\U0001f9b4',
+                '\U0001f4ac', '\U0001f4a4', '\U0001f4ad',
             ],
             # Gestos e Mãos
             '\U0001f44d': [
@@ -4772,6 +5659,39 @@ class ChatWindow(tk.Toplevel):
                 '\U0001f4ab', '\U0001f4a5', '\U0001f4a2', '\U0001f4a6',
                 '\U0001f4a8', '\U0001f573\ufe0f', '\U0001f4a3',
                 '\U0001f4ac', '\U0001f4ad', '\U0001f5e8\ufe0f',
+                '\U0001f49f', '\u2763\ufe0f', '\U0001f491',
+                '\U0001f46a', '\U0001f46b', '\U0001f46c', '\U0001f46d',
+                '\U0001f483', '\U0001f57a', '\U0001f38a', '\U0001f386',
+                '\U0001f387', '\u2728', '\U0001f319', '\u2b50',
+                '\U0001f31f',
+            ],
+            # Animais e Natureza
+            '\U0001f436': [
+                '\U0001f436', '\U0001f415', '\U0001f429', '\U0001f43a',
+                '\U0001f98a', '\U0001f431', '\U0001f408', '\U0001f981',
+                '\U0001f42f', '\U0001f405', '\U0001f434', '\U0001f984',
+                '\U0001f993', '\U0001f42e', '\U0001f402', '\U0001f437',
+                '\U0001f416', '\U0001f417', '\U0001f43d', '\U0001f411',
+                '\U0001f410', '\U0001f42a', '\U0001f42b', '\U0001f418',
+                '\U0001f42d', '\U0001f401', '\U0001f400', '\U0001f439',
+                '\U0001f430', '\U0001f407', '\U0001f994', '\U0001f987',
+                '\U0001f43b', '\U0001f428', '\U0001f43c', '\U0001f9a5',
+                '\U0001f9a6', '\U0001f9a8', '\U0001f998', '\U0001f9a1',
+                '\U0001f43e', '\U0001f983', '\U0001f414', '\U0001f413',
+                '\U0001f423', '\U0001f424', '\U0001f425', '\U0001f426',
+                '\U0001f427', '\U0001f985', '\U0001f986', '\U0001f989',
+                '\U0001f438', '\U0001f40a', '\U0001f422', '\U0001f98e',
+                '\U0001f40d', '\U0001f432', '\U0001f409', '\U0001f433',
+                '\U0001f40b', '\U0001f42c', '\U0001f41f', '\U0001f420',
+                '\U0001f421', '\U0001f988', '\U0001f419', '\U0001f41a',
+                '\U0001f40c', '\U0001f98b', '\U0001f41b', '\U0001f41c',
+                '\U0001f41d', '\U0001f41e', '\U0001f490', '\U0001f338',
+                '\U0001f339', '\U0001f33a', '\U0001f33b', '\U0001f33c',
+                '\U0001f337', '\U0001f331', '\U0001f332', '\U0001f333',
+                '\U0001f334', '\U0001f335', '\U0001f340', '\U0001f341',
+                '\U0001f342', '\U0001f343', '\u2601\ufe0f', '\U0001f300',
+                '\U0001f308', '\U0001f319', '\u2b50', '\U0001f31f',
+                '\u2600\ufe0f', '\U0001f31b', '\U0001f31d',
             ],
             # Viagem e Objetos
             '\U0001f3e0': [
@@ -4805,6 +5725,24 @@ class ChatWindow(tk.Toplevel):
                 '\u2705', '\u274c', '\u26a0\ufe0f', '\U0001f6ab',
                 '\u2753', '\u2757', '\U0001f4ac', '\U0001f4ad',
                 '\U0001f6a9', '\U0001f3f3\ufe0f', '\U0001f3f4',
+                '\U0001f195', '\U0001f197', '\U0001f199',
+                '\U0001f192', '\U0001f193', '\U0001f196',
+                '\U0001f198', '\U0001f19a', '\u2b06\ufe0f',
+                '\u2b07\ufe0f', '\u2b05\ufe0f', '\u27a1\ufe0f',
+                '\u2197\ufe0f', '\u2198\ufe0f', '\u2199\ufe0f',
+                '\u2196\ufe0f', '\u21a9\ufe0f', '\u21aa\ufe0f',
+                '\U0001f504', '\U0001f503', '\U0001f501',
+                '\U0001f502', '\u25b6\ufe0f', '\u23f8\ufe0f',
+                '\u23ef\ufe0f', '\u23f9\ufe0f', '\u23fa\ufe0f',
+                '\u23ed\ufe0f', '\u23ee\ufe0f', '\u23e9',
+                '\u23ea', '\u23eb', '\u23ec', '\u2139\ufe0f',
+                '\u2648', '\u2649', '\u264a', '\u264b',
+                '\u264c', '\u264d', '\u264e', '\u264f',
+                '\u2650', '\u2651', '\u2652', '\u2653',
+                '\U0001f170\ufe0f', '\U0001f171\ufe0f',
+                '\U0001f17e\ufe0f', '\U0001f17f\ufe0f',
+                '\u26ce', '\U0001f523', '\U0001f524',
+                '\U0001f521', '\U0001f520', '\U0001f196',
             ],
         }
 
@@ -4840,21 +5778,81 @@ class ChatWindow(tk.Toplevel):
 
         tk.Frame(popup, bg='#e2e8f0', height=1).pack(fill='x', padx=6)
 
+        def insert_emoji(emoji):
+            try:
+                self._record_emoji_recent(emoji)
+            except Exception:
+                pass
+            self._entry_insert_emoji(emoji)
+            # Atualiza as faixas (Recentes e Mais usados) sem fechar o popup
+            try:
+                _refresh_strips()
+            except Exception:
+                pass
+
+        # --- Faixas "Recentes" e "Mais usados" (sempre no topo, se houver) ---
+        strips_container = tk.Frame(popup, bg='#f8fafc')
+        strips_container.pack(fill='x', padx=0, pady=(2, 0))
+
+        def _build_strip(parent, label_text, emojis_list):
+            if not emojis_list:
+                return None
+            wrap = tk.Frame(parent, bg='#f8fafc')
+            wrap.pack(fill='x', padx=4, pady=(4, 0))
+            tk.Label(wrap, text=label_text, font=('Segoe UI', 8, 'bold'),
+                     bg='#f8fafc', fg='#475569'
+                     ).pack(anchor='w', padx=2, pady=(0, 2))
+            row = tk.Frame(wrap, bg='#ffffff', bd=0,
+                           highlightthickness=1,
+                           highlightbackground='#e2e8f0')
+            row.pack(fill='x')
+            for em in emojis_list[:12]:
+                img = self._render_emoji_image(em, 28)
+                if img:
+                    popup._emoji_images[f'strip_{label_text}_{em}'] = img
+                    b = tk.Label(row, image=img, bg='#ffffff',
+                                 cursor='hand2', bd=0, padx=0, pady=0)
+                else:
+                    b = tk.Label(row, text=em,
+                                 font=('Segoe UI Emoji', 18),
+                                 bg='#ffffff', cursor='hand2',
+                                 bd=0, padx=2, pady=0)
+                b.pack(side='left', padx=0, pady=0)
+                b.bind('<Button-1>',
+                       lambda e, emoji=em: insert_emoji(emoji))
+                b.bind('<Enter>',
+                       lambda e, bb=b: bb.configure(bg='#e8f0fe'))
+                b.bind('<Leave>',
+                       lambda e, bb=b: bb.configure(bg='#ffffff'))
+            return wrap
+
+        def _refresh_strips():
+            for w in list(strips_container.winfo_children()):
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+            _build_strip(strips_container, 'Recentes',
+                         self._get_emoji_recents()[:12])
+
+        _refresh_strips()
+
         # Category tabs
         tab_frame = tk.Frame(popup, bg='#e8e8e8', bd=0, relief='flat')
-        tab_frame.pack(fill='x')
+        tab_frame.pack(fill='x', pady=(6, 0))
 
-        # Scrollable emoji grid
-        grid_frame = tk.Frame(popup, bg='#ffffff')
-        grid_frame.pack(fill='both', expand=True)
+        # Scrollable emoji grid. Fundo cinza muito claro pra emojis brancos/claros
+        # (fantasma, caveira, nuvem) ficarem visiveis.
+        _EM_GRID_BG = '#f1f5f9'
+        grid_frame = tk.Frame(popup, bg=_EM_GRID_BG, bd=0, highlightthickness=0)
+        grid_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
-        canvas = tk.Canvas(grid_frame, bg='#ffffff', highlightthickness=0)
-        inner = tk.Frame(canvas, bg='#ffffff')
-        canvas.pack(fill='both', expand=True)
-        canvas.create_window((0, 0), window=inner, anchor='nw')
-
-        def insert_emoji(emoji):
-            self._entry_insert_emoji(emoji)
+        canvas = tk.Canvas(grid_frame, bg=_EM_GRID_BG, highlightthickness=0, bd=0)
+        inner = tk.Frame(canvas, bg=_EM_GRID_BG)
+        canvas.pack(fill='both', expand=True, padx=0, pady=0)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
 
         cat_keys = list(categories.keys())
         all_emojis = []
@@ -4872,27 +5870,48 @@ class ChatWindow(tk.Toplevel):
         def _populate_grid(emojis):
             for w in inner.winfo_children():
                 w.destroy()
-            cols = 8
-            for i, em in enumerate(emojis):
+            # Layout grid com colunas uniformes (weight=1) que dividem a largura
+            # do canvas igualmente. Cada celula pinta bg=branco e o emoji (28px)
+            # e centralizado. Sem padding visivel — borda contra borda.
+            cols = 10
+            for c in range(cols):
+                inner.grid_columnconfigure(c, weight=1, uniform='emojicell',
+                                           minsize=1)
+            cell_bg = _EM_GRID_BG
+            # Deduplica emojis e usa key UNICA por indice. Se usasse
+            # o emoji como key, duplicatas sobrescreviam a referencia
+            # e Tk garbage-collectava a anterior (celula invisivel).
+            _seen = set()
+            valid = []
+            for em in emojis:
+                if em in _seen:
+                    continue
+                _seen.add(em)
+                img = self._render_emoji_image(em, 32, bg_color=cell_bg)
+                if img is not None:
+                    valid.append((em, img))
+            for i, (em, img) in enumerate(valid):
                 r, c = divmod(i, cols)
-                img = self._render_emoji_image(em, 22)
-                if img:
-                    popup._emoji_images[em] = img
-                    btn = tk.Label(inner, image=img,
-                                   bg='#ffffff', cursor='hand2',
-                                   padx=2, pady=2)
-                else:
-                    btn = tk.Label(inner, text=em,
-                                   font=('Segoe UI Emoji', 16),
-                                   bg='#ffffff', cursor='hand2',
-                                   padx=2, pady=2)
-                btn.grid(row=r, column=c, padx=0, pady=0)
+                popup._emoji_images[f'cell_{i}'] = img
+                btn = tk.Label(inner, image=img,
+                               bg=cell_bg, cursor='hand2',
+                               bd=0, padx=0, pady=0)
+                btn.grid(row=r, column=c, sticky='nsew', padx=0, pady=0)
                 btn.bind('<Button-1>',
                          lambda e, emoji=em: insert_emoji(emoji))
                 btn.bind('<Enter>',
-                         lambda e, b=btn: b.configure(bg='#e8f0fe'))
+                         lambda e, b=btn: b.configure(bg='#e2e8f0'))
                 btn.bind('<Leave>',
-                         lambda e, b=btn: b.configure(bg='#ffffff'))
+                         lambda e, b=btn, bgc=cell_bg: b.configure(bg=bgc))
+            # Preenche celulas vazias da ultima linha com placeholder
+            total = len(valid)
+            if total > 0:
+                last_row = (total - 1) // cols
+                last_col = (total - 1) % cols
+                for c in range(last_col + 1, cols):
+                    tk.Label(inner, bg=cell_bg, bd=0
+                             ).grid(row=last_row, column=c,
+                                    sticky='nsew', padx=0, pady=0)
             inner.update_idletasks()
             canvas.configure(scrollregion=canvas.bbox('all'))
             canvas.yview_moveto(0)
@@ -5282,6 +6301,14 @@ class GroupChatWindow(tk.Toplevel):
                                   command=self._show_emoji_picker)
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
 
+        # Botao <> para inserir bloco de codigo (triplo backtick)
+        btn_code = tk.Button(btn_frame, text='</>',
+                             font=('Consolas', 9, 'bold'), relief='flat',
+                             bd=0, cursor='hand2',
+                             bg=win_bg, padx=4, pady=2,
+                             command=self._wrap_selection_code)
+        btn_code.pack(side='left', pady=2, padx=(0, 2))
+
         # Font button
         btn_font = tk.Button(btn_frame, text='A', font=('Segoe UI', 10, 'bold'),
                              relief='flat', bd=0, cursor='hand2',
@@ -5486,6 +6513,63 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.tag_configure('fwd_label',
                                      font=('Segoe UI', 8, 'italic'),
                                      foreground='#64748b')
+        # Cartao 'Lembrete compartilhado' no historico do chat (amarelo)
+        self.chat_text.tag_configure('reminder_card',
+                                     background='#fef3c7',
+                                     foreground='#78350f',
+                                     font=('Segoe UI', 9, 'bold'),
+                                     lmargin1=14, lmargin2=14, rmargin=14,
+                                     spacing1=6, spacing3=6)
+        # Codigo: bloco escuro estilo Discord/Notion
+        self.chat_text.tag_configure('code_block',
+                                     background='#1e293b',
+                                     foreground='#e2e8f0',
+                                     font=('Consolas', 9),
+                                     lmargin1=10, lmargin2=10,
+                                     rmargin=10,
+                                     spacing1=4, spacing3=4)
+        self.chat_text.tag_configure('code_inline',
+                                     background='#e2e8f0',
+                                     foreground='#0c4a6e',
+                                     font=('Consolas', 9))
+        self.chat_text.tag_configure('code_json_key',
+                                     background='#1e293b',
+                                     foreground='#7dd3fc',
+                                     font=('Consolas', 9, 'bold'))
+        self.chat_text.tag_configure('code_json_str',
+                                     background='#1e293b',
+                                     foreground='#86efac',
+                                     font=('Consolas', 9))
+        self.chat_text.tag_configure('code_json_num',
+                                     background='#1e293b',
+                                     foreground='#fca5a5',
+                                     font=('Consolas', 9))
+        self.chat_text.tag_configure('code_json_bool',
+                                     background='#1e293b',
+                                     foreground='#a78bfa',
+                                     font=('Consolas', 9, 'bold'))
+        self.chat_text.tag_configure('code_lang',
+                                     background='#0f172a',
+                                     foreground='#94a3b8',
+                                     font=('Consolas', 8, 'italic'),
+                                     lmargin1=10, lmargin2=10,
+                                     spacing3=2)
+        # Syntax highlighting estilo VSCode dark+
+        for _tag, _fg in [
+            ('code_py_keyword',   '#c586c0'),
+            ('code_py_builtin',   '#4ec9b0'),
+            ('code_py_string',    '#ce9178'),
+            ('code_py_number',    '#b5cea8'),
+            ('code_py_comment',   '#6a9955'),
+            ('code_py_funcname',  '#dcdcaa'),
+            ('code_py_classname', '#4ec9b0'),
+            ('code_py_decorator', '#dcdcaa'),
+            ('code_py_self',      '#569cd6'),
+        ]:
+            self.chat_text.tag_configure(_tag,
+                                         background='#1e293b',
+                                         foreground=_fg,
+                                         font=('Consolas', 9))
         try:
             self.chat_text.tag_raise('sel')
         except tk.TclError:
@@ -5820,26 +6904,37 @@ class GroupChatWindow(tk.Toplevel):
             return None
         try:
             from PIL import ImageFont, ImageDraw
-            font_path = 'C:/Windows/Fonts/seguiemj.ttf'  # Fonte Segoe UI Emoji do Windows
+            font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             if not os.path.exists(font_path):
                 return None
-            clean = emoji_char.replace('\ufe0f', '')
+            # Tenta manter VS16 (alguns emojis renderizam colorido so com ele).
+            # Se falhar, tenta sem.
             font = ImageFont.truetype(font_path, size)
             tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
             d = ImageDraw.Draw(tmp)
+            clean = emoji_char
             bbox = d.textbbox((0, 0), clean, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            canvas_sz = size + 4
+            if tw <= 0 or th <= 0:
+                clean = emoji_char.replace('\ufe0f', '')
+                bbox = d.textbbox((0, 0), clean, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                if tw <= 0 or th <= 0:
+                    return None
+            render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
             if bg_color:
                 r, g, b = self._hex_to_rgb(bg_color)
                 bg = (r, g, b, 255)
             else:
                 bg = (255, 255, 255, 0)
-            img = Image.new('RGBA', (canvas_sz, canvas_sz), bg)
+            img = Image.new('RGBA', (render_sz, render_sz), bg)
             draw = ImageDraw.Draw(img)
-            x = (canvas_sz - tw) // 2 - bbox[0]
-            y = (canvas_sz - th) // 2 - bbox[1]
+            x = (render_sz - tw) // 2 - bbox[0]
+            y = (render_sz - th) // 2 - bbox[1]
             draw.text((x, y), clean, font=font, embedded_color=True)
+            display_sz = size + 4
+            if render_sz != display_sz:
+                img = img.resize((display_sz, display_sz), Image.LANCZOS)
             return ImageTk.PhotoImage(img)
         except Exception:
             return None
@@ -5880,6 +6975,28 @@ class GroupChatWindow(tk.Toplevel):
         else:
             self.entry.insert(pos, emoji_char)  # Fallback: texto puro
 
+    # Insere bloco de codigo triplo backtick. Se ha selecao no input, embrulha.
+    # Senao insere triplo backtick + newline + triplo backtick e posiciona cursor.
+    def _wrap_selection_code(self):
+        try:
+            try:
+                sel_start = self.entry.index('sel.first')
+                sel_end = self.entry.index('sel.last')
+                sel_text = self.entry.get(sel_start, sel_end)
+            except Exception:
+                sel_start = sel_end = None
+                sel_text = ''
+            if sel_text:
+                self.entry.delete(sel_start, sel_end)
+                self.entry.insert(sel_start, '```\n' + sel_text + '\n```')
+            else:
+                cur = self.entry.index('insert')
+                self.entry.insert(cur, '```\n\n```')
+                self.entry.mark_set('insert', f'{cur}+4c')
+            self.entry.focus_set()
+        except Exception:
+            log.exception('erro em _wrap_selection_code')
+
     # Extrai o conteúdo do campo de entrada, convertendo imagens de volta para texto.
     # Percorre o dump do widget Text e reconstrói a string com emojis Unicode.
     def _get_entry_content(self):
@@ -5894,8 +7011,33 @@ class GroupChatWindow(tk.Toplevel):
 
     # Insere texto na área de chat, substituindo emojis Unicode por imagens coloridas.
     # Usa _EMOJI_RE para separar texto e emojis, inserindo cada um com a tag correta.
+    # Detecta blocos de codigo ```...``` e inline `...`. JSON com syntax highlighting.
     def _insert_text_with_emojis(self, text, tag):
         bg = self.chat_text.tag_cget(tag, 'background') or self.chat_text.cget('bg')
+        pos = 0
+        for m in _CODE_BLOCK_RE.finditer(text):
+            before = text[pos:m.start()]
+            if before:
+                self._insert_inline_code_or_text(before, tag, bg)
+            lang = (m.group(1) or '').strip()
+            code = m.group(2) or ''
+            self._insert_code_block(code, lang)
+            pos = m.end()
+        if pos < len(text):
+            self._insert_inline_code_or_text(text[pos:], tag, bg)
+
+    def _insert_inline_code_or_text(self, text, tag, bg):
+        pos = 0
+        for m in _CODE_INLINE_RE.finditer(text):
+            before = text[pos:m.start()]
+            if before:
+                self._insert_text_with_urls(before, tag, bg)
+            self.chat_text.insert('end', m.group(1), 'code_inline')
+            pos = m.end()
+        if pos < len(text):
+            self._insert_text_with_urls(text[pos:], tag, bg)
+
+    def _insert_text_with_urls(self, text, tag, bg):
         last = 0
         for m in _URL_RE.finditer(text):
             if m.start() > last:
@@ -5904,6 +7046,64 @@ class GroupChatWindow(tk.Toplevel):
             last = m.end()
         if last < len(text):
             self._insert_emoji_run(text[last:], tag, bg)
+
+    def _insert_code_block(self, code, lang=''):
+        import json as _json
+        code = code.strip('\n')
+        is_json = False
+        stripped = code.strip()
+        if (lang.lower() in ('json', '')
+                and stripped
+                and stripped[0] in '{[' and stripped[-1] in '}]'):
+            try:
+                parsed = _json.loads(stripped)
+                code = _json.dumps(parsed, indent=2, ensure_ascii=False)
+                is_json = True
+                if not lang:
+                    lang = 'json'
+            except Exception:
+                pass
+        try:
+            last_char = self.chat_text.get('end-2c', 'end-1c')
+        except Exception:
+            last_char = ''
+        if last_char and last_char != '\n':
+            self.chat_text.insert('end', '\n')
+        if lang:
+            self.chat_text.insert('end', f' {lang}\n', 'code_lang')
+        if is_json:
+            self._insert_json_colored(code)
+        else:
+            self.chat_text.insert('end', code + '\n', 'code_block')
+
+    def _insert_json_colored(self, code):
+        import re as _re
+        token_re = _re.compile(
+            r'("[^"\\]*(?:\\.[^"\\]*)*")(\s*:)?'
+            r'|(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)'
+            r'|\b(true|false|null)\b'
+        )
+        for line in code.split('\n'):
+            pos = 0
+            for m in token_re.finditer(line):
+                start = m.start()
+                if start > pos:
+                    self.chat_text.insert('end', line[pos:start], 'code_block')
+                if m.group(1):
+                    is_key = bool(m.group(2))
+                    if is_key:
+                        self.chat_text.insert('end', m.group(1), 'code_json_key')
+                        self.chat_text.insert('end', m.group(2), 'code_block')
+                    else:
+                        self.chat_text.insert('end', m.group(1), 'code_json_str')
+                elif m.group(3):
+                    self.chat_text.insert('end', m.group(3), 'code_json_num')
+                elif m.group(4):
+                    self.chat_text.insert('end', m.group(4), 'code_json_bool')
+                pos = m.end()
+            if pos < len(line):
+                self.chat_text.insert('end', line[pos:], 'code_block')
+            self.chat_text.insert('end', '\n', 'code_block')
 
     def _insert_emoji_run(self, text, tag, bg):
         parts = _EMOJI_RE.split(text)
@@ -6446,15 +7646,19 @@ class GroupChatWindow(tk.Toplevel):
         self._insert_selection_bullets()
         self._toggle_msg_selection(initial_idx)
 
+    # Bolinha ao lado do CORPO da mensagem (usa mark mstart_N).
     def _insert_selection_bullets(self):
         self.chat_text.configure(state='normal')
         try:
             for idx in range(len(self._msg_data) - 1, -1, -1):
-                tag = f'msg_{idx}'
-                ranges = self.chat_text.tag_ranges(tag)
-                if not ranges:
-                    continue
-                pos = str(ranges[0])
+                start_mark = f'mstart_{idx}'
+                try:
+                    pos = self.chat_text.index(start_mark)
+                except Exception:
+                    ranges = self.chat_text.tag_ranges(f'msg_{idx}')
+                    if not ranges:
+                        continue
+                    pos = str(ranges[0])
                 bullet = tk.Label(self.chat_text, text='\u25cb',
                                   font=('Segoe UI', 14, 'bold'),
                                   bg=self.chat_text['bg'],
@@ -6463,8 +7667,11 @@ class GroupChatWindow(tk.Toplevel):
                                   borderwidth=0, padx=2, pady=0)
                 bullet.bind('<Button-1>',
                             lambda e, i=idx: self._toggle_msg_selection(i))
-                self.chat_text.window_create(pos, window=bullet,
-                                             align='center', padx=6)
+                try:
+                    self.chat_text.window_create(pos, window=bullet,
+                                                 align='center', padx=4)
+                except Exception:
+                    pass
                 self._selection_bullets[idx] = bullet
         finally:
             self.chat_text.configure(state='disabled')
@@ -6606,8 +7813,25 @@ class GroupChatWindow(tk.Toplevel):
         self._exit_selection_mode()
 
     def _selection_forward(self):
-        msgs = [self._msg_data[i]['text'] for i in sorted(self._selection_set)
-                if i < len(self._msg_data) and self._msg_data[i].get('text')]
+        # WhatsApp-like: cada msg encaminhada inclui autor original + horario
+        msgs = []
+        for i in sorted(self._selection_set):
+            if i >= len(self._msg_data):
+                continue
+            d = self._msg_data[i]
+            text = d.get('text', '')
+            if not text:
+                continue
+            sender = d.get('sender', '') or ''
+            ts_raw = d.get('timestamp', time.time())
+            try:
+                ts = datetime.fromtimestamp(float(ts_raw)).strftime('%H:%M')
+            except Exception:
+                ts = ''
+            header = f'De: {sender}'
+            if ts:
+                header += f' • {ts}'
+            msgs.append(f'{header}\n{text}')
         if not msgs:
             return
         self._open_forward_dialog(msgs)
@@ -7316,6 +8540,8 @@ class LanMessengerApp:
             on_image=self._safe(self._on_image),
             on_poll=self._safe(self._on_poll),
             on_status=self._safe(self._on_peer_status),
+            on_reminder_invite=self._safe(self._on_reminder_invite),
+            on_reminder_response=self._safe(self._on_reminder_response),
         )
         self.messenger.start()
         # Conecta SoundPlayer ao db e migra settings antigas de alertas
@@ -7376,6 +8602,9 @@ class LanMessengerApp:
                        command=self._show_transfers)
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
+        m2.add_separator()
+        m2.add_command(label='Conectar fora da LAN (VPN)...',
+                       command=self._open_vpn_peers)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
@@ -7601,6 +8830,9 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
+        m2.add_separator()
+        m2.add_command(label='Conectar fora da LAN (VPN)...',
+                       command=self._open_vpn_peers)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -8674,6 +9906,25 @@ class LanMessengerApp:
                 '\U0001f62b', '\U0001f633', '\U0001f632', '\U0001f61e',
                 '\U0001f613', '\U0001f635', '\U0001f608', '\U0001f47f',
                 '\U0001f4a9', '\U0001f921', '\U0001f47b', '\U0001f480',
+                '\U0001f970', '\U0001f972', '\U0001f929', '\U0001f973',
+                '\U0001f60f', '\U0001f615', '\U0001f61f', '\U0001f641',
+                '\u2639\ufe0f', '\U0001f623', '\U0001f627', '\U0001f626',
+                '\U0001f62e', '\U0001f62f', '\U0001f632', '\U0001f92f',
+                '\U0001f92b', '\U0001f92d', '\U0001f971', '\U0001f928',
+                '\U0001f9d0', '\U0001f913', '\U0001f920', '\U0001f9d1',
+                '\U0001f47d', '\U0001f47e', '\U0001f916', '\U0001f478',
+                '\U0001f934', '\U0001f482', '\U0001f575\ufe0f', '\U0001f477',
+                '\U0001f473', '\U0001f472', '\U0001f9d5', '\U0001f470',
+                '\U0001f935', '\U0001f385', '\U0001f936', '\U0001f9d9',
+                '\U0001f9da', '\U0001f9db', '\U0001f9dd', '\U0001f9de',
+                '\U0001f9df', '\U0001f47c', '\U0001f63a', '\U0001f638',
+                '\U0001f639', '\U0001f63b', '\U0001f63c', '\U0001f63d',
+                '\U0001f640', '\U0001f63f', '\U0001f63e', '\U0001f48b',
+                '\U0001f48c',
+                '\U0001f48d', '\U0001f48e', '\U0001f442', '\U0001f443',
+                '\U0001f445', '\U0001f444', '\U0001f441\ufe0f', '\U0001f440',
+                '\U0001f463', '\U0001f9e0', '\U0001f9b7', '\U0001f9b4',
+                '\U0001f4ac', '\U0001f4a4', '\U0001f4ad',
             ],
             '\U0001f44d': [
                 '\U0001f44d', '\U0001f44e', '\U0001f44a', '\u270a',
@@ -8713,6 +9964,39 @@ class LanMessengerApp:
                 '\U0001f4ab', '\U0001f4a5', '\U0001f4a2', '\U0001f4a6',
                 '\U0001f4a8', '\U0001f573\ufe0f', '\U0001f4a3',
                 '\U0001f4ac', '\U0001f4ad', '\U0001f5e8\ufe0f',
+                '\U0001f49f', '\u2763\ufe0f', '\U0001f491',
+                '\U0001f46a', '\U0001f46b', '\U0001f46c', '\U0001f46d',
+                '\U0001f483', '\U0001f57a', '\U0001f38a', '\U0001f386',
+                '\U0001f387', '\u2728', '\U0001f319', '\u2b50',
+                '\U0001f31f',
+            ],
+            # Animais e Natureza
+            '\U0001f436': [
+                '\U0001f436', '\U0001f415', '\U0001f429', '\U0001f43a',
+                '\U0001f98a', '\U0001f431', '\U0001f408', '\U0001f981',
+                '\U0001f42f', '\U0001f405', '\U0001f434', '\U0001f984',
+                '\U0001f993', '\U0001f42e', '\U0001f402', '\U0001f437',
+                '\U0001f416', '\U0001f417', '\U0001f43d', '\U0001f411',
+                '\U0001f410', '\U0001f42a', '\U0001f42b', '\U0001f418',
+                '\U0001f42d', '\U0001f401', '\U0001f400', '\U0001f439',
+                '\U0001f430', '\U0001f407', '\U0001f994', '\U0001f987',
+                '\U0001f43b', '\U0001f428', '\U0001f43c', '\U0001f9a5',
+                '\U0001f9a6', '\U0001f9a8', '\U0001f998', '\U0001f9a1',
+                '\U0001f43e', '\U0001f983', '\U0001f414', '\U0001f413',
+                '\U0001f423', '\U0001f424', '\U0001f425', '\U0001f426',
+                '\U0001f427', '\U0001f985', '\U0001f986', '\U0001f989',
+                '\U0001f438', '\U0001f40a', '\U0001f422', '\U0001f98e',
+                '\U0001f40d', '\U0001f432', '\U0001f409', '\U0001f433',
+                '\U0001f40b', '\U0001f42c', '\U0001f41f', '\U0001f420',
+                '\U0001f421', '\U0001f988', '\U0001f419', '\U0001f41a',
+                '\U0001f40c', '\U0001f98b', '\U0001f41b', '\U0001f41c',
+                '\U0001f41d', '\U0001f41e', '\U0001f490', '\U0001f338',
+                '\U0001f339', '\U0001f33a', '\U0001f33b', '\U0001f33c',
+                '\U0001f337', '\U0001f331', '\U0001f332', '\U0001f333',
+                '\U0001f334', '\U0001f335', '\U0001f340', '\U0001f341',
+                '\U0001f342', '\U0001f343', '\u2601\ufe0f', '\U0001f300',
+                '\U0001f308', '\U0001f319', '\u2b50', '\U0001f31f',
+                '\u2600\ufe0f', '\U0001f31b', '\U0001f31d',
             ],
             '\U0001f3e0': [
                 '\U0001f697', '\U0001f695', '\U0001f68c', '\U0001f691',
@@ -8744,6 +10028,24 @@ class LanMessengerApp:
                 '\u2705', '\u274c', '\u26a0\ufe0f', '\U0001f6ab',
                 '\u2753', '\u2757', '\U0001f4ac', '\U0001f4ad',
                 '\U0001f6a9', '\U0001f3f3\ufe0f', '\U0001f3f4',
+                '\U0001f195', '\U0001f197', '\U0001f199',
+                '\U0001f192', '\U0001f193', '\U0001f196',
+                '\U0001f198', '\U0001f19a', '\u2b06\ufe0f',
+                '\u2b07\ufe0f', '\u2b05\ufe0f', '\u27a1\ufe0f',
+                '\u2197\ufe0f', '\u2198\ufe0f', '\u2199\ufe0f',
+                '\u2196\ufe0f', '\u21a9\ufe0f', '\u21aa\ufe0f',
+                '\U0001f504', '\U0001f503', '\U0001f501',
+                '\U0001f502', '\u25b6\ufe0f', '\u23f8\ufe0f',
+                '\u23ef\ufe0f', '\u23f9\ufe0f', '\u23fa\ufe0f',
+                '\u23ed\ufe0f', '\u23ee\ufe0f', '\u23e9',
+                '\u23ea', '\u23eb', '\u23ec', '\u2139\ufe0f',
+                '\u2648', '\u2649', '\u264a', '\u264b',
+                '\u264c', '\u264d', '\u264e', '\u264f',
+                '\u2650', '\u2651', '\u2652', '\u2653',
+                '\U0001f170\ufe0f', '\U0001f171\ufe0f',
+                '\U0001f17e\ufe0f', '\U0001f17f\ufe0f',
+                '\u26ce', '\U0001f523', '\U0001f524',
+                '\U0001f521', '\U0001f520', '\U0001f196',
             ],
         }
 
@@ -8790,7 +10092,10 @@ class LanMessengerApp:
         canvas = tk.Canvas(grid_frame, bg='#ffffff', highlightthickness=0)
         inner = tk.Frame(canvas, bg='#ffffff')
         canvas.pack(fill='both', expand=True)
-        canvas.create_window((0, 0), window=inner, anchor='nw')
+        inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+        # Faz o inner frame acompanhar a largura do canvas (sem gap direito)
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
 
         def insert_emoji(emoji):
             # Limpa placeholder se necessario
@@ -9428,7 +10733,7 @@ class LanMessengerApp:
         tk.Label(dlg, text=f'Nota sobre {name}:',
                  font=('Segoe UI', 10, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(anchor='w', padx=12, pady=(12, 4))
-        tk.Label(dlg, text='So voce pode ver esta nota.',
+        tk.Label(dlg, text='Só você pode ver esta nota.',
                  font=('Segoe UI', 8), bg='#ffffff',
                  fg='#718096').pack(anchor='w', padx=12)
 
@@ -10683,6 +11988,223 @@ class LanMessengerApp:
             log.exception('Erro ao checar lembretes')
 
     # Abre janela de gerenciamento de lembretes
+    # Helper: formata "Pedro, Iuri, +2" a partir de lista de uids
+    def _format_invited_names(self, uids):
+        names = []
+        for uid in (uids or []):
+            info = self.peer_info.get(uid, {})
+            name = info.get('display_name', '')
+            if not name:
+                contact = self.messenger.db.get_contact(uid)
+                if contact:
+                    name = contact.get('display_name', uid)
+                else:
+                    name = uid
+            names.append(name)
+        if len(names) <= 3:
+            return ', '.join(names)
+        return f"{', '.join(names[:3])} +{len(names) - 3}"
+
+    # Dialog Pessoal/Compartilhado: pergunta o escopo antes de abrir o dialog
+    # de criacao real. callback(invited_uids) onde invited_uids=None para Pessoal
+    # e lista de uids para Compartilhado.
+    def _choose_reminder_scope_then(self, callback):
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Tipo de lembrete')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.configure(bg='#ffffff')
+        _center_window(dlg, 380, 220)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='Tipo de lembrete', font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff'
+                 ).pack(padx=12, pady=8, side='left')
+
+        body = tk.Frame(dlg, bg='#ffffff')
+        body.pack(fill='both', expand=True, padx=14, pady=14)
+
+        def _pick_pessoal():
+            dlg.destroy()
+            callback(None)
+
+        def _pick_compartilhado():
+            dlg.destroy()
+            self._pick_people(callback)
+
+        btn_p = tk.Button(body, text='\U0001f464  Pessoal\nsomente você',
+                          font=('Segoe UI', 10), bg='#dbeafe', fg='#1e3a8a',
+                          bd=0, padx=20, pady=12, cursor='hand2',
+                          justify='center', command=_pick_pessoal)
+        btn_p.pack(fill='x', pady=(0, 8))
+        _add_hover(btn_p, '#dbeafe', '#bfdbfe')
+
+        btn_c = tk.Button(body, text='\U0001f465  Compartilhado\nmarcar pessoas',
+                          font=('Segoe UI', 10), bg='#fef3c7', fg='#92400e',
+                          bd=0, padx=20, pady=12, cursor='hand2',
+                          justify='center', command=_pick_compartilhado)
+        btn_c.pack(fill='x')
+        _add_hover(btn_c, '#fef3c7', '#fde68a')
+
+    # Picker multi-select de pessoas. Callback recebe lista de uids selecionados.
+    # Cancelar = nao chama callback (fluxo abortado).
+    def _pick_people(self, callback):
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Marcar pessoas')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.configure(bg='#f5f7fa')
+        _center_window(dlg, 380, 480)
+        _apply_rounded_corners(dlg)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+
+        hdr = tk.Frame(dlg, bg='#0f2a5c')
+        hdr.pack(fill='x')
+        tk.Label(hdr, text='Marcar pessoas no lembrete',
+                 font=('Segoe UI', 11, 'bold'),
+                 bg='#0f2a5c', fg='#ffffff'
+                 ).pack(padx=12, pady=8, side='left')
+
+        # Coleta destinos online (alfabetico)
+        targets = []
+        for uid, info in self.peer_info.items():
+            if uid == self.messenger.user_id:
+                continue
+            status = info.get('status', 'offline')
+            if status == 'offline':
+                continue
+            name = info.get('display_name', uid) or uid
+            targets.append((uid, name))
+        targets.sort(key=lambda t: (t[1] or '').lower())
+
+        # Search box
+        search_frame = tk.Frame(dlg, bg='#f5f7fa')
+        search_frame.pack(fill='x', padx=12, pady=(10, 6))
+        search_box = tk.Frame(search_frame, bg='#ffffff', bd=1, relief='solid')
+        search_box.pack(fill='x')
+        tk.Label(search_box, text='\U0001f50d', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#64748b'
+                 ).pack(side='left', padx=(8, 4), pady=4)
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(search_box, textvariable=search_var,
+                                font=('Segoe UI', 10), bd=0, relief='flat',
+                                bg='#ffffff')
+        search_entry.pack(side='left', fill='x', expand=True,
+                          padx=(0, 8), pady=4)
+        search_entry.focus_set()
+
+        # Lista scrollable
+        list_outer = tk.Frame(dlg, bg='#ffffff', bd=1, relief='solid')
+        list_outer.pack(fill='both', expand=True, padx=12, pady=4)
+        canvas = tk.Canvas(list_outer, bg='#ffffff', highlightthickness=0)
+        scrollbar = tk.Scrollbar(list_outer, orient='vertical',
+                                 command=canvas.yview)
+        inner = tk.Frame(canvas, bg='#ffffff')
+        inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        inner.bind('<Configure>',
+                   lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
+
+        def _wheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
+        canvas.bind('<MouseWheel>', _wheel)
+        inner.bind('<MouseWheel>', _wheel)
+
+        selected = set()
+        bullets = {}
+        EMPTY = '○'
+        FILLED = '●'
+
+        def _toggle(i):
+            if i in selected:
+                selected.remove(i)
+            else:
+                selected.add(i)
+            widgets = bullets.get(i)
+            if not widgets:
+                return
+            b, row, lbl = widgets
+            if i in selected:
+                b.configure(text=FILLED, fg='#1a3f7a', bg='#eef3fb')
+                row.configure(bg='#eef3fb')
+                lbl.configure(bg='#eef3fb')
+            else:
+                b.configure(text=EMPTY, fg='#94a3b8', bg='#ffffff')
+                row.configure(bg='#ffffff')
+                lbl.configure(bg='#ffffff')
+
+        def _render(query=''):
+            for w in list(inner.winfo_children()):
+                try: w.destroy()
+                except Exception: pass
+            bullets.clear()
+            q = (query or '').strip().lower()
+            for i, (uid, name) in enumerate(targets):
+                if q and q not in name.lower():
+                    continue
+                is_sel = i in selected
+                bg_row = '#eef3fb' if is_sel else '#ffffff'
+                row = tk.Frame(inner, bg=bg_row, cursor='hand2')
+                row.pack(fill='x')
+                bullet = tk.Label(row,
+                                  text=FILLED if is_sel else EMPTY,
+                                  font=('Segoe UI', 14),
+                                  bg=bg_row,
+                                  fg='#1a3f7a' if is_sel else '#94a3b8')
+                bullet.pack(side='left', padx=(10, 8), pady=6)
+                lbl = tk.Label(row, text=f'\U0001f464  {name}',
+                               font=('Segoe UI', 10),
+                               bg=bg_row, fg='#1a202c', anchor='w')
+                lbl.pack(side='left', fill='x', expand=True, pady=6)
+                bullets[i] = (bullet, row, lbl)
+                h = lambda e, idx=i: _toggle(idx)
+                row.bind('<Button-1>', h)
+                bullet.bind('<Button-1>', h)
+                lbl.bind('<Button-1>', h)
+                row.bind('<MouseWheel>', _wheel)
+                bullet.bind('<MouseWheel>', _wheel)
+                lbl.bind('<MouseWheel>', _wheel)
+
+        _render()
+        search_var.trace_add('write', lambda *_: _render(search_var.get()))
+
+        if not targets:
+            tk.Label(inner, text='Nenhum colega online no momento.',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#94a3b8'
+                     ).pack(pady=20)
+
+        btns = tk.Frame(dlg, bg='#f5f7fa')
+        btns.pack(fill='x', padx=12, pady=10)
+
+        def _confirm():
+            if not selected:
+                messagebox.showwarning(
+                    'Marcar pessoas',
+                    'Selecione ao menos 1 pessoa.', parent=dlg)
+                return
+            uids = [targets[i][0] for i in sorted(selected)]
+            dlg.destroy()
+            callback(uids)
+
+        b_ok = tk.Button(btns, text='Continuar',
+                         font=('Segoe UI', 9, 'bold'),
+                         bg='#0f2a5c', fg='#ffffff', bd=0,
+                         padx=14, pady=5, cursor='hand2',
+                         command=_confirm)
+        b_ok.pack(side='right', padx=4)
+        _add_hover(b_ok, '#0f2a5c', '#1a3f7a')
+        tk.Button(btns, text='Cancelar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#4a5568', bd=0,
+                  padx=14, pady=5, cursor='hand2',
+                  command=dlg.destroy).pack(side='right', padx=4)
+
     def _show_reminders(self):
         win = tk.Toplevel(self.root)
         win.title('Lembretes')
@@ -10699,9 +12221,19 @@ class LanMessengerApp:
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=10, side='left')
         def _show_new_menu():
             menu = tk.Menu(win, tearoff=0, font=('Segoe UI', 10))
-            menu.add_command(label='\U0001f4cc  Simples', command=lambda: self._new_simple_reminder_dialog(win, list_frame))
-            menu.add_command(label='\u23f0  Programado', command=lambda: self._new_reminder_dialog(win, list_frame))
-            menu.add_command(label='\U0001f504  Recorrente', command=lambda: self._new_recurring_reminder_dialog(win, list_frame))
+            # Wrap: cada opcao primeiro pergunta Pessoal/Compartilhado
+            def _wrap(dialog_fn):
+                def _go():
+                    self._choose_reminder_scope_then(
+                        lambda uids: dialog_fn(win, list_frame,
+                                                invited_uids=uids))
+                return _go
+            menu.add_command(label='\U0001f4cc  Simples',
+                             command=_wrap(self._new_simple_reminder_dialog))
+            menu.add_command(label='\u23f0  Programado',
+                             command=_wrap(self._new_reminder_dialog))
+            menu.add_command(label='\U0001f504  Recorrente',
+                             command=_wrap(self._new_recurring_reminder_dialog))
             menu.tk_popup(btn_novo.winfo_rootx(), btn_novo.winfo_rooty() + btn_novo.winfo_height())
         btn_novo = tk.Button(hdr, text='+ Novo', font=('Segoe UI', 9, 'bold'),
                   bg='#2563eb', fg='#ffffff', relief='flat', bd=0,
@@ -10770,14 +12302,97 @@ class LanMessengerApp:
             parts.append(f'{s}s')
         return ' '.join(parts) if parts else '0s'
 
+    # Render para convite recebido nao aceito: card amarelo com Aceitar/Recusar.
+    def _render_pending_invite_row(self, parent, rem):
+        bg = '#fef9c3'
+        border = '#fcd34d'
+        row = tk.Frame(parent, bg=bg, highlightthickness=2,
+                       highlightbackground=border)
+        row.pack(fill='x', pady=4, padx=2)
+
+        # Header com icone + criador
+        creator = rem.get('creator_name', '') or 'Alguém'
+        info = tk.Frame(row, bg=bg)
+        info.pack(side='top', fill='x', padx=10, pady=(8, 4))
+        tk.Label(info, text=f'\U0001f4e9 Convite de {creator}',
+                 font=('Segoe UI', 9, 'bold'), bg=bg, fg='#78350f',
+                 anchor='w').pack(anchor='w')
+
+        # Texto do lembrete
+        text = rem.get('text', '')
+        tk.Label(row, text=text, font=('Segoe UI', 10, 'bold'),
+                 bg=bg, fg='#1a202c', anchor='w', wraplength=320, justify='left'
+                 ).pack(anchor='w', padx=10, pady=(0, 4))
+
+        # Quando vai disparar
+        remind_at = rem.get('remind_at', 0) or 0
+        if remind_at > 0:
+            dt = datetime.fromtimestamp(remind_at)
+            now = datetime.now()
+            if dt.date() == now.date():
+                when = 'Hoje ' + dt.strftime('%H:%M')
+            elif dt.date() == (now + timedelta(days=1)).date():
+                when = 'Amanhã ' + dt.strftime('%H:%M')
+            else:
+                when = dt.strftime('%d/%m/%Y %H:%M')
+            tk.Label(row, text=f'⏰ {when}', font=('Segoe UI', 9),
+                     bg=bg, fg='#92400e', anchor='w'
+                     ).pack(anchor='w', padx=10, pady=(0, 6))
+        else:
+            tk.Label(row, text='\U0001f4cc Tarefa compartilhada (sem data)',
+                     font=('Segoe UI', 9), bg=bg, fg='#92400e', anchor='w'
+                     ).pack(anchor='w', padx=10, pady=(0, 6))
+
+        # Botoes Aceitar / Recusar
+        external_id = rem.get('external_id', '')
+
+        def _accept():
+            self.messenger.accept_reminder_invite(external_id)
+            if self._reminders_list_frame:
+                self._refresh_reminders_list(self._reminders_list_frame)
+
+        def _decline():
+            self.messenger.decline_reminder_invite(external_id)
+            try:
+                self.messenger.db.delete_reminder(rem['id'])
+            except Exception:
+                pass
+            if self._reminders_list_frame:
+                self._refresh_reminders_list(self._reminders_list_frame)
+
+        btns = tk.Frame(row, bg=bg)
+        btns.pack(fill='x', padx=10, pady=(0, 8))
+        b_acc = tk.Button(btns, text='✓ Aceitar',
+                          font=('Segoe UI', 9, 'bold'),
+                          bg='#16a34a', fg='#ffffff', bd=0, relief='flat',
+                          padx=12, pady=4, cursor='hand2', command=_accept)
+        b_acc.pack(side='left', padx=(0, 6))
+        _add_hover(b_acc, '#16a34a', '#15803d')
+        b_dec = tk.Button(btns, text='✕ Recusar',
+                          font=('Segoe UI', 9),
+                          bg='#fecaca', fg='#991b1b', bd=0, relief='flat',
+                          padx=12, pady=4, cursor='hand2', command=_decline)
+        b_dec.pack(side='left')
+        _add_hover(b_dec, '#fecaca', '#fca5a5')
+
     def _render_reminder_row(self, parent, rem, completed=False):
+        # Convite pendente (lembrete compartilhado recebido) - render distinto
+        share_status = rem.get('share_status', '') or ''
+        if share_status == 'pending_accept':
+            self._render_pending_invite_row(parent, rem)
+            return
+
         is_normal = rem.get('remind_at', 0) == 0  # lembrete normal (sem data)
         is_recurring = rem.get('is_recurring', 0) == 1
         is_active = rem.get('is_active', 1) == 1
         is_overdue = not completed and not is_normal and not is_recurring and datetime.fromtimestamp(rem['remind_at']) < datetime.now()
         is_notified = rem.get('notified', 0) == 1
+        # Lembrete compartilhado ativo (que voce criou ou aceitou) tem destaque diferente
+        is_shared = bool(rem.get('external_id', '') or '')
         if completed:
             bg = '#f0fdf4'
+        elif is_shared and not is_recurring:
+            bg = '#fff7ed'  # laranja claro para shared
         elif is_recurring:
             bg = '#f0e6ff' if is_active else '#f3f4f6'
         elif is_overdue:
@@ -10866,7 +12481,7 @@ class LanMessengerApp:
             if remind_at.date() == now.date():
                 time_str = 'Hoje ' + remind_at.strftime('%H:%M')
             elif remind_at.date() == (now + timedelta(days=1)).date():
-                time_str = 'Amanha ' + remind_at.strftime('%H:%M')
+                time_str = 'Amanhã ' + remind_at.strftime('%H:%M')
             else:
                 time_str = remind_at.strftime('%d/%m/%Y %H:%M')
             # Se ja passou e nao concluido, destacar em vermelho
@@ -10890,23 +12505,34 @@ class LanMessengerApp:
         _add_hover(del_btn, bg, '#fef2f2')
 
     # Dialogo simples para lembrete normal (sem data, so texto)
-    def _new_simple_reminder_dialog(self, parent_win, list_frame):
+    # invited_uids=None -> Pessoal (db.add_reminder). Lista -> Compartilhado.
+    def _new_simple_reminder_dialog(self, parent_win, list_frame,
+                                     invited_uids=None):
         dlg = tk.Toplevel(parent_win)
-        dlg.title('Lembrete Simples')
+        title = 'Lembrete Compartilhado' if invited_uids else 'Lembrete Simples'
+        dlg.title(title)
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 340, 180)
+        _center_window(dlg, 360, 200)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
         hdr = tk.Frame(dlg, bg='#0f2a5c')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\U0001f4cc Lembrete Simples', font=('Segoe UI', 11, 'bold'),
+        tk.Label(hdr, text=f'\U0001f4cc {title}',
+                 font=('Segoe UI', 11, 'bold'),
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
 
         body = tk.Frame(dlg, bg='#ffffff')
         body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        if invited_uids:
+            names = self._format_invited_names(invited_uids)
+            tk.Label(body, text=f'\U0001f465 Marcando: {names}',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#0f2a5c',
+                     wraplength=320, justify='left'
+                     ).pack(anchor='w', pady=(0, 6))
 
         tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(anchor='w')
@@ -10920,7 +12546,12 @@ class LanMessengerApp:
             text = txt_entry.get().strip()
             if not text:
                 return
-            self.messenger.db.add_reminder(text, remind_at=0)
+            if invited_uids:
+                # Compartilhado simples = remind_at=0 nao dispara — vira to-do compartilhado
+                self.messenger.create_shared_reminder(
+                    text=text, remind_at=0, invited_uids=invited_uids)
+            else:
+                self.messenger.db.add_reminder(text, remind_at=0)
             self._refresh_reminders_list(list_frame)
             dlg.destroy()
 
@@ -11112,22 +12743,26 @@ class LanMessengerApp:
         }
 
     # Dialogo para criar lembrete recorrente (padrao diario/semanal/mensal/anual)
-    def _new_recurring_reminder_dialog(self, parent_win, list_frame):
+    # invited_uids=None -> Pessoal. Lista -> Compartilhado.
+    def _new_recurring_reminder_dialog(self, parent_win, list_frame,
+                                        invited_uids=None):
         import json as _json
         dlg = tk.Toplevel(parent_win)
-        dlg.title('Lembrete Recorrente')
+        suffix = ' Compartilhado' if invited_uids else ''
+        dlg.title(f'Lembrete Recorrente{suffix}')
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 560, 500)
+        _center_window(dlg, 580, 540 if invited_uids else 500)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
         hdr = tk.Frame(dlg, bg='#7c3aed')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\U0001f504 Lembrete Recorrente',
+        tk.Label(hdr, text=f'\U0001f504 Lembrete Recorrente{suffix}',
                  font=('Segoe UI', 12, 'bold'),
-                 bg='#7c3aed', fg='#ffffff').pack(padx=14, pady=10, side='left')
+                 bg='#7c3aed', fg='#ffffff'
+                 ).pack(padx=14, pady=10, side='left')
 
         # Botoes fixos no rodape (packed primeiro com side='bottom' para ficarem sempre visiveis)
         btn_row = tk.Frame(dlg, bg='#ffffff')
@@ -11135,6 +12770,13 @@ class LanMessengerApp:
 
         body = tk.Frame(dlg, bg='#ffffff')
         body.pack(fill='both', expand=True, padx=16, pady=(12, 6))
+
+        if invited_uids:
+            names = self._format_invited_names(invited_uids)
+            tk.Label(body, text=f'\U0001f465 Marcando: {names}',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#7c3aed',
+                     wraplength=540, justify='left'
+                     ).pack(anchor='w', pady=(0, 6))
 
         now = datetime.now()
 
@@ -11340,8 +12982,14 @@ class LanMessengerApp:
                     if start.weekday() in weekdays:
                         break
                     start += timedelta(days=1)
-            self.messenger.db.add_pattern_reminder(text, start.timestamp(),
-                                                    _json.dumps(rule))
+            if invited_uids:
+                self.messenger.create_shared_reminder(
+                    text=text, remind_at=start.timestamp(),
+                    invited_uids=invited_uids,
+                    recurrence_rule=_json.dumps(rule))
+            else:
+                self.messenger.db.add_pattern_reminder(
+                    text, start.timestamp(), _json.dumps(rule))
             self._refresh_reminders_list(list_frame)
             dlg.destroy()
 
@@ -11359,24 +13007,34 @@ class LanMessengerApp:
         _add_hover(btn_ok, '#7c3aed', '#6d28d9')
 
     # Dialogo para criar novo lembrete com calendario e campos de tempo
-    def _new_reminder_dialog(self, parent_win, list_frame):
+    # invited_uids=None -> Pessoal. Lista -> Compartilhado.
+    def _new_reminder_dialog(self, parent_win, list_frame, invited_uids=None):
         dlg = tk.Toplevel(parent_win)
-        dlg.title('Novo Lembrete')
+        title = 'Lembrete Compartilhado' if invited_uids else 'Novo Lembrete'
+        dlg.title(title)
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 360, 480)
+        _center_window(dlg, 380, 520 if invited_uids else 480)
         _apply_rounded_corners(dlg)
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
         # Header
         hdr = tk.Frame(dlg, bg='#0f2a5c')
         hdr.pack(fill='x')
-        tk.Label(hdr, text='\u23f0 Novo Lembrete', font=('Segoe UI', 11, 'bold'),
+        tk.Label(hdr, text=f'\u23f0 {title}',
+                 font=('Segoe UI', 11, 'bold'),
                  bg='#0f2a5c', fg='#ffffff').pack(padx=12, pady=8, side='left')
 
         body = tk.Frame(dlg, bg='#ffffff')
         body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        if invited_uids:
+            names = self._format_invited_names(invited_uids)
+            tk.Label(body, text=f'\U0001f465 Marcando: {names}',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#0f2a5c',
+                     wraplength=340, justify='left'
+                     ).pack(anchor='w', pady=(0, 6))
 
         tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
                  bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
@@ -11558,10 +13216,15 @@ class LanMessengerApp:
                 dt = datetime(sel_date[0], sel_date[1], sel_date[2], h, m)
                 remind_at = dt.timestamp()
             except (ValueError, OverflowError):
-                messagebox.showwarning('Lembrete', 'Data/hora invalida.',
+                messagebox.showwarning('Lembrete', 'Data/hora inválida.',
                                         parent=dlg)
                 return
-            self.messenger.db.add_reminder(text, remind_at)
+            if invited_uids:
+                self.messenger.create_shared_reminder(
+                    text=text, remind_at=remind_at,
+                    invited_uids=invited_uids)
+            else:
+                self.messenger.db.add_reminder(text, remind_at)
             dlg.destroy()
             self._refresh_reminders_list(list_frame)
 
@@ -11921,6 +13584,232 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Janela: cadastra IPs de peers manuais para cenario VPN/fora-da-LAN.
+    # Cada IP cadastrado recebe announce UDP unicast a cada DISCOVERY_INTERVAL.
+    # O peer ancora responde com peer_list e peer-exchange propaga a LAN inteira.
+    # Lista vazia = comportamento normal de LAN, zero overhead.
+    def _open_vpn_peers(self):
+        import re as _re
+        # Se foi aberto a partir de uma janela modal, transfere o grab
+        prev_grab = None
+        try:
+            prev_grab = self.root.grab_current()
+        except Exception:
+            prev_grab = None
+        if prev_grab is not None:
+            try: prev_grab.grab_release()
+            except Exception: pass
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Conectar fora da LAN (VPN)')
+        dlg.geometry('560x520')
+        dlg.configure(bg='#f8fafc')
+        try: dlg.transient(prev_grab or self.root)
+        except Exception: pass
+
+        def _on_close():
+            try: dlg.grab_release()
+            except Exception: pass
+            dlg.destroy()
+            if prev_grab is not None:
+                try: prev_grab.grab_set()
+                except Exception: pass
+
+        dlg.protocol('WM_DELETE_WINDOW', _on_close)
+        dlg.bind('<Escape>', lambda e: _on_close())
+        try:
+            dlg.after(50, dlg.grab_set)
+        except Exception:
+            pass
+
+        header = tk.Frame(dlg, bg='#0f2a5c', height=42)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        tk.Label(header, text='Conectar fora da LAN (VPN)', bg='#0f2a5c',
+                 fg='white', font=('Segoe UI', 11, 'bold')
+                 ).pack(side='left', padx=14)
+
+        body = tk.Frame(dlg, bg='#f8fafc')
+        body.pack(fill='both', expand=True, padx=14, pady=10)
+
+        info = (
+            'Use esta tela quando você está fora do escritório (home-office) '
+            'conectado por VPN. Cadastre o IP de UM PC do escritório que '
+            'estará sempre ligado (âncora, com IP fixo). A partir dele, o app '
+            'descobre automaticamente todos os outros colegas da LAN.\n\n'
+            'A lista fica salva. Use o botão "Ativar" para ligar/desligar '
+            'a conexão VPN quando estiver em home-office.'
+        )
+        tk.Label(body, text=info, font=('Segoe UI', 9), bg='#f8fafc',
+                 fg='#475569', wraplength=520, justify='left'
+                 ).pack(anchor='w', pady=(0, 10))
+
+        # Toggle Ativar/Desativar persistente (default OFF).
+        # Estado atual vem de self.messenger.is_vpn_enabled().
+        toggle_frame = tk.Frame(body, bg='#f8fafc')
+        toggle_frame.pack(fill='x', pady=(0, 10))
+
+        try:
+            initial_enabled = bool(self.messenger.is_vpn_enabled())
+        except Exception:
+            initial_enabled = False
+        var_enabled = tk.BooleanVar(value=initial_enabled)
+
+        status_label = tk.Label(
+            toggle_frame, text='',
+            font=('Segoe UI', 9, 'bold'), bg='#f8fafc')
+        status_label.pack(side='right', padx=(8, 0))
+
+        def _update_status_label():
+            if var_enabled.get():
+                status_label.configure(text='ATIVADO', fg='#16a34a')
+            else:
+                status_label.configure(text='DESATIVADO', fg='#991b1b')
+
+        def _on_toggle():
+            try:
+                self.messenger.set_vpn_enabled(var_enabled.get())
+            except Exception as e:
+                messagebox.showerror('Erro',
+                                     f'Falha ao alternar VPN:\n{e}', parent=dlg)
+                return
+            _update_status_label()
+
+        tk.Checkbutton(toggle_frame,
+                       text='Ativar conexão VPN (aplica os IPs cadastrados)',
+                       variable=var_enabled, command=_on_toggle,
+                       font=('Segoe UI', 10, 'bold'), bg='#f8fafc',
+                       activebackground='#f8fafc',
+                       selectcolor='#ffffff'
+                       ).pack(side='left')
+        _update_status_label()
+
+        form = tk.LabelFrame(body, text='Adicionar peer', font=('Segoe UI', 9, 'bold'),
+                             bg='#f8fafc', fg='#1a202c', padx=10, pady=8)
+        form.pack(fill='x', pady=(0, 10))
+
+        row1 = tk.Frame(form, bg='#f8fafc')
+        row1.pack(fill='x', pady=2)
+        tk.Label(row1, text='IP do peer:', font=('Segoe UI', 9),
+                 bg='#f8fafc', width=12, anchor='w').pack(side='left')
+        var_ip = tk.StringVar()
+        ent_ip = tk.Entry(row1, textvariable=var_ip, font=('Consolas', 10), width=20)
+        ent_ip.pack(side='left', padx=(0, 6))
+
+        row2 = tk.Frame(form, bg='#f8fafc')
+        row2.pack(fill='x', pady=2)
+        tk.Label(row2, text='Nota:', font=('Segoe UI', 9),
+                 bg='#f8fafc', width=12, anchor='w').pack(side='left')
+        var_note = tk.StringVar()
+        tk.Entry(row2, textvariable=var_note, font=('Segoe UI', 9), width=36
+                 ).pack(side='left', fill='x', expand=True)
+
+        list_frame = tk.LabelFrame(body, text='Peers cadastrados',
+                                   font=('Segoe UI', 9, 'bold'),
+                                   bg='#f8fafc', fg='#1a202c', padx=8, pady=6)
+        list_frame.pack(fill='both', expand=True)
+
+        cols = ('ip', 'note')
+        tree = ttk.Treeview(list_frame, columns=cols, show='headings', height=8)
+        tree.heading('ip', text='IP')
+        tree.heading('note', text='Nota')
+        tree.column('ip', width=140, anchor='w')
+        tree.column('note', width=320, anchor='w')
+        sb = ttk.Scrollbar(list_frame, command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        tree.pack(side='left', fill='both', expand=True)
+
+        def _refresh_list():
+            for it in tree.get_children():
+                tree.delete(it)
+            try:
+                peers = self.messenger.get_manual_peers()
+            except Exception:
+                peers = []
+            for p in peers:
+                tree.insert('', 'end', values=(p.get('ip', ''), p.get('note', '')))
+
+        _ip_re = _re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
+
+        def _validate_ip(ip):
+            ip = (ip or '').strip()
+            if not _ip_re.match(ip):
+                return False
+            for part in ip.split('.'):
+                try:
+                    n = int(part)
+                except ValueError:
+                    return False
+                if n < 0 or n > 255:
+                    return False
+            return True
+
+        def _do_add():
+            ip = (var_ip.get() or '').strip()
+            note = (var_note.get() or '').strip()
+            if not _validate_ip(ip):
+                messagebox.showwarning(
+                    'IP invalido',
+                    'Informe um IP no formato 192.168.0.10',
+                    parent=dlg)
+                return
+            try:
+                ok = self.messenger.add_manual_peer(ip, note)
+                if ok:
+                    var_ip.set('')
+                    var_note.set('')
+                    _refresh_list()
+                    ent_ip.focus_set()
+            except Exception as e:
+                messagebox.showerror(
+                    'Erro', f'Nao foi possivel adicionar:\n{e}', parent=dlg)
+
+        def _do_remove():
+            sel = tree.selection()
+            if not sel:
+                return
+            ip = tree.item(sel[0], 'values')[0]
+            if not messagebox.askyesno(
+                'Remover peer',
+                f'Remover {ip} da lista?',
+                parent=dlg):
+                return
+            try:
+                self.messenger.remove_manual_peer(ip)
+                _refresh_list()
+            except Exception as e:
+                messagebox.showerror(
+                    'Erro', f'Nao foi possivel remover:\n{e}', parent=dlg)
+
+        # Botao Adicionar dentro do form (alinhado ao IP)
+        tk.Button(row1, text='Adicionar', font=('Segoe UI', 9, 'bold'),
+                  bg='#0f2a5c', fg='white', bd=0, padx=12, pady=4,
+                  cursor='hand2', command=_do_add).pack(side='left', padx=(8, 0))
+
+        # Enter no IP/Nota tambem adiciona
+        ent_ip.bind('<Return>', lambda e: _do_add())
+
+        btns = tk.Frame(dlg, bg='#f8fafc')
+        btns.pack(fill='x', padx=14, pady=(0, 12))
+        tk.Button(btns, text='Remover selecionado', font=('Segoe UI', 9),
+                  bg='#fee2e2', fg='#991b1b', bd=0, padx=12, pady=6,
+                  cursor='hand2', command=_do_remove).pack(side='left')
+        tk.Button(btns, text='Fechar', font=('Segoe UI', 9),
+                  bg='#e2e8f0', fg='#1a202c', bd=0, padx=14, pady=6,
+                  cursor='hand2', command=_on_close).pack(side='right')
+
+        _refresh_list()
+        try:
+            ent_ip.focus_set()
+        except Exception:
+            pass
+        try:
+            _center_window(dlg)
+            _apply_rounded_corners(dlg)
+        except Exception:
+            pass
+
     # Executa o download e apply do update.
     def _do_update(self, version):
         if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
@@ -12260,6 +14149,67 @@ class LanMessengerApp:
                 self._show_group_toast(group_id, poll_data.get('creator', ''), '\U0001f4ca Enquete')
                 self._pending_flash_target = f'group:{group_id}'
                 self._flash_window()
+
+    # Convite de lembrete compartilhado recebido. Mostra notificacao + flash.
+    def _on_reminder_invite(self, info):
+        creator = info.get('creator_name', '') or 'Alguém'
+        text = info.get('text', '') or ''
+        try:
+            if HAS_WINOTIFY:
+                from winotify import Notification, audio as wn_audio
+                toast = Notification(
+                    app_id=APP_AUMID,
+                    title='\U0001f4e9 Convite de lembrete',
+                    msg=f'{creator}: {text[:80]}',
+                    duration='short',
+                    launch='mbchat://open/__reminders__'
+                )
+                toast.add_actions(label='Ver Lembretes',
+                                  launch='mbchat://open/__reminders__')
+                toast.set_audio(wn_audio.Default, loop=False)
+                toast.show()
+        except Exception:
+            log.exception('toast convite lembrete falhou')
+        try:
+            SoundPlayer.play_reminder()
+        except Exception:
+            pass
+        self._pending_flash_target = '__reminders__'
+        try:
+            self._flash_window(self.root, gate_key='flash_reminder')
+        except Exception:
+            pass
+        try:
+            if self._reminders_list_frame:
+                self._refresh_reminders_list(self._reminders_list_frame)
+        except Exception:
+            pass
+
+    # Resposta de convite chega no criador (accept/decline).
+    def _on_reminder_response(self, info):
+        responder = info.get('responder_name', '') or 'Alguém'
+        accepted = info.get('accepted', False)
+        try:
+            if HAS_WINOTIFY:
+                from winotify import Notification, audio as wn_audio
+                if accepted:
+                    title = '\u2713 Lembrete aceito'
+                    msg = f'{responder} aceitou seu convite.'
+                else:
+                    title = '\u2715 Lembrete recusado'
+                    msg = f'{responder} recusou seu convite.'
+                toast = Notification(app_id=APP_AUMID, title=title,
+                                     msg=msg, duration='short',
+                                     launch='mbchat://open/__reminders__')
+                toast.set_audio(wn_audio.Default, loop=False)
+                toast.show()
+        except Exception:
+            pass
+        try:
+            if self._reminders_list_frame:
+                self._refresh_reminders_list(self._reminders_list_frame)
+        except Exception:
+            pass
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #

@@ -200,6 +200,10 @@ MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
 MT_IMAGE = 'image'              # TCP: imagem inline (clipboard, base64)
 MT_POLL_CREATE = 'poll_create'  # TCP: criacao de enquete em grupo
 MT_POLL_VOTE = 'poll_vote'      # TCP: voto em enquete de grupo
+MT_PEER_LIST = 'peer_list'      # UDP: lista de peers conhecidos (resposta a announce unicast com request_peer_list)
+MT_REMINDER_INVITE = 'reminder_invite'    # TCP: convite de lembrete compartilhado
+MT_REMINDER_ACCEPT = 'reminder_accept'    # TCP: aceitacao do convite (volta pro criador)
+MT_REMINDER_DECLINE = 'reminder_decline'  # TCP: recusa do convite (volta pro criador)
 
 
 # Detecta IP local da maquina na rede.
@@ -331,6 +335,12 @@ class UDPDiscovery:
             'bind_errors': [],          # Lista de (port, errno_str) nas tentativas
         }
 
+        # === Peers manuais (VPN/fora-da-LAN) ===
+        # ip -> 'manual' (do DB, persistido) ou 'auto' (do peer exchange, em memoria)
+        # Lista vazia = caminho da LAN intocado, zero overhead.
+        self._unicast_targets = {}
+        self._unicast_lock = threading.Lock()
+
     # Inicia o discovery: sockets, threads e primeiro announce
     def start(self):
         self.running = True
@@ -436,6 +446,12 @@ class UDPDiscovery:
         self._recv_thread.start()
         self._announce_thread.start()
         self._cleanup_thread.start()
+
+        # Thread 4: announce unicast para peers manuais (VPN/fora-da-LAN).
+        # Lista vazia = loop dorme e nao faz nada (zero overhead p/ os 28 da LAN).
+        self._manual_thread = threading.Thread(target=self._manual_announce_loop,
+                                               daemon=True)
+        self._manual_thread.start()
 
         # Envia o primeiro announce imediatamente
         self._send_announce()
@@ -612,6 +628,37 @@ class UDPDiscovery:
                         self.on_peer_lost(uid, peer)  # Notifica GUI
             return
 
+        # MT_PEER_LIST: resposta de peer-exchange (cenario VPN). Cada item da lista
+        # vira um 'auto' unicast target: passamos a anunciar unicast tambem para esses
+        # IPs, para que TODOS os peers da LAN remota nos vejam (nao so o ancora).
+        # Nao adicionamos a self.peers diretamente — esperamos o announce real deles
+        # chegar (que vai cair no MT_ANNOUNCE abaixo e seguir o fluxo normal).
+        if msg_type == MT_PEER_LIST:
+            peers_data = pkt.get('peers', []) or []
+            new_targets = []
+            try:
+                local_ip = get_local_ip()
+            except Exception:
+                local_ip = ''
+            with self._unicast_lock:
+                for p in peers_data:
+                    pip = (p.get('ip') or '').strip()
+                    if not pip or pip == local_ip:
+                        continue
+                    if pip not in self._unicast_targets:
+                        self._unicast_targets[pip] = 'auto'
+                        new_targets.append(pip)
+            # Anuncia imediatamente para os novos targets para que nos vejam
+            for pip in new_targets:
+                try:
+                    self.announce_to_ip(pip, request_peer_list=False)
+                except Exception:
+                    pass
+            if new_targets:
+                _log().info('peer_list: %d novos targets auto adicionados',
+                            len(new_targets))
+            return
+
         if msg_type == MT_ANNOUNCE:
             # Peer esta se anunciando (novo ou atualizacao)
             peer_info = {
@@ -643,12 +690,139 @@ class UDPDiscovery:
                 # Responde ao novo peer para que ele nos descubra tambem
                 self._send_announce()
 
+            # Se anuncio veio via unicast (VPN/manual) e pediu lista de peers,
+            # responde com peer_list. Habilita peer exchange no cenario VPN.
+            if pkt.get('via_manual') and pkt.get('request_peer_list'):
+                try:
+                    self._send_peer_list_to(addr[0], UDP_PORT)
+                except Exception as e:
+                    _log().warning('responder peer_list a %s falhou: %s',
+                                   addr[0], e)
+
     # Loop periodico de announcements (a cada DISCOVERY_INTERVAL segundos)
     def _announce_loop(self):
         while self.running:
             time.sleep(DISCOVERY_INTERVAL)  # Espera DISCOVERY_INTERVAL segundos
             if self.running:
                 self._send_announce()  # Envia announce
+
+    # ========================================
+    # MANUAL PEERS / VPN — Unicast announce para IPs fora da LAN
+    # ========================================
+    # Cenario: usuario em home-office com VPN tunelando ate a LAN do escritorio.
+    # Multicast/broadcast nao atravessam VPN; unicast UDP sim. A solucao e que
+    # o usuario VPN cadastre manualmente o IP de UM peer "ancora" do escritorio.
+    # A partir dele, peer exchange (MT_PEER_LIST) propaga toda a LAN.
+
+    # Atualiza a lista persistida de peers manuais (do DB). Idempotente.
+    # ips: lista de strings IP. Lista vazia = remove todos os manuais (mantem 'auto').
+    def set_manual_peers(self, ips):
+        ips = list(ips or [])
+        added = []
+        with self._unicast_lock:
+            # Remove os antigos do tipo 'manual' (mantem 'auto' descobertos por exchange)
+            for ip in list(self._unicast_targets.keys()):
+                if self._unicast_targets[ip] == 'manual':
+                    del self._unicast_targets[ip]
+            # Adiciona os novos
+            for ip in ips:
+                ip = (ip or '').strip()
+                if not ip:
+                    continue
+                if self._unicast_targets.get(ip) != 'manual':
+                    added.append(ip)
+                self._unicast_targets[ip] = 'manual'
+        # Anuncia imediatamente para os recem-adicionados (pedindo lista de peers)
+        for ip in added:
+            try:
+                self.announce_to_ip(ip, request_peer_list=True)
+                _log().info('manual peer added ip=%s (immediate announce)', ip)
+            except Exception as e:
+                _log().warning('immediate announce to %s failed: %s', ip, e)
+
+    # Retorna copia da lista atual (ip -> source). Para diagnostico/UI.
+    def get_unicast_targets(self):
+        with self._unicast_lock:
+            return dict(self._unicast_targets)
+
+    # Envia announce UDP unicast para um IP especifico.
+    # Reusa o mesmo formato de pacote do multicast/broadcast.
+    # Adiciona flag 'via_manual' para o receptor saber que veio por unicast,
+    # e opcionalmente 'request_peer_list' pedindo lista de peers em resposta.
+    def announce_to_ip(self, ip, port=None, request_peer_list=False):
+        if not self._sock_send or not self.running:
+            return False
+        if port is None:
+            port = UDP_PORT
+        extra = {'via_manual': True}
+        if request_peer_list:
+            extra['request_peer_list'] = True
+        pkt = self._make_packet(MT_ANNOUNCE, extra=extra)
+        try:
+            self._sock_send.sendto(pkt, (ip, port))
+            self.health['packets_sent'] += 1
+            return True
+        except Exception as e:
+            self.health['sendto_errors'] += 1
+            _log().warning('unicast announce to %s:%d failed: %s', ip, port, e)
+            return False
+
+    # Envia lista de peers conhecidos via UDP unicast para um IP.
+    # Resposta a um announce unicast com flag 'request_peer_list'.
+    # Permite peer exchange: VPN user cadastra 1 IP, recebe a LAN inteira.
+    def _send_peer_list_to(self, ip, port=None):
+        if not self._sock_send or not self.running:
+            return
+        if port is None:
+            port = UDP_PORT
+        with self._lock:
+            peers_snapshot = []
+            for uid, info in self.peers.items():
+                pip = info.get('ip', '')
+                if not pip:
+                    continue
+                peers_snapshot.append({
+                    'user_id': uid,
+                    'display_name': info.get('display_name', ''),
+                    'ip': pip,
+                    'tcp_port': info.get('tcp_port', TCP_PORT),
+                })
+        data = {
+            'app': 'mbchat',
+            'type': MT_PEER_LIST,
+            'user_id': self.user_id,
+            'peers': peers_snapshot,
+            'time': time.time(),
+        }
+        try:
+            pkt = json.dumps(data, ensure_ascii=False).encode('utf-8')
+            self._sock_send.sendto(pkt, (ip, port))
+            _log().info('sent peer_list (%d peers) to %s:%d',
+                        len(peers_snapshot), ip, port)
+        except Exception as e:
+            _log().warning('sendto peer_list %s:%d failed: %s', ip, port, e)
+
+    # Loop em thread dedicada que anuncia unicast aos targets a cada DISCOVERY_INTERVAL.
+    # Lista vazia = sleep+continue, sem custo. So executa quando ha targets.
+    def _manual_announce_loop(self):
+        while self.running:
+            time.sleep(DISCOVERY_INTERVAL)
+            if not self.running:
+                break
+            try:
+                with self._unicast_lock:
+                    if not self._unicast_targets:
+                        continue
+                    targets = list(self._unicast_targets.items())
+                for ip, source in targets:
+                    try:
+                        # Manuais re-pedem peer_list periodicamente; auto so pingam
+                        self.announce_to_ip(
+                            ip, request_peer_list=(source == 'manual'))
+                    except Exception as e:
+                        _log().warning('periodic unicast to %s failed: %s', ip, e)
+            except Exception as e:
+                _log().warning('_manual_announce_loop tick failed: %s', e)
 
     # Loop de limpeza de peers inativos (a cada PING_INTERVAL segundos)
     # Remove peers que nao enviam announce ha mais de PING_TIMEOUT segundos

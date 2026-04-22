@@ -281,6 +281,34 @@ class Database:
         except Exception:
             pass
 
+        # Migracoes para lembretes compartilhados (Pessoal vs Compartilhado).
+        # Aditivas: lembretes existentes (Pessoal) ficam com creator_uid='' e
+        # status='active' por default — comportamento intocado.
+        for _col, _default in [
+            ('creator_uid', "''"),       # uid do criador (vazio = lembrete pessoal local)
+            ('external_id', "''"),       # UUID cross-machine para identificar lembrete em todos os peers
+            ('invited_uids', "''"),      # JSON array de uids convidados
+            ('accepted_uids', "''"),     # JSON array de uids que aceitaram
+            ('share_status', "'active'"),  # 'active' (pessoal/aceito) | 'pending_accept' (convite recebido) | 'declined'
+            ('creator_name', "''"),      # nome cacheado do criador (para exibir convite mesmo se peer offline)
+        ]:
+            try:
+                c.execute(f"ALTER TABLE reminders ADD COLUMN {_col} TEXT DEFAULT {_default}")
+                c.commit()
+            except Exception:
+                pass
+
+        # Tabela de peers manuais (VPN/fora-da-LAN). Lista vazia = no-op.
+        # Aditivo: nao afeta os 28+ usuarios na LAN local.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS manual_peers (
+                ip TEXT PRIMARY KEY,
+                note TEXT DEFAULT '',
+                created_at REAL NOT NULL
+            );
+        """)
+        c.commit()
+
     # ========================================
     # LOCAL USER — Dados do usuário local
     # ========================================
@@ -961,19 +989,27 @@ class Database:
 
     def get_pending_reminders(self):
         now = time.time()
+        # Lembretes 'pending_accept' (convites nao aceitos) nao disparam.
+        # Declined idem. Apenas 'active' ou compatibilidade com lembretes
+        # antigos (share_status NULL/vazio = pessoal antigo, dispara).
         rows = self.conn.execute("""
             SELECT * FROM reminders
             WHERE notified=0 AND remind_at > 0 AND remind_at <= ?
               AND (is_recurring=0 OR is_active=1)
+              AND (share_status IS NULL OR share_status='' OR share_status='active')
             ORDER BY remind_at ASC
         """, (now,)).fetchall()
         return [dict(r) for r in rows]
 
     def get_all_reminders(self):
-        # Pendentes: nao concluidos pelo usuario. Normais (remind_at=0) primeiro, depois por data
+        # Pendentes: nao concluidos. Normais (remind_at=0) primeiro, depois por data.
+        # Inclui invites (share_status='pending_accept') no topo para o usuario
+        # ver e poder aceitar/recusar.
         rows = self.conn.execute("""
             SELECT * FROM reminders WHERE completed=0
-            ORDER BY (CASE WHEN remind_at=0 THEN 0 ELSE 1 END), remind_at ASC
+            ORDER BY (CASE WHEN share_status='pending_accept' THEN 0
+                           WHEN remind_at=0 THEN 1 ELSE 2 END),
+                     remind_at ASC
         """).fetchall()
         return [dict(r) for r in rows]
 
@@ -1001,6 +1037,126 @@ class Database:
         self.conn.execute(
             "DELETE FROM reminders WHERE id=?", (reminder_id,))
         self.conn.commit()
+
+    # ========================================
+    # SHARED REMINDERS — Lembretes compartilhados
+    # ========================================
+    # Cenario: Pedro cria um lembrete e marca @iuri. Iuri recebe convite,
+    # pode aceitar/recusar. Apos aceitar, ambos recebem notificacao no horario.
+    # external_id (UUID) identifica o mesmo lembrete em todas as maquinas.
+
+    def add_shared_reminder(self, text, remind_at, creator_uid, creator_name='',
+                            external_id='', invited_uids=None,
+                            recurrence_rule='', recurrence_interval_seconds=0,
+                            share_status='active'):
+        import json as _json, uuid as _uuid
+        if not external_id:
+            external_id = _uuid.uuid4().hex
+        invited_json = _json.dumps(invited_uids or [], ensure_ascii=False)
+        accepted_json = _json.dumps([], ensure_ascii=False)
+        is_recurring = 1 if (recurrence_rule or recurrence_interval_seconds) else 0
+        is_active = 1
+        # Se ainda nao foi notificado: notified=0
+        notified = 0 if remind_at and remind_at > 0 else 1
+        self.conn.execute("""
+            INSERT INTO reminders
+                (text, remind_at, created_at, notified, completed,
+                 is_recurring, recurrence_interval_seconds, is_active,
+                 recurrence_rule, creator_uid, external_id,
+                 invited_uids, accepted_uids, share_status, creator_name)
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (text, remind_at, time.time(), notified,
+              is_recurring, recurrence_interval_seconds, is_active,
+              recurrence_rule, creator_uid, external_id,
+              invited_json, accepted_json, share_status, creator_name))
+        self.conn.commit()
+        return external_id
+
+    def get_reminder_by_external_id(self, external_id):
+        if not external_id:
+            return None
+        try:
+            row = self.conn.execute(
+                "SELECT * FROM reminders WHERE external_id=? LIMIT 1",
+                (external_id,)).fetchone()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def update_reminder_share_status(self, external_id, share_status):
+        try:
+            self.conn.execute(
+                "UPDATE reminders SET share_status=? WHERE external_id=?",
+                (share_status, external_id))
+            self.conn.commit()
+        except Exception:
+            pass
+
+    # Adiciona um uid a accepted_uids (para o criador rastrear quem aceitou).
+    def mark_reminder_accepted(self, external_id, uid):
+        import json as _json
+        try:
+            row = self.conn.execute(
+                "SELECT accepted_uids FROM reminders WHERE external_id=?",
+                (external_id,)).fetchone()
+            if not row:
+                return
+            try:
+                lst = _json.loads(row['accepted_uids'] or '[]')
+            except Exception:
+                lst = []
+            if uid not in lst:
+                lst.append(uid)
+            self.conn.execute(
+                "UPDATE reminders SET accepted_uids=? WHERE external_id=?",
+                (_json.dumps(lst, ensure_ascii=False), external_id))
+            self.conn.commit()
+        except Exception:
+            pass
+
+    # Lista lembretes pendentes de aceitar (recebidos como convite).
+    def get_pending_invites(self):
+        try:
+            rows = self.conn.execute("""
+                SELECT * FROM reminders
+                WHERE share_status='pending_accept' AND completed=0
+                ORDER BY created_at DESC
+            """).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    # ========================================
+    # MANUAL PEERS — VPN / fora-da-LAN
+    # ========================================
+    # Lista de IPs manualmente cadastrados para receber announce UDP unicast.
+    # Usado quando o discovery normal (multicast/broadcast) nao funciona, tipico
+    # de cenario VPN/home-office onde tunel L3 nao propaga multicast/broadcast.
+    # Lista vazia = comportamento default da LAN (zero overhead).
+
+    def add_manual_peer(self, ip, note=''):
+        ip = (ip or '').strip()
+        if not ip:
+            return False
+        self.conn.execute("""
+            INSERT OR REPLACE INTO manual_peers (ip, note, created_at)
+            VALUES (?, ?, ?)
+        """, (ip, note or '', time.time()))
+        self.conn.commit()
+        return True
+
+    def remove_manual_peer(self, ip):
+        self.conn.execute("DELETE FROM manual_peers WHERE ip=?", ((ip or '').strip(),))
+        self.conn.commit()
+
+    def get_manual_peers(self):
+        try:
+            rows = self.conn.execute(
+                "SELECT * FROM manual_peers ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
 
     # Fecha conexão da thread atual
     def close(self):
