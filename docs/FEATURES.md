@@ -1,4 +1,4 @@
-# MB Chat - Funcionalidades (v1.4.56)
+# MB Chat - Funcionalidades (v1.5.0)
 
 ## Mensagens
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
@@ -25,7 +25,8 @@
 - Drag and Drop via windnd
 
 ## Interface
-- 3 temas visuais (Classico, Night Mode, MB Contabilidade) + UI flat design
+- 3 temas visuais fixos (Classico, Night Mode, MB Contabilidade) + **temas customizaveis** (v1.5.0) via Preferencias > Aparencia > Tema > "Criar tema personalizado..." — editor de 40+ tokens com preview ao vivo, persiste em `%APPDATA%\.mbchat\user_themes.json`. UI flat design.
+- Theme Builder (v1.5.0) — `tools/theme_builder.py`, janela Toplevel modal, swatches clicaveis com colorchooser, validacao hex `#RRGGBB`, fallback automatico do `MB_DEFAULT` por chave ausente, "Salvar e Aplicar" + chips de temas salvos no rodape
 - Dois estilos de mensagem: linear (LAN Messenger) e bolhas (WhatsApp)
 - Bordas arredondadas DWM (Win11+)
 - Avatares circulares sincronizados via rede (thumbnail JPEG 48x48 no UDP announce)

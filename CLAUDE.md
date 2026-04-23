@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.4.59.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.5.0.
 
 ## Arquitetura (4 camadas)
 
@@ -11,6 +11,7 @@ gui.py -> messenger.py -> network.py / database.py
 ```
 
 - **gui.py** (~5400 linhas) - Apresentacao tkinter (janelas, temas, treeview, tray, emojis coloridos)
+- **tools/theme_builder.py** (~680 linhas) - Janela Toplevel para criar/editar temas customizados, persistencia em `%APPDATA%\.mbchat\user_themes.json`
 - **messenger.py** (~360 linhas) - Controller (orquestra rede + banco + GUI via callbacks, grupos)
 - **network.py** (~730 linhas) - Rede (UDP discovery multicast/broadcast + TCP messaging + file transfer)
 - **database.py** (~290 linhas) - SQLite local (WAL mode, threading.local)
@@ -163,6 +164,51 @@ Sniffer confirmou que PC problematico envia UDP announces normalmente (outbound 
 nada (inbound bloqueado). **Nao alfroxar** `_add_firewall_rule()` ou o `except Exception: pass` —
 o problema nao e o codigo tentar silenciosamente, e a falta de feedback ao user quando falha.
 O auto-fix via UAC e a solucao definitiva: pede permissao uma vez, cria regras por porta, resolve.
+
+## Theme Builder + temas dinamicos (v1.5.0)
+
+Janela em **Preferencias > Aparencia > Tema > Criar tema personalizado...** permite ao usuario
+montar temas custom (40+ tokens de cor: bg/fg/bordas/bolhas/header/status), persistidos em
+`%APPDATA%\.mbchat\user_themes.json`. Ao abrir o app, `gui.py` faz merge aditivo dos temas
+salvos no dict global `THEMES` (sem sobrescrever os 3 fixos: Classico, Night Mode, MB
+Contabilidade — protegidos via `BUILTIN_THEMES`).
+
+Mudancas estruturais que vieram junto:
+
+1. **`apply_theme` propaga globais** (gui.py:8758) — `BG_WINDOW`, `BG_WHITE`, `BG_HEADER`,
+   `FG_BLACK`, etc. agora sao reescritas globalmente a cada troca de tema. Janelas reabertas
+   (Preferences, Builder, Diagnostico) reconstroem com a paleta atual.
+
+2. **`PreferencesWindow` respeita o tema** — sidebar/categorias leem `app._theme` no `__init__`
+   e usam `_sweep_theme()` recursivo apos cada `_select_category` para forcar `fg/bg` em
+   `Label`, `Labelframe`, `Checkbutton`, `Radiobutton`, `Entry` (muitos `_build_*` nao
+   passavam `fg` explicito — em Night Mode ficavam pretos sobre fundo escuro).
+
+3. **`PreferencesWindow` reabre ao mudar tema** — o `_save_all` detecta `theme` mudou,
+   chama `apply_theme` e faz `self.destroy() + PreferencesWindow(app, initial_tab=idx)`
+   com delay 100ms (preserva aba atual via `_current_idx`). Mesmo comportamento no
+   `_open_theme_builder` quando o builder retorna com tema novo aplicado.
+
+4. **`ThemeBuilderWindow` se adapta ao tema do host** — le `app._theme` no `__init__` e
+   monta dict `self.ui` (panel/window/border/text/muted/accent/etc.) usado em toda a UI
+   principal. **Preview interno permanece usando `self.tokens`** (mostra o tema sendo
+   construido, nao o tema do host).
+
+5. **Temas fixos completados** — Classico e Night Mode ganharam as keys que faltavam
+   (`msg_my_bg`, `msg_peer_bg`, `hover`, `accent`, `online`, `away`, `busy`,
+   `offline_color`, `select_border`). Night Mode reformulado com contraste serio
+   (texto `#e8e8e8` sobre `#1e1e1e`, accent `#7cb8f0`). MB Contabilidade **intacto**
+   como tema principal/default.
+
+**Contrato com `app` host (`tools/theme_builder.py`)**: builder chama apenas `app._theme`
+(dict — opcional), `app.THEMES` (dict global — opcional, propaga tema novo) e
+`app.apply_theme(name)` (so no Salvar e Aplicar). Se algum nao existir, builder degrada
+sem crashar. `LanMessengerApp.__init__` expoe `self.THEMES = THEMES` (gui.py:8419) para
+que o builder propague o tema novo no mesmo dict que `apply_theme` consulta.
+
+**Validacao no JSON salvo**: regex `^#[0-9a-fA-F]{6}$` — `rgb(...)` ou nomes sao rejeitados.
+Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao crasha
+(`load_user_themes()` retorna `{}` + log).
 
 ## Documentacao detalhada
 

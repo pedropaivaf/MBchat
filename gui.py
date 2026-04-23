@@ -46,6 +46,7 @@ log.addHandler(_fh)
 from messenger import Messenger
 from version import APP_VERSION
 import updater
+from tools.theme_builder import ThemeBuilderWindow, load_user_themes
 
 # Pillow (PIL): suporte a avatares JPG/PNG e renderização de emojis coloridos.
 # Sem PIL: avatares usam canvas simples (texto sobre círculo colorido) e emojis ficam como texto.
@@ -349,14 +350,23 @@ THEMES = {
         'border': '#bbbbbb',
         'statusbar_bg': '#e8e8e8',
         'statusbar_fg': '#666666',
-        'chat_header_bg': '#e8e8e8',
-        'chat_header_fg': '#000000',
-        'chat_header_sub': '#666666',
+        'chat_header_bg': '#3366aa',
+        'chat_header_fg': '#ffffff',
+        'chat_header_sub': '#cce0ff',
         'btn_send_bg': '#3366aa',
         'btn_send_fg': '#ffffff',
         'btn_flat_fg': '#666666',
         'input_border': '#bbbbbb',
         'avatar_border': '#3366aa',
+        'msg_my_bg': '#dceafd',
+        'msg_peer_bg': '#eaeaea',
+        'hover': '#e0eaf7',
+        'accent': '#3366aa',
+        'online': '#22aa44',
+        'away': '#cc8800',
+        'busy': '#cc3333',
+        'offline_color': '#999999',
+        'select_border': '#3366aa',
     },
     'Night Mode': {
         'bg_window': '#1e1e1e',
@@ -366,32 +376,41 @@ THEMES = {
         'bg_select': '#3a5070',
         'bg_input': '#383838',
         'bg_chat': '#252525',
-        'fg_black': '#e0e0e0',
-        'fg_gray': '#888888',
+        'fg_black': '#e8e8e8',
+        'fg_gray': '#9aa0a8',
         'fg_white': '#f0f0f0',
-        'fg_blue': '#6ca8e0',
-        'fg_green': '#5cb85c',
-        'fg_red': '#e05555',
-        'fg_orange': '#e0a030',
-        'fg_group': '#c0c0c0',
-        'fg_msg': '#d0d0d0',
-        'fg_time': '#707070',
-        'fg_my_name': '#6ca8e0',
-        'fg_peer_name': '#e08060',
-        'btn_bg': '#383838',
-        'btn_fg': '#d0d0d0',
-        'btn_active': '#505050',
-        'border': '#444444',
+        'fg_blue': '#7cb8f0',
+        'fg_green': '#6ec96e',
+        'fg_red': '#f06868',
+        'fg_orange': '#f0b850',
+        'fg_group': '#cfcfcf',
+        'fg_msg': '#e8e8e8',
+        'fg_time': '#9aa0a8',
+        'fg_my_name': '#7cb8f0',
+        'fg_peer_name': '#f0a070',
+        'btn_bg': '#3a5070',
+        'btn_fg': '#f0f0f0',
+        'btn_active': '#4a6585',
+        'border': '#454545',
         'statusbar_bg': '#282828',
-        'statusbar_fg': '#808080',
-        'chat_header_bg': '#333333',
-        'chat_header_fg': '#e0e0e0',
-        'chat_header_sub': '#888888',
+        'statusbar_fg': '#9aa0a8',
+        'chat_header_bg': '#1f3050',
+        'chat_header_fg': '#f0f0f0',
+        'chat_header_sub': '#9ab4d4',
         'btn_send_bg': '#3a5070',
         'btn_send_fg': '#f0f0f0',
-        'btn_flat_fg': '#888888',
-        'input_border': '#444444',
-        'avatar_border': '#6ca8e0',
+        'btn_flat_fg': '#9aa0a8',
+        'input_border': '#454545',
+        'avatar_border': '#7cb8f0',
+        'msg_my_bg': '#3a5070',
+        'msg_peer_bg': '#3a3a3a',
+        'hover': '#3d3d3d',
+        'accent': '#7cb8f0',
+        'online': '#6ec96e',
+        'away': '#f0b850',
+        'busy': '#f06868',
+        'offline_color': '#707070',
+        'select_border': '#7cb8f0',
     },
     'MB Contabilidade': {
         'bg_window': '#f5f7fa',
@@ -439,6 +458,11 @@ THEMES = {
         'select_border': '#0f2a5c',
     },
 }
+
+# Carrega temas personalizados do usuário (não sobrescreve os fixos)
+for _name, _tokens in load_user_themes().items():
+    if _name not in THEMES:
+        THEMES[_name] = _tokens
 
 # --- Cores padrão globais ---
 # Usadas como fallback quando nenhum tema está ativo (ex: na inicialização).
@@ -1249,6 +1273,15 @@ class PreferencesWindow(tk.Toplevel):
         super().__init__(app.root)
         self.app = app
         self.messenger = app.messenger
+        # Lê o tema atual do app (com fallback) pra colorir a sidebar e categorias
+        # de acordo. Sem isso, a janela ficaria com cores hardcoded em qualquer tema.
+        self._t = getattr(app, '_theme', None) or THEMES.get('MB Contabilidade', {})
+        self._sidebar_bg = self._t.get('bg_white', '#f8fafc')
+        self._sidebar_fg = self._t.get('fg_black', '#334155')
+        self._sidebar_border = self._t.get('border', '#e2e8f0')
+        self._sidebar_hover = self._t.get('hover', self._t.get('bg_select', '#e2e8f0'))
+        self._sel_bg = self._t.get('bg_select', '#dbeafe')
+        self._sel_fg = self._t.get('fg_blue', '#1e3a5f')
         self.title('Preferências')
         self.resizable(False, False)
         self.transient(app.root)    # Janela filho da janela principal
@@ -1264,8 +1297,8 @@ class PreferencesWindow(tk.Toplevel):
         top.pack(fill='both', expand=True, padx=6, pady=6)
 
         # Left sidebar
-        left = tk.Frame(top, bg='#f8fafc', width=160, bd=0, relief='flat',
-                        highlightthickness=1, highlightbackground='#e2e8f0')
+        left = tk.Frame(top, bg=self._sidebar_bg, width=160, bd=0, relief='flat',
+                        highlightthickness=1, highlightbackground=self._sidebar_border)
         left.pack(side='left', fill='y')
         left.pack_propagate(False)
 
@@ -1290,12 +1323,14 @@ class PreferencesWindow(tk.Toplevel):
 
         for i, (name, builder) in enumerate(self.categories):
             btn = tk.Button(left, text=f'  {name}', font=FONT, anchor='w',
-                            bg='#f8fafc', fg='#334155', relief='flat', bd=0,
+                            bg=self._sidebar_bg, fg=self._sidebar_fg,
+                            relief='flat', bd=0,
                             padx=8, pady=6, cursor='hand2',
-                            activebackground='#e2e8f0',
+                            activebackground=self._sidebar_hover,
+                            activeforeground=self._sidebar_fg,
                             command=lambda idx=i: self._select_category(idx))
             btn.pack(fill='x')
-            _add_hover(btn, '#f8fafc', '#e2e8f0')
+            _add_hover(btn, self._sidebar_bg, self._sidebar_hover)
             self.cat_buttons.append(btn)
 
         # Settings vars
@@ -1428,14 +1463,16 @@ class PreferencesWindow(tk.Toplevel):
     # Atualiza o destaque visual dos botões da sidebar, destrói o frame anterior
     # e chama o método _build_*() da categoria selecionada para preencher o painel.
     def _select_category(self, idx):
+        self._current_idx = idx
         # Destaca o botão selecionado em azul e restaura os demais ao padrão
         for i, btn in enumerate(self.cat_buttons):
             if i == idx:
-                btn.configure(bg='#dbeafe', fg='#1e3a5f', relief='flat')
-                _add_hover(btn, '#dbeafe', '#dbeafe')
+                btn.configure(bg=self._sel_bg, fg=self._sel_fg, relief='flat')
+                _add_hover(btn, self._sel_bg, self._sel_bg)
             else:
-                btn.configure(bg='#f8fafc', fg='#334155', relief='flat')
-                _add_hover(btn, '#f8fafc', '#e2e8f0')
+                btn.configure(bg=self._sidebar_bg, fg=self._sidebar_fg,
+                              relief='flat')
+                _add_hover(btn, self._sidebar_bg, self._sidebar_hover)
 
         # Clear right panel
         if self.current_frame:
@@ -1446,6 +1483,38 @@ class PreferencesWindow(tk.Toplevel):
 
         # Build content
         self.categories[idx][1](self.current_frame)
+
+        # Sweep: força fg/bg em Label, LabelFrame e Checkbutton pra obedecer
+        # ao tema atual (muitos _build_* não passam fg explícito).
+        self._sweep_theme(self.current_frame)
+
+    def _sweep_theme(self, widget):
+        cls = widget.winfo_class()
+        try:
+            if cls == 'Label':
+                widget.configure(fg=FG_BLACK)
+            elif cls == 'Labelframe':
+                widget.configure(fg=FG_BLACK, bg=BG_WINDOW)
+            elif cls == 'Checkbutton':
+                widget.configure(fg=FG_BLACK, bg=BG_WINDOW,
+                                 selectcolor=BG_WHITE,
+                                 activebackground=BG_WINDOW,
+                                 activeforeground=FG_BLACK)
+            elif cls == 'Radiobutton':
+                widget.configure(fg=FG_BLACK, bg=BG_WINDOW,
+                                 selectcolor=BG_WHITE,
+                                 activebackground=BG_WINDOW,
+                                 activeforeground=FG_BLACK)
+            elif cls == 'Frame':
+                widget.configure(bg=BG_WINDOW)
+            elif cls == 'Entry':
+                widget.configure(bg=BG_WHITE, fg=FG_BLACK,
+                                 insertbackground=FG_BLACK,
+                                 disabledbackground=BG_WINDOW)
+        except tk.TclError:
+            pass
+        for c in widget.winfo_children():
+            self._sweep_theme(c)
 
     # ----- GERAL -----
     def _build_geral(self, parent):
@@ -1828,10 +1897,18 @@ class PreferencesWindow(tk.Toplevel):
         row = tk.Frame(lf, bg=BG_WINDOW)
         row.pack(fill='x', pady=2)
         tk.Label(row, text='Tema:', font=FONT, bg=BG_WINDOW).pack(side='left')
-        ttk.Combobox(row, textvariable=self.var_theme,
+        self._theme_combo = ttk.Combobox(row, textvariable=self.var_theme,
                      values=list(THEMES.keys()),
-                     state='readonly', font=FONT_SMALL, width=16
-                     ).pack(side='right')
+                     state='readonly', font=FONT_SMALL, width=16)
+        self._theme_combo.pack(side='right')
+
+        row_btn = tk.Frame(lf, bg=BG_WINDOW)
+        row_btn.pack(fill='x', pady=(6, 2))
+        tk.Button(row_btn, text='Criar tema personalizado...',
+                  font=FONT_SMALL, relief='flat', bd=0, cursor='hand2',
+                  bg='#0f2a5c', fg='#ffffff', activebackground='#1a3f7a',
+                  padx=10, pady=4,
+                  command=self._open_theme_builder).pack(side='right')
 
         lf2 = tk.LabelFrame(parent, text='Fonte', font=FONT,
                              bg=BG_WINDOW, padx=10, pady=5)
@@ -1845,6 +1922,28 @@ class PreferencesWindow(tk.Toplevel):
                      values=['8', '9', '10', '11', '12', '14'],
                      state='readonly', font=FONT_SMALL, width=5
                      ).pack(side='right')
+
+    # Abre o ThemeBuilder modal sobre a janela de Preferências.
+    # Se o tema mudou (Salvar e Aplicar), reabre a Preferences para reconstruir
+    # toda a UI com a paleta nova (sidebar, labels, botões). Caso contrário,
+    # apenas repopula o combobox para mostrar o tema recém-salvo.
+    def _open_theme_builder(self):
+        pre_theme = getattr(self.app, '_current_theme', None)
+        builder = ThemeBuilderWindow(self, app=self.app)
+        self.wait_window(builder)
+        post_theme = getattr(self.app, '_current_theme', None)
+        if post_theme != pre_theme:
+            app = self.app
+            idx = getattr(self, '_current_idx', 6)
+            self.destroy()
+            PreferencesWindow(app, initial_tab=idx)
+            return
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+        if hasattr(self, '_theme_combo') and self._theme_combo.winfo_exists():
+            self._theme_combo['values'] = list(THEMES.keys())
 
     # ----- ATALHOS -----
     def _build_atalhos(self, parent):
@@ -1997,10 +2096,16 @@ class PreferencesWindow(tk.Toplevel):
             except Exception:
                 pass
 
-        # Apply theme — so se mudou
+        # Apply theme — so se mudou. Reabre a Preferences pra reconstruir
+        # sidebar/labels com a paleta nova (cores foram capturadas no __init__).
         new_theme = self.var_theme.get()
         if new_theme != old_theme:
             self.app.apply_theme(new_theme)
+            app = self.app
+            idx = getattr(self, '_current_idx', 6)
+            self.after(100, lambda: (self.destroy(),
+                                     PreferencesWindow(app, initial_tab=idx)))
+            return
 
         # Apply auto-start — so se mudou
         new_autostart = '1' if self.var_autostart.get() else '0'
@@ -8390,6 +8495,7 @@ class LanMessengerApp:
         except Exception:
             pass
         self.root = tk.Tk()                  # Janela principal tkinter
+        self.THEMES = THEMES                 # Expõe dict global pro ThemeBuilder propagar temas custom
         self.root.title(APP_NAME)            # "MB Chat" na barra de título
         self.root.minsize(260, 450)          # Tamanho mínimo
         self.root.geometry('280x520')        # Tamanho inicial
@@ -8646,6 +8752,23 @@ class LanMessengerApp:
         self._theme = t
         self._current_theme = theme_name
         self._contact_render_cache.clear()  # cores podem mudar, invalida cache de render
+
+        # Atualiza globais de cor pra que janelas reabertas (Preferences, Builder)
+        # construam a UI com a paleta do tema atual em vez do hardcode inicial.
+        global BG_WINDOW, BG_WHITE, BG_HEADER, BG_GROUP, BG_SELECT
+        global FG_BLACK, FG_GRAY, FG_WHITE, FG_BLUE, FG_GREEN, FG_RED, FG_ORANGE
+        BG_WINDOW = t['bg_window']
+        BG_WHITE = t['bg_white']
+        BG_HEADER = t.get('bg_header', BG_HEADER)
+        BG_GROUP = t.get('bg_group', BG_GROUP)
+        BG_SELECT = t.get('bg_select', BG_SELECT)
+        FG_BLACK = t.get('fg_black', FG_BLACK)
+        FG_GRAY = t.get('fg_gray', FG_GRAY)
+        FG_WHITE = t.get('fg_white', FG_WHITE)
+        FG_BLUE = t.get('fg_blue', FG_BLUE)
+        FG_GREEN = t.get('fg_green', FG_GREEN)
+        FG_RED = t.get('fg_red', FG_RED)
+        FG_ORANGE = t.get('fg_orange', FG_ORANGE)
 
         # --- Main window ---
         self.root.configure(bg=t['bg_window'])
@@ -13558,7 +13681,7 @@ class LanMessengerApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title('Diagnostico de rede')
-        dlg.geometry('640x520')
+        _center_window(dlg, 640, 520)
         dlg.configure(bg='#f8fafc')
         try: dlg.transient(prev_grab or self.root)
         except Exception: pass
@@ -13714,7 +13837,7 @@ class LanMessengerApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title('Conectar fora da LAN (VPN)')
-        dlg.geometry('560x520')
+        _center_window(dlg, 560, 520)
         dlg.configure(bg='#f8fafc')
         try: dlg.transient(prev_grab or self.root)
         except Exception: pass
