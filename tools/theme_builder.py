@@ -282,8 +282,20 @@ class ThemeBuilderWindow(tk.Toplevel):
     def __init__(self, parent, app=None):
         super().__init__(parent)
         self.app = app
+        # Esconde antes de posicionar pra evitar flash no canto superior esquerdo.
+        self.withdraw()
         self.title("Criar tema personalizado — MB Chat")
-        self.geometry("880x620")
+        # Centraliza no monitor
+        w, h = 880, 620
+        try:
+            self.update_idletasks()
+            sx = self.winfo_screenwidth()
+            sy = self.winfo_screenheight()
+            x = (sx - w) // 2
+            y = (sy - h) // 2
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"{w}x{h}")
         self.minsize(800, 560)
         self.transient(parent)
         try:
@@ -322,6 +334,13 @@ class ThemeBuilderWindow(tk.Toplevel):
 
         self._build_ui()
         self._refresh_preview()
+
+        # Mostra agora (ja centralizada e com layout pronto)
+        try:
+            self.update_idletasks()
+            self.deiconify()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ 
     # Layout
@@ -378,6 +397,31 @@ class ThemeBuilderWindow(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
 
         self._build_editor()
+
+        # Scroll do mouse funciona em QUALQUER widget do painel esquerdo
+        # (swatches, labels, canvas). Sem isso, so rolava com o mouse sobre
+        # a barra de scroll.
+        def _on_wheel(e):
+            try:
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+
+        def _bind_wheel_recursive(widget):
+            try:
+                widget.bind("<MouseWheel>", _on_wheel)
+                # Linux
+                widget.bind("<Button-4>",
+                            lambda e: canvas.yview_scroll(-1, "units"))
+                widget.bind("<Button-5>",
+                            lambda e: canvas.yview_scroll(1, "units"))
+            except Exception:
+                pass
+            for child in widget.winfo_children():
+                _bind_wheel_recursive(child)
+
+        _bind_wheel_recursive(left_wrap)
 
         # Separador vertical
         tk.Frame(body, width=1, bg=u["border"]).pack(side="left", fill="y")

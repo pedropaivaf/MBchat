@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.5.0.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.5.1.
 
 ## Arquitetura (4 camadas)
 
@@ -209,6 +209,38 @@ que o builder propague o tema novo no mesmo dict que `apply_theme` consulta.
 **Validacao no JSON salvo**: regex `^#[0-9a-fA-F]{6}$` — `rgb(...)` ou nomes sao rejeitados.
 Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao crasha
 (`load_user_themes()` retorna `{}` + log).
+
+## UX fixes v1.5.1
+
+1. **Barra de acoes "Transmitir | Criar Grupo" redesenhada** (gui.py:9115-9175).
+   Antes: dois tk.Button pill coloridos (`#1a3f7a`) com emojis 📢/💬 acima da caixa de notas.
+   Agora: **rodape** abaixo do note_row, duas celulas 50/50 com grid uniforme, divider
+   horizontal sutil acima e divider vertical fino entre elas, fundo transparente NAVY, icones
+   line (`•))` em `#7cb8f0` para Transmitir como ação primaria, `👥` para Criar Grupo), hover
+   em `#1a3f7a`. Layout compacto (fontes 8-10pt, pady=3) pra liberar ~20px verticais e mostrar
+   mais contatos na lista sem scroll.
+
+2. **ChatWindow abre direto no centro** (gui.py:3102-3104, fim de `__init__`).
+   Janela nasce `withdraw()`, `_center_window` aplica posicao, todos os widgets empacotam
+   escondidos, `update_idletasks()` + `deiconify()` no final. Elimina o flash no canto
+   superior esquerdo que acontecia quando o WM do Windows mostrava a janela antes da
+   geometry final. Se `start_hidden=True` (surfacing via tray), `deiconify` no fim e pulado —
+   caller continua responsavel.
+
+3. **Emoji picker posicionado dinamicamente acima do input** (gui.py:5531-5559).
+   Altura entre 200-300px (calculada via `entry_top - win_top - 60`), gap de 40px acima do
+   `self.entry.winfo_rooty()`. `popup.withdraw()` -> setup completo -> `deiconify()` — sem
+   flash no canto. Grid 8 cols x 34px, rolavel com `bind_all('<MouseWheel>')`.
+
+4. **Theme Builder: scroll global + centralizado** (tools/theme_builder.py:284-308, 388-411).
+   Janela nasce `withdraw()`, centraliza com `winfo_screenwidth/height`, mostra pronta.
+   Scroll do mouse funciona em qualquer widget do painel esquerdo (swatches, labels, canvas
+   area): `_bind_wheel_recursive(left_wrap)` aplica `<MouseWheel>` em todos os descendentes.
+
+5. **Scrollbar minimalista na janela Lembretes** (gui.py:12246-12369). Substituiu
+   `ttk.Scrollbar` por Canvas 6px com thumb arredondado (oval + retangulo), hover muda para
+   10px em tom `#94a3b8`, auto-hide quando conteudo cabe (`lo<=0 && hi>=1`). MouseWheel
+   ignora scroll se nao ha overflow — previne "rolar pra vazio" quando tem so 1 item.
 
 ## Documentacao detalhada
 

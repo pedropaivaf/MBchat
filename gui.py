@@ -3100,8 +3100,11 @@ class ChatWindow(tk.Toplevel):
 
     def __init__(self, parent_app, peer_id, peer_name, start_hidden=False, **kw):
         super().__init__(parent_app.root)
-        if start_hidden:
-            self.withdraw()
+        # Sempre cria escondida. Evita flash da janela no canto superior-esquerdo
+        # antes do _center_window aplicar. A janela so e mostrada ao final do
+        # __init__, ja posicionada corretamente (a menos que start_hidden=True).
+        self.withdraw()
+        self._start_hidden = start_hidden
         self.app = parent_app
         self.messenger = parent_app.messenger
         self.peer_id = peer_id         # UUID do contato (chave primária na tabela contacts)
@@ -3557,6 +3560,18 @@ class ChatWindow(tk.Toplevel):
                 _allow_uipi_drop(self)
                 _allow_uipi_drop(self.entry)
                 _allow_uipi_drop(self.chat_text)
+            except Exception:
+                pass
+
+        # Mostra janela ja centralizada. update_idletasks garante layout final
+        # antes do deiconify — usuario ve a janela surgir ja no centro, sem
+        # flash no canto superior-esquerdo. Se start_hidden=True, caller
+        # e responsavel por chamar deiconify depois.
+        if not self._start_hidden:
+            try:
+                self.update_idletasks()
+                _center_window(self, 420, 480)
+                self.deiconify()
             except Exception:
                 pass
 
@@ -5510,14 +5525,34 @@ class ChatWindow(tk.Toplevel):
     # de entrada via _entry_insert_emoji(). Fecha ao clicar fora (FocusOut).
     def _show_emoji_picker_impl(self):
         popup = tk.Toplevel(self)
+        # Esconde imediatamente — evita flash no canto superior esquerdo
+        # antes da posicao correta ser aplicada.
+        popup.withdraw()
         popup.title('Emoticons')
         popup.resizable(False, False)
         popup.configure(bg='#f0f0f0')
         popup.transient(self)
 
+        # Picker posicionado ACIMA do campo de digitacao com gap generoso
+        # para nao cobrir o input. Altura dinamica: usa o espaco disponivel.
+        popup_w = 380
         x = self.winfo_rootx() + 10
-        y = self.winfo_rooty() + 50
-        popup.geometry(f'360x380+{x}+{y}')
+        try:
+            self.update_idletasks()
+            entry_top = self.entry.winfo_rooty()
+            win_top = self.winfo_rooty()
+            # 30px de margem acima + 40px de gap abaixo do picker
+            available = entry_top - win_top - 30
+            popup_h = min(300, max(200, available - 60))  # entre 200 e 300
+            y = entry_top - popup_h - 40  # gap maior: 40px acima do input
+        except Exception:
+            popup_h = 280
+            chat_bottom = self.winfo_rooty() + self.winfo_height()
+            y = chat_bottom - popup_h - 200
+        # Clamp: nao passar do topo da tela visivel
+        if y < 40:
+            y = 40
+        popup.geometry(f'{popup_w}x{popup_h}+{x}+{y}')
 
         # Cache de imagens de emoji para evitar garbage collection
         popup._emoji_images = {}
@@ -5912,7 +5947,7 @@ class ChatWindow(tk.Toplevel):
                            highlightbackground='#e2e8f0')
             row.pack(fill='x')
             for em in emojis_list[:12]:
-                img = self._render_emoji_image(em, 28)
+                img = self._render_emoji_image(em, 34)
                 if img:
                     popup._emoji_images[f'strip_{label_text}_{em}'] = img
                     b = tk.Label(row, image=img, bg='#ffffff',
@@ -5978,21 +6013,18 @@ class ChatWindow(tk.Toplevel):
             # Layout grid com colunas uniformes (weight=1) que dividem a largura
             # do canvas igualmente. Cada celula pinta bg=branco e o emoji (28px)
             # e centralizado. Sem padding visivel — borda contra borda.
-            cols = 10
+            cols = 8
             for c in range(cols):
                 inner.grid_columnconfigure(c, weight=1, uniform='emojicell',
                                            minsize=1)
             cell_bg = _EM_GRID_BG
-            # Deduplica emojis e usa key UNICA por indice. Se usasse
-            # o emoji como key, duplicatas sobrescreviam a referencia
-            # e Tk garbage-collectava a anterior (celula invisivel).
             _seen = set()
             valid = []
             for em in emojis:
                 if em in _seen:
                     continue
                 _seen.add(em)
-                img = self._render_emoji_image(em, 32, bg_color=cell_bg)
+                img = self._render_emoji_image(em, 34, bg_color=cell_bg)
                 if img is not None:
                     valid.append((em, img))
             for i, (em, img) in enumerate(valid):
@@ -6084,7 +6116,14 @@ class ChatWindow(tk.Toplevel):
             except Exception:
                 popup.destroy()
         popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
-        popup.focus_set()
+
+        # Mostra o popup JA posicionado e com conteudo renderizado (sem flash)
+        try:
+            popup.update_idletasks()
+            popup.deiconify()
+            popup.focus_set()
+        except Exception:
+            pass
 
     # Mostra preview da imagem colada antes de enviar
     def _show_image_preview(self, img):
@@ -9035,28 +9074,6 @@ class LanMessengerApp:
         self.ramal_entry.bind('<FocusOut>', lambda e: self._save_ramal())
         self.ramal_entry.bind('<Return>', lambda e: (self._save_ramal(), self.root.focus_set()))
 
-        # Botões de ação rápida: Transmitir e Bate Papo
-        action_row = tk.Frame(user_frame, bg=NAVY)
-        action_row.pack(fill='x', padx=10, pady=(0, 4))
-
-        btn_bcast = tk.Button(action_row, text='\U0001f4e2  Transmitir',
-                              font=('Segoe UI', 8, 'bold'), bg='#1a3f7a',
-                              fg='#ffffff', relief='flat', bd=0,
-                              cursor='hand2', padx=10, pady=3,
-                              activebackground='#2451a0',
-                              activeforeground='#ffffff',
-                              command=self._show_broadcast)
-        btn_bcast.pack(side='left', padx=(0, 6))
-
-        btn_grp = tk.Button(action_row, text='\U0001f4ac  Criar Grupo',
-                            font=('Segoe UI', 8, 'bold'), bg='#1a3f7a',
-                            fg='#ffffff', relief='flat', bd=0,
-                            cursor='hand2', padx=10, pady=3,
-                            activebackground='#2451a0',
-                            activeforeground='#ffffff',
-                            command=self._show_group_chat_dialog)
-        btn_grp.pack(side='left')
-
         # Nota do usuário
         note_row = tk.Frame(user_frame, bg=NAVY)
         note_row.pack(fill='x', padx=10, pady=(0, 8))
@@ -9094,6 +9111,68 @@ class LanMessengerApp:
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
         self.note_entry.bind('<Return>', self._note_save)
         self.note_entry.bind('<<Modified>>', self._on_note_modified)
+
+        # Barra de acoes rodape: Transmitir | Criar Grupo (2 colunas 50/50)
+        # Divider horizontal sutil acima separando da caixa de notas.
+        _ACTION_DIVIDER = '#1e3563'  # linha fina visivel sobre o NAVY
+        _ACTION_HOVER = '#1a3f7a'    # tom ligeiramente mais claro
+        _ACTION_ACCENT = '#7cb8f0'   # acento azul claro para o icone primario
+        _ACTION_FG = '#e5edf7'       # texto padrao
+
+        tk.Frame(user_frame, bg=_ACTION_DIVIDER, height=1
+                 ).pack(fill='x', padx=0, pady=(4, 0))
+
+        action_row = tk.Frame(user_frame, bg=NAVY)
+        action_row.pack(fill='x', padx=0, pady=(0, 0))
+        action_row.grid_columnconfigure(0, weight=1, uniform='act')
+        action_row.grid_columnconfigure(2, weight=1, uniform='act')
+
+        def _make_action_cell(col, icon_text, icon_color, label_text, callback):
+            cell = tk.Frame(action_row, bg=NAVY, cursor='hand2')
+            cell.grid(row=0, column=col, sticky='nsew')
+            inner = tk.Frame(cell, bg=NAVY)
+            inner.pack(expand=True, pady=3)
+            lbl_icon = tk.Label(inner, text=icon_text, bg=NAVY,
+                                fg=icon_color,
+                                font=('Segoe UI Symbol', 10, 'bold'))
+            lbl_icon.pack(side='left', padx=(0, 5))
+            lbl_text = tk.Label(inner, text=label_text, bg=NAVY,
+                                fg=_ACTION_FG,
+                                font=('Segoe UI', 8, 'bold'))
+            lbl_text.pack(side='left')
+
+            def _on_click(e=None):
+                callback()
+            def _on_enter(e=None):
+                for w in (cell, inner, lbl_icon, lbl_text):
+                    try: w.configure(bg=_ACTION_HOVER)
+                    except Exception: pass
+            def _on_leave(e=None):
+                for w in (cell, inner, lbl_icon, lbl_text):
+                    try: w.configure(bg=NAVY)
+                    except Exception: pass
+
+            for w in (cell, inner, lbl_icon, lbl_text):
+                w.bind('<Button-1>', _on_click)
+                w.bind('<Enter>', _on_enter)
+                w.bind('<Leave>', _on_leave)
+            return cell
+
+        _make_action_cell(
+            col=0, icon_text='•))',
+            icon_color=_ACTION_ACCENT,
+            label_text='Transmitir',
+            callback=self._show_broadcast)
+
+        # Divider vertical fino entre as duas celulas
+        tk.Frame(action_row, bg=_ACTION_DIVIDER, width=1
+                 ).grid(row=0, column=1, sticky='ns', pady=3)
+
+        _make_action_cell(
+            col=2, icon_text='\U0001f465',
+            icon_color=_ACTION_FG,
+            label_text='Criar Grupo',
+            callback=self._show_group_chat_dialog)
 
         # Separador
         tk.Frame(self.root, bg='#e2e8f0', height=1).pack(fill='x')
