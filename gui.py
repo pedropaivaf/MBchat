@@ -14916,7 +14916,22 @@ def _remove_autostart():
             os.remove(p)
 
 
-SINGLE_INSTANCE_PORT = 50199
+# Porta de single-instance derivada do usuario Windows: cada login tem sua
+# propria porta dentro de [50200, 51200). Assim, em maquinas multi-usuario
+# (ex: Windows compartilhado), cada sessao pode abrir MBChat sem que o lock
+# de outro usuario bloqueie. Range de 1000 portas reduz drasticamente a chance
+# de colisao entre logins distintos na mesma maquina.
+def _compute_single_instance_port():
+    try:
+        import getpass, hashlib
+        user = (getpass.getuser() or 'default').lower()
+        h = int(hashlib.md5(user.encode('utf-8')).hexdigest()[:8], 16)
+        return 50200 + (h % 1000)
+    except Exception:
+        return 50199
+
+
+SINGLE_INSTANCE_PORT = _compute_single_instance_port()
 
 
 # Registra o protocolo mbchat:// no Windows para notificacoes clicaveis.
