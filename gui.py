@@ -12242,22 +12242,134 @@ class LanMessengerApp:
         btn_novo.pack(side='right', padx=10, pady=8)
         _add_hover(btn_novo, '#2563eb', '#1d4ed8')
 
-        # Scrollable list
-        canvas = tk.Canvas(win, bg='#ffffff', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(win, orient='vertical', command=canvas.yview)
+        # Scrollable list com scrollbar moderna minimalista (auto-hide).
+        # Container horizontal que abriga canvas + barra customizada.
+        body = tk.Frame(win, bg='#ffffff')
+        body.pack(fill='both', expand=True, padx=8, pady=8)
+
+        canvas = tk.Canvas(body, bg='#ffffff', highlightthickness=0, bd=0)
         list_frame = tk.Frame(canvas, bg='#ffffff')
-        self._reminders_list_frame = list_frame  # ref para auto-refresh pelo timer
-        self._reminders_window = win  # ref para surfacing no disparo
-        list_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0, 0), window=list_frame, anchor='nw', tags='frame')
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side='left', fill='both', expand=True, padx=8, pady=8)
-        scrollbar.pack(side='right', fill='y', pady=8)
-        canvas.bind('<Configure>', lambda e: canvas.itemconfig('frame', width=e.width))
-        # Scroll com roda do mouse
+        self._reminders_list_frame = list_frame
+        self._reminders_window = win
+
+        inner_id = canvas.create_window((0, 0), window=list_frame,
+                                         anchor='nw', tags='frame')
+
+        # --- Scrollbar customizada fina (6px), arredondada, auto-hide ---
+        sb_canvas = tk.Canvas(body, width=6, highlightthickness=0, bd=0,
+                              bg='#ffffff')
+        sb_state = {'lo': 0.0, 'hi': 1.0, 'dragging': False, 'drag_y': 0,
+                    'wide': False, 'thin': 6, 'wide_w': 10}
+
+        def _sb_redraw():
+            sb_canvas.delete('all')
+            h = sb_canvas.winfo_height()
+            w = sb_canvas.winfo_width()
+            if h < 2 or w < 2:
+                return
+            y1 = max(int(sb_state['lo'] * h), 0)
+            y2 = min(int(sb_state['hi'] * h), h)
+            if y2 - y1 < 24:
+                mid = (y1 + y2) // 2
+                y1, y2 = max(mid - 12, 0), min(mid + 12, h)
+            pad = 1
+            # Thumb arredondado: usa oval nas pontas + retangulo no meio
+            color = '#94a3b8' if sb_state['wide'] else '#cbd5e1'
+            r = (w - pad * 2) // 2
+            # oval topo
+            sb_canvas.create_oval(pad, y1, w - pad, y1 + 2 * r,
+                                  fill=color, outline='')
+            # oval fundo
+            sb_canvas.create_oval(pad, y2 - 2 * r, w - pad, y2,
+                                  fill=color, outline='')
+            # retangulo meio
+            if y2 - 2 * r > y1 + r:
+                sb_canvas.create_rectangle(pad, y1 + r, w - pad, y2 - r,
+                                           fill=color, outline='')
+
+        def _sb_set(lo, hi):
+            lo, hi = float(lo), float(hi)
+            sb_state['lo'], sb_state['hi'] = lo, hi
+            if lo <= 0.0 and hi >= 1.0:
+                sb_canvas.pack_forget()
+            else:
+                if not sb_canvas.winfo_ismapped():
+                    sb_canvas.pack(side='right', fill='y')
+                _sb_redraw()
+
+        def _sb_enter(e):
+            sb_state['wide'] = True
+            sb_canvas.configure(width=sb_state['wide_w'])
+            _sb_redraw()
+
+        def _sb_leave(e):
+            if not sb_state['dragging']:
+                sb_state['wide'] = False
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+
+        def _sb_press(e):
+            sb_state['dragging'] = True
+            sb_state['drag_y'] = e.y
+            h = sb_canvas.winfo_height()
+            if h > 0:
+                click_frac = e.y / h
+                # Se clicou fora do thumb, pula pra ali
+                if click_frac < sb_state['lo'] or click_frac > sb_state['hi']:
+                    span = sb_state['hi'] - sb_state['lo']
+                    canvas.yview_moveto(max(0.0, click_frac - span / 2))
+
+        def _sb_drag(e):
+            if not sb_state['dragging']:
+                return
+            h = sb_canvas.winfo_height()
+            if h < 1:
+                return
+            dy = (e.y - sb_state['drag_y']) / h
+            sb_state['drag_y'] = e.y
+            new_lo = sb_state['lo'] + dy
+            canvas.yview_moveto(max(0.0, min(1.0, new_lo)))
+
+        def _sb_release(e):
+            sb_state['dragging'] = False
+            if not sb_state['wide']:
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+
+        sb_canvas.bind('<Enter>', _sb_enter)
+        sb_canvas.bind('<Leave>', _sb_leave)
+        sb_canvas.bind('<Button-1>', _sb_press)
+        sb_canvas.bind('<B1-Motion>', _sb_drag)
+        sb_canvas.bind('<ButtonRelease-1>', _sb_release)
+        sb_canvas.bind('<Configure>', lambda e: _sb_redraw())
+
+        canvas.configure(yscrollcommand=_sb_set)
+        canvas.pack(side='left', fill='both', expand=True)
+
+        def _update_scrollregion(e=None):
+            # Ajusta scrollregion exatamente ao bbox do conteudo; se conteudo
+            # cabe, scrollregion=bbox mas yview vai sempre 0..1 (nao rola vazio).
+            bbox = canvas.bbox('all')
+            if bbox:
+                canvas.configure(scrollregion=bbox)
+                # Forca yview dentro do range valido (previne scroll alem)
+                try:
+                    canvas.yview_moveto(max(0.0, canvas.yview()[0]))
+                except Exception:
+                    pass
+
+        list_frame.bind('<Configure>', _update_scrollregion)
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        # Scroll com roda do mouse — so quando ha overflow real
         def _on_mousewheel(e):
+            # Se nao ha overflow, nao faz nada (previne scroll vazio)
+            if sb_state['lo'] <= 0.0 and sb_state['hi'] >= 1.0:
+                return
             canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
         canvas.bind_all('<MouseWheel>', _on_mousewheel)
+
         def _on_win_destroy(e):
             if e.widget == win:
                 canvas.unbind_all('<MouseWheel>')
