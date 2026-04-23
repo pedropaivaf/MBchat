@@ -715,6 +715,7 @@
             <a href="#doc-banco">Banco de Dados</a>
             <a href="#doc-portas">Portas de Rede</a>
             <a href="#doc-discovery">Descoberta de Peers</a>
+            <a href="#doc-vpn">VPN / Home-office</a>
             <a href="#doc-multiuser">Multi-usuário</a>
             <a href="#doc-firewall">Firewall</a>
             <a href="#doc-desinstalar">Desinstalação</a>
@@ -879,6 +880,61 @@
             <div class="docs-note">
                 <strong>Resultado:</strong> A combinação de tri-broadcast + anúncio imediato em eventos + detecção correta de NIC é o que faz o MB Chat ser mais confiável. O intervalo curto só amplifica esses ganhos. Um peer só some da lista se estiver realmente offline — nunca por falha de rede transitória.
             </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-vpn">
+            <h3>VPN / Home-office — conectar no escritório de fora</h3>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat funciona via descoberta UDP <strong>multicast + broadcast</strong> na LAN. Como esses protocolos não cruzam túneis VPN L3 (o tunelamento entrega só tráfego unicast), um funcionário em home-office conectado por VPN não enxerga os colegas do escritório naturalmente. A partir da <strong>v1.4.63</strong> existe um modo <strong>unicast announce</strong> com <em>peer exchange</em> automático que resolve isso — você cadastra 1 IP âncora e o app descobre o resto da LAN sozinho.
+            </p>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Como funciona</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Você está fora do escritório, conectado na VPN que te dá IP da rede interna.</li>
+                <li>Cadastra o IP de <strong>1 PC do escritório</strong> (a âncora) — deve ser um PC que fica sempre ligado e tem IP fixo na rede interna.</li>
+                <li>Ativa a VPN no app. O MB Chat passa a enviar um <em>announce unicast</em> pra esse IP a cada 15 segundos.</li>
+                <li>O PC âncora recebe esse announce, percebe que veio de um IP fora do seu <code>/24</code>, e responde com a <strong>lista de peers que ele conhece</strong> (todos os colegas ativos na LAN).</li>
+                <li>Seu app adiciona esses IPs como <em>auto-targets</em> (sem persistir em DB, só em memória) e passa a anunciar unicast pra todos eles também.</li>
+                <li>Os 29 outros colegas do escritório te reconhecem como peer online e você já pode trocar mensagens normalmente via TCP (que atravessa VPN sem problema).</li>
+            </ol>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Passo a passo — Ativar VPN</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Abra o MB Chat normalmente.</li>
+                <li>Menu <strong>Ferramentas → Conectar fora da LAN (VPN)…</strong></li>
+                <li>No campo <strong>IP do peer</strong>, digite o IP do PC âncora (ex.: <code>192.168.0.10</code>). Pergunte à TI qual IP usar — precisa ser <strong>fixo</strong> (reservado por DHCP ou configurado manualmente), senão muda e quebra toda vez que a âncora renovar.</li>
+                <li>No campo <strong>Nota</strong>, coloque uma descrição (ex.: <em>"PC do Iuri — sempre ligado"</em>) só pra você lembrar depois.</li>
+                <li>Clique <strong>Adicionar</strong>. O IP aparece na lista <em>Peers cadastrados</em>. Pode cadastrar mais de um (redundância: se uma âncora cair, outra assume).</li>
+                <li>Marque o checkbox <strong>Ativar conexão VPN</strong>. O label à direita vira <span style="color: #16a34a; font-weight: 700;">ATIVADO</span>.</li>
+                <li>Feche a janela — o MB Chat já está anunciando unicast.</li>
+                <li>Em até 30 segundos você deve ver os colegas do escritório aparecendo na lista de contatos.</li>
+            </ol>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Passo a passo — Desativar (voltar pra LAN)</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Menu <strong>Ferramentas → Conectar fora da LAN (VPN)…</strong></li>
+                <li>Desmarque o checkbox <strong>Ativar conexão VPN</strong>. Label vira <span style="color: #991b1b; font-weight: 700;">DESATIVADO</span>.</li>
+                <li>Pronto. O app para de anunciar unicast imediatamente e volta ao comportamento normal de LAN (multicast/broadcast).</li>
+            </ol>
+            <div class="docs-note">
+                <strong>A lista de IPs cadastrados fica salva no banco local</strong> (<code>%APPDATA%\.mbchat\mbchat.db</code>). Não precisa re-cadastrar toda vez. Desativar só para o anúncio — os IPs permanecem pra você religar depois sem retrabalho.
+            </div>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Segurança e impacto</h4>
+            <ul style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li><strong>Nos 30 usuários da LAN interna:</strong> zero impacto. A lista de peers manuais é vazia por default, o loop de unicast announce dorme e não envia nada. O caminho multicast/broadcast normal não foi tocado.</li>
+                <li><strong>Default seguro:</strong> VPN vem <em>desligada</em> por padrão em qualquer instalação nova. Só quem explicitamente marcar o checkbox ativa o modo.</li>
+                <li><strong>Sem duplicação de mensagens:</strong> o protocolo usa <code>user_id</code> único (MAC + hostname + login Windows), então mesmo recebendo announce de peer por multicast e unicast simultaneamente, ele é deduplicado na lista.</li>
+                <li><strong>Timeout curto:</strong> se a VPN cair e você não derivar um announce por ≥45s, os peers te marcam offline automaticamente (<code>PING_TIMEOUT</code>). Ao reconectar, volta em ≤15s.</li>
+                <li><strong>Mensagens TCP via VPN:</strong> funcionam sem alteração porque VPN tuneia unicast TCP normal — o único problema do home-office era <em>descobrir</em> os peers, não trocar mensagens com eles.</li>
+            </ul>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Problemas comuns</h4>
+            <ul style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li><strong>Ninguém aparece depois de ativar:</strong> verifique se (1) o IP cadastrado está correto e o PC âncora está ligado; (2) o firewall do PC âncora permite UDP entrada na 50100 (a v1.4.59+ configura automaticamente via UAC); (3) a VPN realmente te coloca na subnet interna (teste <code>ping IP_ANCORA</code> no CMD).</li>
+                <li><strong>IP da âncora mudou:</strong> peça pra TI fixar o IP via reserva DHCP no roteador. Enquanto isso, atualize o IP cadastrado removendo o antigo e adicionando o novo.</li>
+                <li><strong>Voltei pro escritório mas esqueci de desativar:</strong> sem problema — na LAN o unicast announce só é extra, não conflita. Mas é boa prática desligar pra não gerar tráfego desnecessário.</li>
+            </ul>
         </div>
 
         <div class="docs-section fade-in" id="doc-multiuser">

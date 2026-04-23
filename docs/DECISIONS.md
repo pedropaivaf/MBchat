@@ -28,6 +28,53 @@ Se um PC nao descobre peers:
 - **PowerShell no auto-update**: usar `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env vars do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP%.
 - **_apply_and_restart()**: NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado.
 
+## VPN / Home-office — conexao externa para LAN do escritorio (v1.4.63+)
+
+**Problema:** multicast UDP (239.255.100.200) e broadcast (255.255.255.255) nao
+atravessam tuneis VPN L3. Um funcionario em home-office com VPN tem IP da rede
+interna mas nao enxerga os colegas pelo discovery padrao — so tcp unicast
+funciona naturalmente.
+
+**Solucao aditiva (nao quebra os 30 LAN-only):**
+
+1. Tabela `manual_peers (ip, note, created_at)` persistida em DB.
+2. Setting `vpn_enabled` (default `False`) no DB controla se os peers sao aplicados.
+3. `UDPDiscovery._manual_announce_loop` (thread 4, daemon) dorme DISCOVERY_INTERVAL
+   e envia announce unicast a cada IP em `_unicast_targets` se e somente se a
+   lista nao esta vazia. Lista vazia = zero overhead.
+4. `Messenger.set_vpn_enabled(True)` aplica os IPs salvos (chamada
+   `discovery.set_manual_peers(ips)`); `False` aplica lista vazia (para de
+   anunciar, mas mantem IPs no DB).
+5. **Peer exchange** via `MT_PEER_LIST`: quando o peer ancora recebe um
+   announce com flag `via_manual=True`, responde unicast com `{peers:[...]}`.
+   O cliente VPN adiciona esses IPs como `'auto'` targets (memoria only) e
+   passa a anunciar pra eles tambem. Resultado: 1 IP cadastrado = LAN inteira
+   visivel.
+
+**Defaults seguros:**
+- `vpn_enabled=False` por default (setting nao existe = retorna False)
+- Lista `manual_peers` vazia por default
+- Loop dorme e nao faz IO quando vazio
+- Caminho multicast/broadcast/subnet-broadcast intocado
+- Zero impacto nos 30 LAN users
+
+**Verificado com 9 cenarios end-to-end** (`audit_vpn.db` test):
+1. LAN normal sem config — comportamento original
+2. Cadastra peer com VPN off — persiste mas nao aplica
+3. Ativa VPN — aplica IPs salvos imediatamente
+4. Add novo peer com VPN on — novo IP aplicado imediatamente
+5. Desativa VPN — limpa targets ativos, IPs permanecem no DB
+6. Remove peer com VPN off — sem efeito colateral
+7. Religa — reaplica apenas peers restantes
+8. Fecha/reabre app — estado persiste (ON/OFF e lista)
+9. Lista vazia + VPN off — no crash
+
+**Por que peer exchange usa `'auto'` em memoria:** se persistisse, a lista
+cresceria sem controle (cada reinicio adicionaria todos os peers vistos).
+Memoria-only garante que so os peers ativos no ciclo atual ficam no loop —
+quando usuario desliga VPN e religa, so os `'manual'` persistidos sao
+reaplicados; os `'auto'` sao reconstruidos via peer exchange.
+
 ## Single-instance lock por usuario (v1.4.64+)
 
 **Problema:** ate v1.4.63, `SINGLE_INSTANCE_PORT = 50199` era fixo. Em maquinas

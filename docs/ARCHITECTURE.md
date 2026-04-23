@@ -245,4 +245,6 @@ conseguia abrir (o check detectava a instancia de A e saia silencioso).
 13. **Emojis na lista de contatos**: _render_contact_display() gera imagem PIL composta (avatar + nome + nota com emojis) como image do TreeView item. Fallback texto plano sem PIL.
 14. **Discovery robusto**: get_local_ip() com 3 fallbacks (rota LAN, 8.8.8.8, enumeração de interfaces). Multicast join com INADDR_ANY fallback. Subnet-directed broadcast.
 15. **UI moderna flat**: _add_hover(), Frame-in-Frame borders, navy header, pill buttons
+16. **VPN/home-office (v1.4.63+)**: `UDPDiscovery._unicast_targets` + `_manual_announce_loop` (thread 4 daemon) anunciam unicast a IPs de `manual_peers` (DB persisted) quando `vpn_enabled=True`. Peer exchange via `MT_PEER_LIST` propaga a LAN automaticamente a partir de 1 IP ancora. Default OFF + lista vazia = zero overhead, caminho LAN multicast/broadcast intocado.
+17. **Single-instance por usuario (v1.4.64+)**: porta do lock loopback derivada de hash do `getpass.getuser()` em faixa `[50200, 51200)`. Multi-user na mesma maquina nao conflita.
 16. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)

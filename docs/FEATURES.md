@@ -66,6 +66,14 @@
 - Auto-start, popups fecham com Escape
 - Taskbar LAN Messenger-style com AppUserModelID
 
+## VPN / Home-office (v1.4.63+)
+- **Ferramentas > Conectar fora da LAN (VPN)**: janela com lista de IPs manuais + toggle ON/OFF
+- Cadastra IP(s) de PC(s) âncora do escritório; após ativar, o app envia announce UDP **unicast** a cada 15s pra cada IP cadastrado
+- **Peer exchange automático** via `MT_PEER_LIST`: o PC âncora detecta announce vindo de IP fora do `/24` e responde com a lista de peers conhecidos. O cliente VPN recebe e passa a anunciar pra LAN inteira — 1 IP cadastrado = toda a LAN visível
+- Toggle persistido em DB setting `vpn_enabled`; IPs em tabela `manual_peers (ip, note, created_at)`
+- **Default OFF e lista vazia** = loop dorme sem overhead. Zero impacto nos LAN-only
+- `'auto'` targets (de peer exchange) ficam em memória só; `'manual'` persistem. Ao religar VPN, `'auto'` é reconstruído automaticamente
+
 ## Tipos de mensagem de rede
 - `MT_MESSAGE`, `MT_TYPING`, `MT_STATUS`, `MT_ACK` - individuais
 - `MT_FILE_REQ`, `MT_FILE_ACC`, `MT_FILE_DEC`, `MT_FILE_CANCEL` - arquivos
