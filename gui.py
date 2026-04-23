@@ -9920,15 +9920,46 @@ class LanMessengerApp:
 
     def _show_note_emoji_picker(self):
         popup = tk.Toplevel(self.root)
+        popup.withdraw()  # esconde ate posicionar (sem flash no canto)
         popup.title('Emoticons')
         popup.resizable(False, False)
         popup.configure(bg='#f0f0f0')
         popup.transient(self.root)
 
-        # Posicionar acima do campo de nota
-        x = self.note_entry.winfo_rootx()
-        y = self.note_entry.winfo_rooty() - 240
-        popup.geometry(f'280x230+{x}+{y}')
+        # Posicionamento inteligente: prefere LADO da janela principal, com
+        # fallback pra dentro quando em fullscreen. Nunca deixa cortado.
+        popup_w, popup_h = 280, 230
+        try:
+            self.root.update_idletasks()
+            root_x = self.root.winfo_rootx()
+            root_y = self.root.winfo_rooty()
+            root_w = self.root.winfo_width()
+            root_h = self.root.winfo_height()
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+            note_y = self.note_entry.winfo_rooty()
+
+            # 1) tenta DIREITA da janela principal
+            if root_x + root_w + popup_w + 8 <= screen_w:
+                x = root_x + root_w + 8
+                y = note_y - 20
+            # 2) tenta ESQUERDA da janela principal
+            elif root_x - popup_w - 8 >= 0:
+                x = root_x - popup_w - 8
+                y = note_y - 20
+            # 3) fullscreen / tela cheia: posiciona DENTRO da janela,
+            #    logo abaixo do campo de nota (nao cobre contatos)
+            else:
+                x = root_x + root_w - popup_w - 12
+                y = note_y + self.note_entry.winfo_height() + 8
+
+            # Clamp pra nao sair do monitor
+            x = max(0, min(x, screen_w - popup_w))
+            y = max(40, min(y, screen_h - popup_h - 40))
+        except Exception:
+            x = self.note_entry.winfo_rootx()
+            y = self.note_entry.winfo_rooty() - popup_h - 10
+        popup.geometry(f'{popup_w}x{popup_h}+{x}+{y}')
 
         popup._emoji_images = {}
 
@@ -10404,8 +10435,16 @@ class LanMessengerApp:
             except Exception:
                 popup.destroy()
         popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
-        popup.focus_set()
-        ep.focus_set()
+
+        # Mostra ja posicionado (sem flash no canto superior esquerdo)
+        try:
+            popup.update_idletasks()
+            popup.deiconify()
+            popup.focus_set()
+            ep.focus_set()
+        except Exception:
+            popup.focus_set()
+            ep.focus_set()
 
     # Callback do combobox de status: traduz label para codigo e propaga via UDP.
     #
