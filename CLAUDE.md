@@ -25,7 +25,7 @@ Regra: gui.py -> messenger.py -> network.py / database.py (nunca pular camadas)
 - UDP 50100: Discovery (multicast 239.255.100.200 + broadcast + subnet broadcast)
 - TCP 50101: Mensagens (inclui group_invite e group_message)
 - TCP 50102: File transfer
-- TCP 50199: Single-instance lock (loopback)
+- TCP [50200-51199]: Single-instance lock **por usuario Windows** (loopback). Porta = 50200 + MD5(getpass.getuser().lower()) mod 1000. v1.4.64+ - evita colisao entre logins diferentes na mesma maquina.
 
 ## Como buildar e rodar
 
@@ -127,7 +127,7 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    via `netsh show rule name=X`). Se ausentes, main thread mostra messagebox pedindo permissao;
    se user aceita, `network.request_firewall_rules_elevated()` usa `ctypes.windll.shell32.ShellExecuteW`
    com verbo `runas` para disparar UAC e rodar `cmd /c netsh delete... & netsh add rule...` elevado.
-   Cria regras **por porta** (50100,50110,50120 UDP + 50101,50102,50199 TCP), sem dependencia de path.
+   Cria regras **por porta** (50100,50110,50120 UDP + 50101,50102 TCP). Single-instance roda em loopback per-user, nao precisa regra firewall.
    Deleta primeiro qualquer regra existente para o exe atual (limpa Blocks residuais do Defender).
    Cooldown de 24h em `firewall_prompt_dismissed_at` do DB para nao importunar quem recusa.
    Apos sucesso, `_hide_health_banner()` e messagebox de confirmacao.

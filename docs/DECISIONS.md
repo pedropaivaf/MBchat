@@ -15,7 +15,7 @@ LAN Messenger tem bug onde peers somem em redes com VPN, Hyper-V, switches geren
 Se um PC nao descobre peers:
 1. **Firewall (v1.4.59+ auto-fix via UAC)**: o app detecta regras ausentes na 1a execucao e pede permissao. Se recusar, liberar manualmente em:
    `Painel de Controle > Sistema e Seguranca > Windows Defender Firewall > Aplicativos permitidos` — marcar **MBChat** nas colunas **Particular** e **Publico**. Se nao aparecer, `Permitir outro aplicativo... > Procurar... > MBChat.exe`.
-   Via CLI (admin): `netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any` + mesmo para TCP 50101,50102,50199. Ou rodar `tools/fix_firewall.bat` como admin.
+   Via CLI (admin): `netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any` + mesmo para TCP 50101,50102 (single-instance roda em porta loopback per-user — nao precisa de regra firewall). Ou rodar `tools/fix_firewall.bat` como admin.
 2. **Antivirus**: Kaspersky, Norton podem bloquear. Adicionar excecao.
 3. **Multiplas NICs**: VPN, Hyper-V, Docker criam interfaces virtuais. get_local_ip() tenta detectar a correta, mas pode pegar a errada. Desativar NICs virtuais resolve.
 4. **Subnet diferente**: PC deve estar na mesma subnet /24.
@@ -27,6 +27,29 @@ Se um PC nao descobre peers:
 - **--noupx**: evita compressao que corrompe DLLs do VC runtime.
 - **PowerShell no auto-update**: usar `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env vars do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP%.
 - **_apply_and_restart()**: NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado.
+
+## Single-instance lock por usuario (v1.4.64+)
+
+**Problema:** ate v1.4.63, `SINGLE_INSTANCE_PORT = 50199` era fixo. Em maquinas
+multi-usuario (PC compartilhado onde logins trocam), se o usuario A deixasse
+MBChat rodando em background e o usuario B entrasse, B nao conseguia abrir
+o app: `_check_single_instance()` detectava o lock TCP de A e saia silencioso
+via `os._exit(0)`. Pedro viveu esse bug em sua propria maquina apos outro
+login usar o app.
+
+**Fix:** porta deterministica por login Windows, dentro de `[50200, 51200)`:
+
+```python
+user = getpass.getuser().lower()
+h = int(hashlib.md5(user.encode()).hexdigest()[:8], 16)
+SINGLE_INSTANCE_PORT = 50200 + (h % 1000)
+```
+
+Cada usuario tem sua propria porta — `pedro.paiva` -> 50854,
+`guilherme.barra` -> 51054, etc. Sessoes diferentes nao colidem.
+
+**Nao reverter** para porta fixa. Nao diminuir o range de 1000 portas
+(colisoes explodem pelo paradoxo do aniversario).
 
 ## Decisoes de arquitetura
 

@@ -55,7 +55,7 @@ Mecanismos importantes:
 - **Temas**: 3 temas (Classico, Night Mode, MB Contabilidade) com apply_theme() recursivo
 - **Status dots**: PhotoImage pixel-a-pixel para bolinhas de status coloridas
 - **Custom scrollbar**: Canvas-based com hover/drag e auto-hide
-- **Instancia unica**: TCP socket lock na porta 50199 (loopback)
+- **Instancia unica**: TCP socket lock por usuario (loopback, porta derivada de MD5(getpass.getuser) mod 1000 + 50200). Cada login Windows tem sua propria porta — evita que MBChat de outro usuario na mesma maquina bloqueie a abertura.
 - **Notificacoes**: winotify com protocolo mbchat:// para click-to-open
 - **System tray**: pystray com minimize-on-close
 - **Thread safety**: _safe() wrapper com root.after(0, callback)
@@ -208,17 +208,25 @@ PyInstaller --onefile --windowed com:
 2. winotify cria toast Windows com launch='mbchat://open/{peer_id}'
 3. Usuario clica -> Windows ativa protocolo mbchat://
 4. Novo processo: main() detecta arg mbchat://, extrai peer_id
-5. Envia 'OPEN:{peer_id}' ao socket 50199 da instancia ativa
+5. Envia 'OPEN:{peer_id}' ao socket de single-instance da sessao atual (porta por usuario)
 6. Instancia ativa: _restore_and_open(peer_id) -> abre chat
 ```
 
-### Instancia Unica
+### Instancia Unica (por usuario, v1.4.64+)
 ```
-1. main() tenta conectar em 127.0.0.1:50199
-2. Se conecta -> outra instancia existe -> envia SHOW -> exit
-3. Se falha -> somos a unica instancia -> bind 50199 -> inicia app
-4. Listener aceita SHOW/OPEN:{peer_id} -> restaura janela
+1. SINGLE_INSTANCE_PORT = 50200 + (MD5(getpass.getuser().lower())[:8] as int) % 1000
+   - Resultado: faixa [50200, 51200). Cada login tem sua porta deterministica.
+   - Em maquinas multi-usuario (PC compartilhado), cada sessao tem porta
+     distinta, entao o MBChat de um usuario NAO bloqueia o de outro.
+2. main() tenta conectar em 127.0.0.1:{SINGLE_INSTANCE_PORT}
+3. Se conecta -> outra instancia da MESMA sessao existe -> envia SHOW -> exit
+4. Se falha -> somos a unica instancia da sessao -> bind -> inicia app
+5. Listener aceita SHOW/OPEN:{peer_id} -> restaura janela
 ```
+
+Antes da v1.4.64 a porta era fixa (50199), o que causava bug: se usuario A
+deixasse MBChat rodando em background, usuario B na mesma maquina nao
+conseguia abrir (o check detectava a instancia de A e saia silencioso).
 
 ## Decisoes de Design
 

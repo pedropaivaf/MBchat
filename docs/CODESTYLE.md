@@ -211,12 +211,24 @@ else:
     # fallback para pystray.notify() ou nada
 ```
 
-## Instancia Unica
+## Instancia Unica (porta por usuario)
 
-Mecanismo via TCP socket em 127.0.0.1:50199:
-- _check_single_instance() tenta conectar; se consegue, ja existe outra
+Mecanismo via TCP socket loopback com porta deterministica **por login Windows**:
+
+```python
+# SINGLE_INSTANCE_PORT em [50200, 51200)
+user = getpass.getuser().lower()
+h = int(hashlib.md5(user.encode()).hexdigest()[:8], 16)
+SINGLE_INSTANCE_PORT = 50200 + (h % 1000)
+```
+
+- Cada login Windows obtem porta distinta → dois usuarios da mesma maquina
+  podem ter MBChat aberto simultaneamente sem travar um ao outro
+- _check_single_instance() tenta conectar na porta da sessao atual;
+  se consegue, ja existe outra instancia DESSA sessao
 - _start_instance_listener() aceita SHOW e OPEN:{peer_id}
 - Protocolo URL mbchat:// registrado em HKCU\Software\Classes\mbchat
+- **Nao usar porta fixa** (<=v1.4.63 usava 50199 e isso travava multi-user)
 
 ## Commits
 

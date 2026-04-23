@@ -61,7 +61,7 @@
 - System tray com pystray
 
 ## Sistema
-- Instancia unica via TCP socket 50199
+- Instancia unica via TCP socket loopback **por usuario** (v1.4.64+): porta deterministica por login Windows em [50200, 51200). Multi-user na mesma maquina nao colide.
 - Auto-update via GitHub Releases (barra amarela + download + PowerShell restart)
 - Auto-start, popups fecham com Escape
 - Taskbar LAN Messenger-style com AppUserModelID

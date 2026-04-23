@@ -715,6 +715,7 @@
             <a href="#doc-banco">Banco de Dados</a>
             <a href="#doc-portas">Portas de Rede</a>
             <a href="#doc-discovery">Descoberta de Peers</a>
+            <a href="#doc-multiuser">Multi-usuário</a>
             <a href="#doc-firewall">Firewall</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
@@ -832,9 +833,9 @@
                         <td>Transferência de arquivos</td>
                     </tr>
                     <tr>
-                        <td><code>50199</code></td>
+                        <td><code>50200–51199</code></td>
                         <td>TCP</td>
-                        <td>Lock de instância única (loopback)</td>
+                        <td>Lock de instância única <strong>por usuário</strong> (loopback). Cada login Windows obtém uma porta derivada de <code>MD5(usuário) mod 1000 + 50200</code>, permitindo que múltiplos usuários na mesma máquina abram o app simultaneamente sem conflito.</td>
                     </tr>
                 </tbody>
             </table>
@@ -880,6 +881,19 @@
             </div>
         </div>
 
+        <div class="docs-section fade-in" id="doc-multiuser">
+            <h3>Multi-usuário — a mesma máquina com logins Windows diferentes</h3>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat <strong>suporta múltiplos logins Windows</strong> na mesma máquina simultaneamente. Cada usuário abre sua própria instância sem um bloquear o outro. Desde a <strong>v1.4.64</strong>, o lock de instância única é calculado por usuário: <code>porta = 50200 + MD5(getpass.getuser().toLower()) mod 1000</code>, gerando uma porta determinística distinta por login dentro da faixa <code>[50200, 51199]</code>.
+            </p>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                <strong>Antes da v1.4.64:</strong> o lock usava porta fixa <code>50199</code>. Quando um usuário deixava o MB Chat rodando em background (ex.: minimizado na bandeja) e outro login entrava na mesma máquina, o novo usuário não conseguia abrir o app — o check detectava o socket do outro e saía silenciosamente via <code>os._exit(0)</code>, sem erro visível.
+            </p>
+            <div class="docs-note">
+                <strong>Cenário típico:</strong> PC de trabalho compartilhado onde dois funcionários fazem login em momentos diferentes. A partir da v1.4.64 cada um tem sua própria porta — sem colisão, sem necessidade de fechar manualmente o app do outro usuário antes de abrir o seu. Se você está em uma versão anterior e o app não abre em um login, verifique se outro usuário da máquina ainda tem o MB Chat rodando na bandeja; feche por lá ou atualize para a v1.4.64+.
+            </div>
+        </div>
+
         <div class="docs-section fade-in" id="doc-firewall">
             <h3>Firewall — PC aparece online pra outros mas não vê ninguém</h3>
             <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
@@ -893,7 +907,7 @@
                 <li>Clicar <strong>OK</strong>, fechar o MB Chat e abrir de novo — os peers aparecem em até 15 segundos.</li>
             </ol>
             <div class="docs-note">
-                <strong>Alternativa rápida via admin:</strong> rodar o <code>tools/fix_firewall.bat</code> (no repositório) como administrador — ele cria as regras por porta (<code>UDP 50100/50110/50120</code> + <code>TCP 50101/50102/50199</code>), sobrevive a reinstalações e reinicia o app.
+                <strong>Alternativa rápida via admin:</strong> rodar o <code>tools/fix_firewall.bat</code> (no repositório) como administrador — ele cria as regras por porta (<code>UDP 50100/50110/50120</code> + <code>TCP 50101/50102</code>), sobrevive a reinstalações e reinicia o app.
             </div>
         </div>
 
