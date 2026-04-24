@@ -6422,6 +6422,7 @@ class GroupChatWindow(tk.Toplevel):
         if start_hidden:
             self.withdraw()
         self.app = app                  # Referência ao LanMessengerApp (janela principal)
+        self.messenger = app.messenger  # atalho usado pelo picker e _open_forward_dialog
         self.group_id = group_id        # ID único do grupo (UUID)
         self.group_name = group_name    # Nome do grupo exibido no título
         self.group_type = group_type    # 'temp' (temporário) ou 'fixed' (fixo/persistente)
@@ -7424,70 +7425,14 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.tag_bind(link_tag, '<Leave>',
                                 lambda e: self.chat_text.config(cursor=''))
 
-    # Abre emoji picker (reutiliza logica do ChatWindow).
-    def _show_emoji_picker(self):
-        popup = tk.Toplevel(self)
-        popup.title('Emoticons')
-        popup.resizable(False, False)
-        popup.configure(bg='#f0f0f0')
-        popup.transient(self)
-
-        x = self.winfo_rootx() + 10
-        y = self.winfo_rooty() + self.winfo_height() - 280
-        popup.geometry(f'280x230+{x}+{y}')
-        popup._emoji_images = {}
-
-        emojis_list = [
-            '\U0001f600', '\U0001f603', '\U0001f604', '\U0001f601',
-            '\U0001f606', '\U0001f605', '\U0001f602', '\U0001f923',
-            '\U0001f60a', '\U0001f607', '\U0001f609', '\U0001f60d',
-            '\U0001f929', '\U0001f60e', '\U0001f618', '\U0001f617',
-            '\U0001f61a', '\U0001f60b', '\U0001f61b', '\U0001f61c',
-            '\U0001f92a', '\U0001f61d', '\U0001f911', '\U0001f917',
-            '\U0001f914', '\U0001f910', '\U0001f928', '\U0001f610',
-            '\U0001f611', '\U0001f636', '\U0001f60f', '\U0001f612',
-            '\U0001f620', '\U0001f621', '\U0001f622', '\U0001f62d',
-            '\U0001f44d', '\U0001f44e', '\U0001f44f', '\U0001f64f',
-            '\u2601', '\u26c5', '\U0001f37a', '\U0001f37b',
-        ]
-
-        grid_frame = tk.Frame(popup, bg='#ffffff')
-        grid_frame.pack(fill='both', expand=True, padx=1, pady=1)
-
-        col, row = 0, 0
-        for em in emojis_list:
-            img = self._render_emoji_image(em, 22)
-            def ins(emoji=em):
-                self._entry_insert_emoji(emoji)
-                popup.destroy()
-            if img:
-                popup._emoji_images[em] = img
-                b = tk.Button(grid_frame, image=img, relief='flat', bd=0,
-                              cursor='hand2', command=ins, bg='#ffffff',
-                              activebackground='#f0f5ff', width=30, height=30)
-            else:
-                b = tk.Button(grid_frame, text=em, font=('Segoe UI', 14),
-                              relief='flat', bd=0, cursor='hand2',
-                              command=ins, bg='#ffffff',
-                              activebackground='#f0f5ff')
-            b.grid(row=row, column=col, padx=1, pady=1)
-            col += 1
-            if col >= 8:
-                col = 0
-                row += 1
-
-        popup.bind('<Escape>', lambda e: popup.destroy())
-        def _check_focus():
-            if not popup.winfo_exists():
-                return
-            try:
-                focused = popup.focus_get()
-                if focused is None or not str(focused).startswith(str(popup)):
-                    popup.destroy()
-            except Exception:
-                popup.destroy()
-        popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
-        popup.focus_set()
+    # Reusa o picker completo da ChatWindow (categorias, busca, recentes, todos os
+    # emojis) via alias de classe. Python bind-time duck-typing funciona porque ambas
+    # as classes expoem self.entry, self._entry_insert_emoji, self._render_emoji_image
+    # e self.messenger.db. Evita duplicar ~600 linhas de codigo do picker.
+    _show_emoji_picker = ChatWindow._show_emoji_picker_impl
+    _get_emoji_recents = ChatWindow._get_emoji_recents
+    _record_emoji_recent = ChatWindow._record_emoji_recent
+    _get_emoji_most_used = ChatWindow._get_emoji_most_used
 
     # ===== Font =====
     def _change_font(self):
@@ -8727,6 +8672,7 @@ class LanMessengerApp:
         self._tray_icon = None              # Ícone do system tray (pystray)
         self._last_notif_peer = None        # Último peer que gerou notificação (para clique no tray)
         self._pending_flash_target = None   # Alvo pendente para abrir ao clicar no app piscando (peer_id, 'group:gid', '__reminders__')
+        self._flashing_widgets = {}         # id(widget) -> widget: janelas atualmente pedindo atencao via FlashWindowEx
 
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -12261,7 +12207,6 @@ class LanMessengerApp:
         gw.system_message(f'{from_name} criou este grupo.')
         self._pending_flash_target = f'group:{group_id}'
         self._flash_window(gw)
-        self._flash_window()
         self._add_group_to_tree(group_id, group_name, group_type)
 
     def _on_group_message(self, group_id, from_uid, display_name,
@@ -12285,6 +12230,13 @@ class LanMessengerApp:
                 if not gw.focus_displayof():
                     self._show_group_toast(group_id, display_name, content)
                     self._pending_flash_target = f'group:{group_id}'
+                    # Se o grupo fixo foi fechado (withdrawn), nao tem botao na
+                    # taskbar — surface minimizada pra FlashWindowEx funcionar.
+                    try:
+                        if str(gw.state()) == 'withdrawn':
+                            self._show_in_taskbar_minimized(gw)
+                    except Exception:
+                        pass
                     self._flash_window(gw)
             except Exception:
                 pass
@@ -14699,6 +14651,12 @@ class LanMessengerApp:
                     if not gw.focus_displayof():
                         self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                         self._pending_flash_target = f'group:{group_id}'
+                        # Grupo fixo fechado (withdrawn) nao tem botao na taskbar — surface antes
+                        try:
+                            if str(gw.state()) == 'withdrawn':
+                                self._show_in_taskbar_minimized(gw)
+                        except Exception:
+                            pass
                         self._flash_window(gw)
                 except Exception:
                     pass
@@ -14757,7 +14715,12 @@ class LanMessengerApp:
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, poll_data.get('creator', ''), '\U0001f4ca Enquete')
                 self._pending_flash_target = f'group:{group_id}'
-                self._flash_window()
+                # Surface a janela do grupo minimizada na taskbar e pisca especificamente
+                # ela (nao a root). _open_group com surface_only=True puxa o poll pendente
+                # via _pending_group_msgs no proprio construtor.
+                def _create():
+                    return self._open_group(group_id, surface_only=True)
+                self._surface_chat_from_tray(_create)
 
     # Convite de lembrete compartilhado recebido. Mostra notificacao + flash.
     def _on_reminder_invite(self, info):
@@ -15122,6 +15085,9 @@ class LanMessengerApp:
                 dwTimeout=0,   # 0 = usa intervalo padrao do cursor piscante
             )
             ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))  # chama API Win32
+            # Registra janela no tracking de flashes ativos (root fica de fora — tem semantica propria)
+            if widget is not None and widget is not self.root:
+                self._flashing_widgets[id(widget)] = widget
         except Exception:
             pass
 
@@ -15151,6 +15117,9 @@ class LanMessengerApp:
                 dwTimeout=0,
             )
             ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))  # para o piscamento
+            # Remove APENAS a janela especifica do tracking — nao afeta outras
+            if widget is not None and widget is not self.root:
+                self._flashing_widgets.pop(id(widget), None)
         except Exception:
             pass
 
