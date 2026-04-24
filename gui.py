@@ -3586,8 +3586,8 @@ class ChatWindow(tk.Toplevel):
     # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
     # Após exibir, marca todas como lidas no banco de dados.
     def _load_history(self):
-        # Busca histórico recente (últimas 40 mensagens) para garantir que a janela nunca abra vazia
-        history = self.messenger.db.get_chat_history(self.messenger.user_id, self.peer_id, limit=40)
+        # Carrega TODO o histórico da conversa (sem limite) para exibir tudo ao abrir a janela
+        history = self.messenger.db.get_chat_history(self.messenger.user_id, self.peer_id, limit=None)
         for msg in history:
             # Determina se a mensagem foi enviada por mim ou pelo contato
             is_mine = msg['from_user'] != self.peer_id
@@ -11083,18 +11083,22 @@ class LanMessengerApp:
     def _show_account(self):
         AccountWindow(self)  # instancia e exibe a janela de conta
 
-    # Abre janela de Historico de Mensagens com busca global em todos os chats.
-    # Digita e busca em tempo real em TODAS as conversas, mostrando contato + data + conteúdo.
+    # Janela Historico de Mensagens estilo LAN Messenger: lista de contatos a esquerda,
+    # conversa completa a direita ao clicar no contato. Busca por palavra e filtros de data
+    # refiltrm a lista de contatos e destacam matches no painel direito.
     def _show_all_history(self):
         t = THEMES.get(self._current_theme, THEMES.get('MB Contabilidade', {}))
         header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
         header_fg = t.get('chat_header_fg', '#ffffff')
         win_bg = t.get('bg_window', '#f5f7fa')
+        panel_bg = t.get('bg_white', '#ffffff')
+        fg_text = t.get('fg_black', FG_BLACK)
 
         win = tk.Toplevel(self.root)
         win.title('Histórico de Mensagens')
         win.configure(bg=win_bg)
-        _center_window(win, 700, 520)
+        _center_window(win, 900, 600)
+        win.minsize(720, 500)
         win.bind('<Escape>', lambda e: win.destroy())
         _apply_rounded_corners(win)
         ico = _get_icon_path()
@@ -11114,15 +11118,15 @@ class LanMessengerApp:
                  font=('Segoe UI', 11, 'bold'), bg=header_bg, fg=header_fg,
                  anchor='w').pack(fill='x', padx=8, pady=8)
 
-        # Toolbar: busca
+        # Toolbar de busca (palavra + contador)
         toolbar = tk.Frame(win, bg=win_bg)
-        toolbar.pack(fill='x', padx=8, pady=(8, 4))
+        toolbar.pack(fill='x', padx=8, pady=(8, 2))
 
         tk.Label(toolbar, text='\U0001f50d', font=('Segoe UI', 10),
                  bg=win_bg).pack(side='left')
         search_var = tk.StringVar()
         search_entry = tk.Entry(toolbar, textvariable=search_var,
-                                font=('Segoe UI', 10), width=30)
+                                font=('Segoe UI', 10))
         search_entry.pack(side='left', padx=(4, 12), fill='x', expand=True)
         search_entry.focus_set()
 
@@ -11130,34 +11134,30 @@ class LanMessengerApp:
                              bg=win_bg, fg='#666666')
         count_lbl.pack(side='right', padx=(8, 0))
 
-        # Filtros: contato + datas
-        filter_frame = tk.Frame(win, bg=win_bg)
-        filter_frame.pack(fill='x', padx=8, pady=(0, 4))
-
-        tk.Label(filter_frame, text='Contato:', font=('Segoe UI', 9),
-                 bg=win_bg).pack(side='left')
-        contact_var = tk.StringVar(value='Todos')
-        contact_combo = ttk.Combobox(filter_frame, textvariable=contact_var,
-                                      font=('Segoe UI', 9), width=18,
-                                      state='readonly')
-        contact_combo.pack(side='left', padx=(4, 12))
+        # Toolbar de datas (De/Até) com validacao
+        date_bar = tk.Frame(win, bg=win_bg)
+        date_bar.pack(fill='x', padx=8, pady=(0, 6))
 
         ph = 'dd/mm/aaaa'
-        tk.Label(filter_frame, text='De:', font=('Segoe UI', 9),
+        tk.Label(date_bar, text='De:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
         date_from_var = tk.StringVar(value=ph)
-        date_from_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12,
+        date_from_entry = tk.Entry(date_bar, font=('Segoe UI', 9), width=12,
                                     textvariable=date_from_var)
         date_from_entry.pack(side='left', padx=(4, 12))
         date_from_entry.config(fg='#999999')
 
-        tk.Label(filter_frame, text='Até:', font=('Segoe UI', 9),
+        tk.Label(date_bar, text='Até:', font=('Segoe UI', 9),
                  bg=win_bg).pack(side='left')
         date_to_var = tk.StringVar(value=ph)
-        date_to_entry = tk.Entry(filter_frame, font=('Segoe UI', 9), width=12,
+        date_to_entry = tk.Entry(date_bar, font=('Segoe UI', 9), width=12,
                                   textvariable=date_to_var)
-        date_to_entry.pack(side='left', padx=(4, 0))
+        date_to_entry.pack(side='left', padx=(4, 8))
         date_to_entry.config(fg='#999999')
+
+        date_err_lbl = tk.Label(date_bar, text='', font=('Segoe UI', 8),
+                                 bg=win_bg, fg='#c62828')
+        date_err_lbl.pack(side='left', padx=(4, 0))
 
         def _on_focus_in(entry):
             if entry.get() == ph:
@@ -11173,37 +11173,63 @@ class LanMessengerApp:
         date_to_entry.bind('<FocusIn>', lambda e: _on_focus_in(date_to_entry))
         date_to_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_to_entry))
 
-        # Auto-formata digitos para dd/mm/aaaa durante a digitacao
         _bind_date_mask(date_from_entry, date_from_var, placeholder=ph)
         _bind_date_mask(date_to_entry, date_to_var, placeholder=ph)
 
         # Separador
         tk.Frame(win, bg='#cccccc', height=1).pack(fill='x', padx=8)
 
-        # Area de resultados
-        txt_frame = tk.Frame(win, bg=win_bg)
-        txt_frame.pack(fill='both', expand=True, padx=8, pady=(4, 8))
+        # Main area: PanedWindow horizontal (contatos | conversa)
+        main = tk.PanedWindow(win, orient='horizontal', bg=win_bg,
+                              sashwidth=4, sashrelief='flat', bd=0)
+        main.pack(fill='both', expand=True, padx=8, pady=(6, 8))
 
-        msg_text = tk.Text(txt_frame, font=FONT_SMALL, wrap='word', bg='#ffffff',
-                           fg=FG_BLACK, state='disabled', relief='flat',
-                           bd=0, padx=8, pady=4)
-        msg_scroll = ttk.Scrollbar(txt_frame, command=msg_text.yview,
+        # Painel esquerdo: lista de contatos
+        left_frame = tk.Frame(main, bg=panel_bg)
+        tk.Label(left_frame, text='Contatos', font=('Segoe UI', 9, 'bold'),
+                 bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(8, 4))
+
+        tree_wrap = tk.Frame(left_frame, bg=panel_bg)
+        tree_wrap.pack(fill='both', expand=True, padx=4, pady=(0, 6))
+        contacts_tree = ttk.Treeview(tree_wrap, columns=('nome',), show='',
+                                      selectmode='browse')
+        contacts_tree.column('nome', anchor='w', stretch=True)
+        tree_scroll = ttk.Scrollbar(tree_wrap, command=contacts_tree.yview,
+                                     style='Clean.Vertical.TScrollbar')
+        contacts_tree.configure(yscrollcommand=tree_scroll.set)
+        tree_scroll.pack(side='right', fill='y')
+        contacts_tree.pack(side='left', fill='both', expand=True)
+
+        main.add(left_frame, minsize=200, width=320)
+
+        # Painel direito: conversa do contato selecionado
+        right_frame = tk.Frame(main, bg=panel_bg)
+        right_hdr = tk.Label(right_frame, text='Selecione um contato à esquerda',
+                              font=('Segoe UI', 10, 'bold'),
+                              bg=panel_bg, fg=fg_text, anchor='w')
+        right_hdr.pack(fill='x', padx=10, pady=(8, 4))
+
+        right_txt_wrap = tk.Frame(right_frame, bg=panel_bg)
+        right_txt_wrap.pack(fill='both', expand=True, padx=4, pady=(0, 6))
+        msg_text = tk.Text(right_txt_wrap, font=FONT_SMALL, wrap='word', bg=panel_bg,
+                           fg=fg_text, state='disabled', relief='flat',
+                           bd=0, padx=10, pady=4)
+        msg_scroll = ttk.Scrollbar(right_txt_wrap, command=msg_text.yview,
                                     style='Clean.Vertical.TScrollbar')
         msg_text.configure(yscrollcommand=msg_scroll.set)
         msg_scroll.pack(side='right', fill='y')
-        msg_text.pack(fill='both', expand=True)
+        msg_text.pack(side='left', fill='both', expand=True)
 
         msg_text.tag_configure('ts', foreground='#888888')
         msg_text.tag_configure('me', foreground='#0d47a1', font=('Segoe UI', 9, 'bold'))
         msg_text.tag_configure('peer_tag', foreground='#2e7d32', font=('Segoe UI', 9, 'bold'))
-        msg_text.tag_configure('contact_header', foreground='#0f2a5c',
-                               font=('Segoe UI', 10, 'bold'))
-        msg_text.tag_configure('separator', foreground='#cccccc')
         msg_text.tag_configure('highlight', background='#fff176', foreground='#000000')
+        msg_text.tag_configure('placeholder', foreground='#999999', justify='center')
+
+        main.add(right_frame, minsize=320)
 
         # Cache de nomes: resolve peer_id -> display_name
         _name_cache = {}
-        _name_to_peer = {}
         def _resolve_name(peer_id):
             if peer_id in _name_cache:
                 return _name_cache[peer_id]
@@ -11213,16 +11239,10 @@ class LanMessengerApp:
                 row = db.get_contact(peer_id)
                 name = row['display_name'] if row else peer_id[:20]
             _name_cache[peer_id] = name
-            _name_to_peer[name] = peer_id
             return name
 
-        # Popula combobox de contatos
-        contacts_data = db.get_history_contacts()
-        _contact_names_list = ['Todos']
-        for c in contacts_data:
-            name = _resolve_name(c['peer'])
-            _contact_names_list.append(name)
-        contact_combo['values'] = _contact_names_list
+        # Lista de contatos (snapshot na abertura, ordenada por last_ts DESC)
+        all_contacts = db.get_history_contacts()
 
         def _parse_date(s):
             s = s.strip()
@@ -11236,7 +11256,151 @@ class LanMessengerApp:
                 pass
             return None
 
+        def _is_date_empty(s):
+            s = s.strip()
+            return not s or s == ph
+
+        _bad_bg = '#fee2e2'
+        _good_bg = '#ffffff'
+
+        # Valida entries De/Ate. Retorna (d_from, d_to, ok). Marca vermelho se invalido.
+        def _validate_dates():
+            date_from_entry.config(bg=_good_bg)
+            date_to_entry.config(bg=_good_bg)
+            date_err_lbl.config(text='')
+            s_from = date_from_entry.get()
+            s_to = date_to_entry.get()
+            empty_from = _is_date_empty(s_from)
+            empty_to = _is_date_empty(s_to)
+            d_from = None if empty_from else _parse_date(s_from)
+            d_to = None if empty_to else _parse_date(s_to)
+            if not empty_from and d_from is None:
+                date_from_entry.config(bg=_bad_bg)
+                date_err_lbl.config(text='data inválida')
+                return None, None, False
+            if not empty_to and d_to is None:
+                date_to_entry.config(bg=_bad_bg)
+                date_err_lbl.config(text='data inválida')
+                return None, None, False
+            if d_from and d_to and d_from > d_to:
+                date_from_entry.config(bg=_bad_bg)
+                date_to_entry.config(bg=_bad_bg)
+                date_err_lbl.config(text='período inválido (De > Até)')
+                return None, None, False
+            return d_from, d_to, True
+
+        _current_peer = [None]
         _refresh_timer = [None]
+
+        def _clear_right(msg='Selecione um contato à esquerda'):
+            right_hdr.config(text=msg)
+            msg_text.configure(state='normal')
+            msg_text.delete('1.0', 'end')
+            msg_text.configure(state='disabled')
+
+        def _render_messages(peer_id, msgs, query=''):
+            peer_name = _resolve_name(peer_id)
+            if msgs:
+                right_hdr.config(text=f'Conversa com {peer_name}  ({len(msgs)} mensagens)')
+            else:
+                right_hdr.config(text=f'Conversa com {peer_name}')
+            msg_text.configure(state='normal')
+            msg_text.delete('1.0', 'end')
+            if not msgs:
+                msg_text.insert('end', '\n\n  Nenhuma mensagem no filtro selecionado\n',
+                                'placeholder')
+                msg_text.configure(state='disabled')
+                return
+            my_name = self.messenger.display_name
+            query_lower = query.lower() if query else ''
+            for m in msgs:
+                is_mine = bool(m.get('is_sent'))
+                who = my_name if is_mine else peer_name
+                ts = datetime.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
+                content = m.get('content', '') or ''
+                start_idx = msg_text.index('end-1c')
+                msg_text.insert('end', f'[{ts}] ', 'ts')
+                msg_text.insert('end', f'{who}: ', 'me' if is_mine else 'peer_tag')
+                if m.get('msg_type') == 'image':
+                    gtag = f'himg_{id(m)}'
+                    msg_text.insert('end', '[Imagem]\n', gtag)
+                    msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
+                    msg_text.tag_bind(gtag, '<Button-1>',
+                                      lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
+                    msg_text.tag_bind(gtag, '<Enter>',
+                                      lambda e: msg_text.config(cursor='hand2'))
+                    msg_text.tag_bind(gtag, '<Leave>',
+                                      lambda e: msg_text.config(cursor=''))
+                else:
+                    msg_text.insert('end', f'{content}\n')
+                if query_lower:
+                    line_end = msg_text.index(f'{start_idx} lineend +1c')
+                    full_line = msg_text.get(start_idx, line_end).lower()
+                    s = 0
+                    while True:
+                        pos = full_line.find(query_lower, s)
+                        if pos < 0:
+                            break
+                        h_start = f'{start_idx}+{pos}c'
+                        h_end = f'{start_idx}+{pos + len(query_lower)}c'
+                        msg_text.tag_add('highlight', h_start, h_end)
+                        s = pos + len(query_lower)
+            msg_text.configure(state='disabled')
+            msg_text.see('end')
+
+        def _populate_tree(visible_peers):
+            # Preserva selecao se possivel
+            prev = _current_peer[0]
+            contacts_tree.delete(*contacts_tree.get_children())
+            shown = 0
+            for c in all_contacts:
+                peer = c['peer']
+                if visible_peers is not None and peer not in visible_peers:
+                    continue
+                name = _resolve_name(peer)
+                contacts_tree.insert('', 'end', iid=peer, values=(name,))
+                shown += 1
+            if prev and contacts_tree.exists(prev):
+                contacts_tree.selection_set(prev)
+                contacts_tree.see(prev)
+            return shown
+
+        def _run_refresh():
+            query = search_var.get().strip()
+            d_from, d_to, ok = _validate_dates()
+            if not ok:
+                count_lbl.config(text='')
+                return
+            d_from_ts = d_from.timestamp() if d_from else None
+            d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
+
+            # Filtra lista de contatos quando ha busca/data; senao mostra todos.
+            # Usa get_peers_with_match (DISTINCT no SQL) + count_matching_messages (COUNT no SQL)
+            # — rapido e sem limite, garante que NENHUMA mensagem antiga some das buscas.
+            if query or d_from_ts or d_to_ts:
+                matching_peers = db.get_peers_with_match(
+                    search_text=query if query else None,
+                    date_from=d_from_ts, date_to=d_to_ts)
+                total_match = db.count_matching_messages(
+                    search_text=query if query else None,
+                    date_from=d_from_ts, date_to=d_to_ts)
+                shown = _populate_tree(visible_peers=matching_peers)
+                count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens')
+            else:
+                shown = _populate_tree(visible_peers=None)
+                count_lbl.config(text=f'{shown} conversas')
+
+            # Re-renderiza painel direito com mesmos filtros se contato ainda visivel
+            current = _current_peer[0]
+            if current and contacts_tree.exists(current):
+                msgs = db.get_messages_with_peer(user_id, current,
+                                                  date_from=d_from_ts,
+                                                  date_to=d_to_ts,
+                                                  search_text=query if query else None)
+                _render_messages(current, msgs, query)
+            else:
+                _current_peer[0] = None
+                _clear_right()
 
         def _schedule_refresh(*_args):
             if _refresh_timer[0]:
@@ -11244,132 +11408,33 @@ class LanMessengerApp:
                     win.after_cancel(_refresh_timer[0])
                 except Exception:
                     pass
-            _refresh_timer[0] = win.after(200, _refresh)
+            _refresh_timer[0] = win.after(250, _run_refresh)
 
-        def _refresh(*_args):
+        def _on_select(event=None):
+            sel = contacts_tree.selection()
+            if not sel:
+                return
+            peer_id = sel[0]
+            _current_peer[0] = peer_id
             query = search_var.get().strip()
-            d_from = _parse_date(date_from_entry.get())
-            d_to = _parse_date(date_to_entry.get())
-            selected_contact = contact_var.get()
-            selected_peer = _name_to_peer.get(selected_contact) if selected_contact != 'Todos' else None
-
+            d_from, d_to, ok = _validate_dates()
+            if not ok:
+                return
             d_from_ts = d_from.timestamp() if d_from else None
             d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
+            msgs = db.get_messages_with_peer(user_id, peer_id,
+                                              date_from=d_from_ts,
+                                              date_to=d_to_ts,
+                                              search_text=query if query else None)
+            _render_messages(peer_id, msgs, query)
 
-            if not query and not d_from and not d_to and not selected_peer:
-                # Sem filtro: mostra resumo de contatos com historico
-                msg_text.configure(state='normal')
-                msg_text.delete('1.0', 'end')
-                msg_text.insert('end', 'Digite para buscar em todas as conversas\n\n', 'ts')
-                for c in contacts_data:
-                    peer = c['peer']
-                    name = _resolve_name(peer)
-                    ts = datetime.fromtimestamp(c['last_ts']).strftime('%d/%m/%Y %H:%M')
-                    msg_text.insert('end', f'  {name}', 'contact_header')
-                    msg_text.insert('end', f'  — última msg: {ts}\n', 'ts')
-                count_lbl.config(text=f'{len(contacts_data)} conversas')
-                msg_text.configure(state='disabled')
-                return
-
-            # Busca: por contato específico ou global
-            if selected_peer:
-                msgs = db.get_messages_with_peer(user_id, selected_peer,
-                                                  date_from=d_from_ts,
-                                                  date_to=d_to_ts,
-                                                  search_text=query if query else None)
-            else:
-                msgs = db.search_all_messages(
-                    search_text=query if query else None,
-                    date_from=d_from_ts, date_to=d_to_ts, limit=500)
-
-            my_name = self.messenger.display_name
-
-            # Agrupa por peer
-            grouped = {}
-            for m in msgs:
-                peer = m['to_user'] if m['is_sent'] else m['from_user']
-                if peer not in grouped:
-                    grouped[peer] = []
-                grouped[peer].append(m)
-
-            msg_text.configure(state='normal')
-            msg_text.delete('1.0', 'end')
-            match_count = 0
-            query_lower = query.lower() if query else ''
-
-            if not msgs:
-                hint = []
-                if query:
-                    hint.append(f'busca: "{query}"')
-                if d_from:
-                    hint.append(f"De {d_from.strftime('%d/%m/%Y')}")
-                if d_to:
-                    hint.append(f"Até {d_to.strftime('%d/%m/%Y')}")
-                if selected_contact and selected_contact != 'Todos':
-                    hint.append(f'Contato: {selected_contact}')
-                msg_text.insert('end', '  Nenhuma mensagem encontrada\n\n', 'contact_header')
-                if hint:
-                    msg_text.insert('end', '  Filtros: ' + '  ·  '.join(hint) + '\n', 'ts')
-
-            for peer, peer_msgs in grouped.items():
-                peer_name = _resolve_name(peer)
-                # Header do contato
-                msg_text.insert('end', f'\n  {peer_name}', 'contact_header')
-                msg_text.insert('end', f'  ({len(peer_msgs)} resultados)\n', 'ts')
-                msg_text.insert('end', '  ' + '─' * 60 + '\n', 'separator')
-
-                for m in peer_msgs:
-                    who = my_name if m['is_sent'] else peer_name
-                    ts = datetime.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
-                    content = m['content']
-
-                    start_idx = msg_text.index('end-1c')
-                    msg_text.insert('end', f'  [{ts}] ', 'ts')
-                    who_tag = 'me' if m['is_sent'] else 'peer_tag'
-                    msg_text.insert('end', f'{who}: ', who_tag)
-                    if m.get('msg_type') == 'image':
-                        gtag = f'gimg_{match_count}'
-                        msg_text.insert('end', '[Imagem]\n', gtag)
-                        msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
-                        msg_text.tag_bind(gtag, '<Button-1>',
-                                          lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
-                        msg_text.tag_bind(gtag, '<Enter>',
-                                          lambda e: msg_text.config(cursor='hand2'))
-                        msg_text.tag_bind(gtag, '<Leave>',
-                                          lambda e: msg_text.config(cursor=''))
-                    else:
-                        msg_text.insert('end', f'{content}\n')
-
-                    if query_lower:
-                        line_start = start_idx
-                        line_end = msg_text.index(f'{start_idx} lineend +1c')
-                        full_line = msg_text.get(line_start, line_end).lower()
-                        s = 0
-                        while True:
-                            pos = full_line.find(query_lower, s)
-                            if pos < 0:
-                                break
-                            h_start = f'{line_start}+{pos}c'
-                            h_end = f'{line_start}+{pos + len(query_lower)}c'
-                            msg_text.tag_add('highlight', h_start, h_end)
-                            match_count += 1
-                            s = pos + 1
-
-            msg_text.configure(state='disabled')
-
-            total = len(msgs)
-            if query:
-                count_lbl.config(
-                    text=f'{match_count} ocorrências em {total} msgs de {len(grouped)} conversas')
-            else:
-                count_lbl.config(text=f'{total} mensagens de {len(grouped)} conversas')
-
+        contacts_tree.bind('<<TreeviewSelect>>', _on_select)
         search_var.trace_add('write', _schedule_refresh)
         date_from_entry.bind('<KeyRelease>', _schedule_refresh)
         date_to_entry.bind('<KeyRelease>', _schedule_refresh)
-        contact_combo.bind('<<ComboboxSelected>>', _schedule_refresh)
         win.bind('<Control-f>', lambda e: search_entry.focus_set())
-        _refresh()
+
+        _run_refresh()
 
     # Delega para _show_transfers_window() que abre/mostra a janela de transferencias.
     def _show_transfers(self):

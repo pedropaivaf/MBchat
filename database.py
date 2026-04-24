@@ -715,8 +715,9 @@ class Database:
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-    # Busca global em todas as mensagens com filtros opcionais
-    def search_all_messages(self, search_text=None, date_from=None, date_to=None, limit=500):
+    # Busca global em todas as mensagens com filtros opcionais.
+    # limit=None retorna tudo (sem limite) — usado no Historico para garantir que mensagens antigas nao sumam.
+    def search_all_messages(self, search_text=None, date_from=None, date_to=None, limit=5000):
         sql = "SELECT * FROM messages WHERE 1=1"
         params = []
         if search_text:
@@ -728,10 +729,50 @@ class Database:
         if date_to:
             sql += " AND timestamp <= ?"
             params.append(date_to)
-        sql += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY timestamp DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    # Retorna set de peer_ids que tem mensagens batendo com os filtros (busca por palavra/data).
+    # Usa DISTINCT — rapido mesmo em DBs com 100k+ mensagens. Usado pelo Historico para
+    # popular a lista de contatos filtrados sem precisar carregar todas as mensagens na memoria.
+    def get_peers_with_match(self, search_text=None, date_from=None, date_to=None):
+        sql = """
+            SELECT DISTINCT CASE WHEN is_sent=1 THEN to_user ELSE from_user END as peer
+            FROM messages
+            WHERE 1=1
+        """
+        params = []
+        if search_text:
+            sql += " AND content LIKE ?"
+            params.append(f'%{search_text}%')
+        if date_from:
+            sql += " AND timestamp >= ?"
+            params.append(date_from)
+        if date_to:
+            sql += " AND timestamp <= ?"
+            params.append(date_to)
+        rows = self.conn.execute(sql, params).fetchall()
+        return {r[0] for r in rows}
+
+    # Retorna total de mensagens que batem com os filtros. Leve (COUNT no SQL, nao traz rows).
+    def count_matching_messages(self, search_text=None, date_from=None, date_to=None):
+        sql = "SELECT COUNT(*) FROM messages WHERE 1=1"
+        params = []
+        if search_text:
+            sql += " AND content LIKE ?"
+            params.append(f'%{search_text}%')
+        if date_from:
+            sql += " AND timestamp >= ?"
+            params.append(date_from)
+        if date_to:
+            sql += " AND timestamp <= ?"
+            params.append(date_to)
+        row = self.conn.execute(sql, params).fetchone()
+        return row[0] if row else 0
 
     # ========================================
     # FILE TRANSFERS — Transferências de arquivos

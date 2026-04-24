@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.5.1.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.5.3.
 
 ## Arquitetura (4 camadas)
 
@@ -241,6 +241,41 @@ Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao 
    `ttk.Scrollbar` por Canvas 6px com thumb arredondado (oval + retangulo), hover muda para
    10px em tom `#94a3b8`, auto-hide quando conteudo cabe (`lo<=0 && hi>=1`). MouseWheel
    ignora scroll se nao ha overflow — previne "rolar pra vazio" quando tem so 1 item.
+
+## Historico estilo LAN Messenger + fix mensagens sumindo (v1.5.3)
+
+Usuarios relataram que mensagens antigas "sumiam" do chat individual e da janela global de historico.
+Investigacao mostrou 2 limites hardcoded + 1 UX confusa:
+
+1. **ChatWindow `_load_history`** (gui.py:3590) carregava so as ultimas 40 msgs ao abrir chat —
+   contatos com historico mais longo tinham mensagens antigas invisiveis. **Fix**: `limit=None` —
+   carrega TODAS as mensagens do par ao abrir. `get_chat_history(limit=None)` em database.py
+   ja suportava e retornava em ordem ASC.
+
+2. **`search_all_messages`** (database.py:719) com default `limit=500` — em escritorio de 30
+   pessoas, ~2 semanas de uso ja passam disso e mensagens antigas ficavam fora de busca.
+   **Fix**: `limit=None` suportado (SQL sem clausula LIMIT), default subiu pra 5000.
+
+3. **Janela Historico redesenhada estilo LAN Messenger** (gui.py:11088 `_show_all_history`).
+   Antes mostrava apenas resumo de contatos (nome + data ultima msg) ate o usuario filtrar —
+   confuso, parecia que nao tinha mensagens. Agora: 2-pane horizontal (900x600), Treeview
+   de contatos a esquerda (320px, ordenado por last_ts DESC), painel de conversa a direita
+   com TODAS as mensagens do contato selecionado em ordem cronologica ASC. Busca por palavra
+   refiltra lista de contatos + destaca matches em amarelo. Filtros De/Ate com validacao
+   visual (fundo `#fee2e2` + label "data invalida" / "periodo invalido" se De > Ate).
+
+4. **Performance da filtragem**: adicionados 2 helpers em database.py que usam SQL DISTINCT/COUNT
+   em vez de carregar tudo na memoria:
+   - `get_peers_with_match(search_text, date_from, date_to)` — retorna set de peer_ids que tem
+     match. DISTINCT CASE no SQL, rapido mesmo em DBs com 100k+ msgs.
+   - `count_matching_messages(...)` — COUNT(*) no SQL, leve.
+
+   Com esses dois, o filtro do Historico **nao tem mais limite** de mensagens inspecionadas —
+   qualquer mensagem antiga aparece na busca. Zero risco de "sumir".
+
+**Contrato**: `db.get_messages_with_peer(user_a, peer_id, date_from, date_to, search_text)`
+ja retornava TODAS as mensagens com o peer sem limite, entao o painel direito sempre mostra
+o historico completo. Schema de `messages` intocado, zero migration.
 
 ## Documentacao detalhada
 

@@ -1,4 +1,4 @@
-# MB Chat - Funcionalidades (v1.5.0)
+# MB Chat - Funcionalidades (v1.5.3)
 
 ## Mensagens
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
@@ -41,8 +41,9 @@
 
 ## Historico e busca
 - Busca em tempo real com highlight amarelo e filtro por data De/Ate
-- Chat individual: busca dentro da conversa
-- Global (menu Ferramentas): busca em TODOS os chats, agrupados por contato
+- Chat individual: carrega TODAS as mensagens ao abrir (sem limite de 40), busca dentro da conversa
+- Global (menu Ferramentas): **janela estilo LAN Messenger** (v1.5.3) — 2-pane 900x600, Treeview de contatos a esquerda + conversa cronologica a direita ao clicar. Busca por palavra refiltra a lista de contatos + destaca matches em amarelo. Filtros De/Ate com validacao (fundo vermelho + label "data invalida" / "periodo invalido" se De > Ate).
+- **Busca sem limite** (v1.5.3): `get_peers_with_match` (DISTINCT no SQL) + `count_matching_messages` (COUNT no SQL) em database.py — nao carrega tudo na memoria, funciona em DBs com 100k+ msgs sem perder mensagens antigas
 
 ## Lembretes
 - Tres tipos: Simples (sem data), Programado (calendario + HH:MM), Recorrente pattern-based (diario/semanal/mensal/anual)
