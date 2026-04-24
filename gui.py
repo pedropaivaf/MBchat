@@ -10456,6 +10456,12 @@ class LanMessengerApp:
              _t('status_busy'): 'busy',
              _t('status_offline'): 'invisible'}
         self.messenger.change_status(m.get(self.status_var.get(), 'online'))  # envia via UDP
+        # Remove seleção/foco do combobox pra eliminar o retangulo tracejado sobre o texto
+        try:
+            self.status_combo.selection_clear()
+        except Exception:
+            pass
+        self.root.focus_set()
 
     # --- Tree ---
     # Retorna uid do contato selecionado no TreeView, ou None se invalido.
@@ -11374,21 +11380,26 @@ class LanMessengerApp:
             d_from_ts = d_from.timestamp() if d_from else None
             d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
 
-            # Filtra lista de contatos quando ha busca/data; senao mostra todos.
-            # Usa get_peers_with_match (DISTINCT no SQL) + count_matching_messages (COUNT no SQL)
-            # — rapido e sem limite, garante que NENHUMA mensagem antiga some das buscas.
-            if query or d_from_ts or d_to_ts:
+            # Semantica: BUSCA POR PALAVRA filtra a lista de contatos (mostra so quem mencionou
+            # a palavra) + destaca matches no painel direito. FILTRO DE DATA afeta apenas o
+            # painel direito (mensagens do contato selecionado no intervalo). Assim o usuario
+            # pode escolher um contato e ver o que conversaram num periodo, mesmo que o contato
+            # nao tenha mensagens naquele periodo (ele continua visivel na lista).
+            if query:
                 matching_peers = db.get_peers_with_match(
-                    search_text=query if query else None,
-                    date_from=d_from_ts, date_to=d_to_ts)
+                    search_text=query, date_from=d_from_ts, date_to=d_to_ts)
                 total_match = db.count_matching_messages(
-                    search_text=query if query else None,
-                    date_from=d_from_ts, date_to=d_to_ts)
+                    search_text=query, date_from=d_from_ts, date_to=d_to_ts)
                 shown = _populate_tree(visible_peers=matching_peers)
                 count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens')
             else:
                 shown = _populate_tree(visible_peers=None)
-                count_lbl.config(text=f'{shown} conversas')
+                if d_from_ts or d_to_ts:
+                    total_match = db.count_matching_messages(
+                        date_from=d_from_ts, date_to=d_to_ts)
+                    count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens no período')
+                else:
+                    count_lbl.config(text=f'{shown} conversas')
 
             # Re-renderiza painel direito com mesmos filtros se contato ainda visivel
             current = _current_peer[0]
