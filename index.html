@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MB Chat — Mensageiro LAN para Escritórios</title>
+    <meta name="description" content="Comunicação instantânea na rede local. Leve, prático e direto ao ponto. Feito para escritórios.">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --navy-900: #0c1a3a;
+            --navy-800: #112044;
+            --navy-700: #18295a;
+            --red: #d42030;
+            --red-dark: #a81820;
+            --red-glow: rgba(212, 32, 48, 0.25);
+            --white: #f0f4f8;
+            --white-pure: #ffffff;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --font: 'Plus Jakarta Sans', -apple-system, sans-serif;
+            --mono: 'JetBrains Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; overflow-x: hidden; scroll-padding-top: 80px; }
+
+        body {
+            font-family: var(--font);
+            background: var(--navy-900);
+            color: var(--white);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Nav ── */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 100;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(20px);
+            background: rgba(12, 26, 58, 0.85);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--white);
+        }
+
+        .nav-logo img { width: 36px; height: 36px; border-radius: 8px; }
+        .nav-logo span { font-weight: 800; font-size: 1.25rem; letter-spacing: -0.02em; }
+
+        .nav-links { display: flex; gap: 2rem; align-items: center; }
+        .nav-links a {
+            color: var(--gray-400);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--white); }
+
+        .nav-btn {
+            background: var(--red);
+            color: var(--white-pure) !important;
+            padding: 0.5rem 1.25rem;
+            border-radius: 4px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .nav-btn:hover {
+            background: var(--red-dark);
+            box-shadow: 0 4px 20px var(--red-glow);
+        }
+
+        /* ── Hero ── */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 8rem 2rem 4rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 300px;
+            background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+            top: -150px;
+            left: -50%;
+            transform: rotate(-6deg);
+            opacity: 0.15;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 200px;
+            background: linear-gradient(135deg, var(--red) 0%, transparent 60%);
+            bottom: -80px;
+            right: -50%;
+            transform: rotate(-3deg);
+            opacity: 0.08;
+        }
+
+        .hero-stripe {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 6px;
+            height: 100%;
+            background: linear-gradient(180deg, var(--red), transparent 70%);
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 2;
+            max-width: 700px;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(212, 32, 48, 0.1);
+            border: 1px solid rgba(212, 32, 48, 0.3);
+            padding: 0.4rem 1rem;
+            border-radius: 2px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #f87171;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            animation: fadeUp 0.6s ease both;
+        }
+
+        .hero-badge .dot {
+            width: 8px;
+            height: 8px;
+            background: var(--red);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4.2rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            animation: fadeUp 0.6s ease 0.1s both;
+        }
+
+        .hero h1 .highlight {
+            color: var(--red);
+        }
+
+        .hero p {
+            font-size: 1.15rem;
+            color: var(--gray-400);
+            max-width: 520px;
+            margin: 0 auto 2.5rem;
+            animation: fadeUp 0.6s ease 0.2s both;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: fadeUp 0.6s ease 0.3s both;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 2rem;
+            border-radius: 4px;
+            font-family: var(--font);
+            font-size: 1rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--red);
+            color: var(--white-pure);
+            box-shadow: 0 4px 20px var(--red-glow);
+        }
+        .btn-primary:hover {
+            background: var(--red-dark);
+            box-shadow: 0 8px 32px var(--red-glow);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--white);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        .btn-secondary:hover {
+            border-color: rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.05);
+        }
+
+        .btn svg { width: 18px; height: 18px; }
+
+        .hero-version {
+            margin-top: 1rem;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: var(--gray-500);
+            animation: fadeUp 0.6s ease 0.4s both;
+        }
+
+        /* ── Features ── */
+        #features {
+            padding: 5rem 2rem;
+            position: relative;
+        }
+
+        #features::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: var(--red);
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 3rem;
+        }
+
+        .features-list {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1.25rem;
+            padding: 1.25rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.2s;
+        }
+
+        .feature-item:last-child { border-bottom: none; }
+        .feature-item:hover { padding-left: 0.5rem; }
+
+        .feature-marker {
+            width: 3px;
+            height: 20px;
+            background: var(--red);
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        .feature-item h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .feature-item p {
+            color: var(--gray-400);
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        /* ── Install ── */
+        #install {
+            padding: 5rem 2rem;
+            background: var(--navy-800);
+            position: relative;
+        }
+
+        #install::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--red), transparent 50%);
+        }
+
+        .steps {
+            display: flex;
+            gap: 3rem;
+            max-width: 800px;
+            margin: 0 auto;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .step {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .step-num {
+            font-family: var(--mono);
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--red);
+            margin-bottom: 0.5rem;
+        }
+
+        .step h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+
+        .step p {
+            color: var(--gray-400);
+            font-size: 0.9rem;
+        }
+
+        /* ── Docs ── */
+        #docs {
+            padding: 0;
+            position: relative;
+            background: var(--white-pure);
+            color: var(--navy-900);
+        }
+
+        .docs-topbar {
+            position: sticky;
+            top: 56px;
+            z-index: 50;
+            background: var(--white-pure);
+            border-bottom: 1px solid #e2e8f0;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            display: flex;
+            align-items: stretch;
+        }
+
+        .docs-topbar-arrow {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--white-pure);
+            border: none;
+            color: var(--navy-900);
+            cursor: pointer;
+            z-index: 2;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .docs-topbar-arrow.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .docs-topbar-arrow.left {
+            left: 0;
+            box-shadow: 6px 0 12px -4px rgba(0,0,0,0.15);
+        }
+        .docs-topbar-arrow.right {
+            right: 0;
+            box-shadow: -6px 0 12px -4px rgba(0,0,0,0.15);
+        }
+        .docs-topbar-arrow:hover { background: #f1f5f9; }
+        .docs-topbar-arrow svg { width: 18px; height: 18px; }
+
+        .docs-topbar-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            gap: 0;
+            padding: 0 2rem;
+            overflow-x: auto;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            width: 100%;
+        }
+        .docs-topbar-inner::-webkit-scrollbar { display: none; }
+
+        .docs-topbar a {
+            display: block;
+            padding: 0.75rem 1.25rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--gray-500);
+            text-decoration: none;
+            border-bottom: 3px solid transparent;
+            transition: all 0.15s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .docs-topbar a:hover {
+            color: var(--navy-900);
+            background: #f8fafc;
+        }
+
+        .docs-topbar a.active {
+            color: var(--red);
+            border-bottom-color: var(--red);
+        }
+
+        .docs-header {
+            padding: 4rem 2rem 1.5rem;
+            text-align: center;
+        }
+
+        .docs-header h2 {
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: var(--navy-900);
+        }
+
+        .docs-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 2rem 4rem;
+        }
+
+        .docs-section {
+            margin-bottom: 3rem;
+            padding-top: 1rem;
+        }
+
+        .docs-section h3 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #e2e8f0;
+            color: var(--navy-900);
+        }
+
+        .docs-section > p {
+            color: var(--gray-500);
+        }
+
+        .docs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+
+        .docs-table th {
+            text-align: left;
+            padding: 0.6rem 1rem;
+            background: #f1f5f9;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--navy-900);
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .docs-table td {
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: top;
+        }
+
+        .docs-table code {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            background: #f1f5f9;
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            color: #be123c;
+            word-break: break-all;
+        }
+
+        .docs-note {
+            background: #fef2f2;
+            border-left: 3px solid var(--red);
+            padding: 0.75rem 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            margin-top: 1rem;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .docs-note strong { color: var(--navy-900); }
+
+        /* ── Download ── */
+        #download {
+            padding: 5rem 2rem;
+            text-align: center;
+            background: var(--navy-800);
+            position: relative;
+        }
+
+        #download::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: var(--red);
+        }
+
+        .download-box {
+            max-width: 500px;
+            margin: 2rem auto 0;
+            border: 1px solid rgba(255,255,255,0.08);
+            padding: 2.5rem;
+            background: var(--navy-900);
+        }
+
+        .download-box h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .download-box p {
+            color: var(--gray-400);
+            font-size: 0.9rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .download-box .btn { width: 100%; justify-content: center; }
+
+        .download-alt {
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: var(--gray-500);
+        }
+
+        .download-alt a {
+            color: var(--gray-400);
+            text-decoration: underline;
+        }
+        .download-alt a:hover { color: var(--white); }
+
+        /* ── Footer ── */
+        footer {
+            padding: 2.5rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .footer-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .footer-logo img { width: 24px; height: 24px; border-radius: 4px; }
+        .footer-logo span { font-weight: 700; font-size: 0.95rem; }
+
+        footer p { color: var(--gray-500); font-size: 0.8rem; }
+        footer a { color: var(--gray-400); text-decoration: none; }
+        footer a:hover { color: var(--white); }
+
+        /* ── Animations ── */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in {
+            opacity: 0;
+            transform: translateY(15px);
+            transition: all 0.5s ease;
+        }
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            .docs-topbar-inner { padding: 0 1rem; }
+        }
+
+        @media (max-width: 768px) {
+            nav { padding: 0.75rem 1rem; }
+            .nav-logo span { font-size: 1.1rem; }
+            .nav-links { gap: 0.75rem; }
+            .nav-links a:not(.nav-btn) { display: none; }
+            .nav-btn { padding: 0.4rem 0.9rem; font-size: 0.85rem; }
+
+            .hero { padding: 6rem 1.25rem 3rem; min-height: auto; }
+            .hero-badge { font-size: 0.75rem; padding: 0.3rem 0.8rem; margin-bottom: 1.5rem; }
+            .hero h1 { font-size: clamp(1.9rem, 7vw, 2.6rem); margin-bottom: 1.25rem; }
+            .hero p { font-size: 1rem; margin-bottom: 2rem; }
+            .hero-actions { gap: 0.6rem; }
+            .btn { padding: 0.75rem 1.4rem; font-size: 0.9rem; }
+
+            #features, #install, #download { padding: 3.5rem 1.25rem; }
+            .section-title { margin-bottom: 2rem; }
+            .features-list { padding: 0 0.5rem; }
+            .feature-item { gap: 0.9rem; padding: 1rem 0; }
+            .feature-item h3 { font-size: 0.95rem; }
+            .feature-item p { font-size: 0.85rem; }
+
+            .steps { flex-direction: column; gap: 1.75rem; }
+            .step { min-width: 0; }
+
+            .docs-topbar { top: 48px; }
+            .docs-topbar-arrow { width: 32px; }
+            .docs-topbar-inner { padding: 0 1rem; }
+            .docs-topbar a { padding: 0.6rem 0.75rem; font-size: 0.8rem; }
+
+            .docs-container { padding: 0 1rem 2.5rem; }
+            .docs-header { padding: 2.5rem 1rem 1rem; }
+            .docs-section { padding: 1.75rem 0; }
+            .docs-section h3 { font-size: 1.1rem; }
+            .docs-section > p, .docs-section ul, .docs-section ol,
+            .docs-section h4 + p, .docs-section li { font-size: 0.85rem !important; }
+            .docs-table { font-size: 0.75rem; display: block; overflow-x: auto; white-space: nowrap; }
+            .docs-table th, .docs-table td { padding: 0.4rem 0.6rem; }
+            .docs-note { font-size: 0.85rem; padding: 0.75rem 1rem; }
+
+            .download-box { padding: 1.75rem 1.25rem; }
+            .download-box h3 { font-size: 1.1rem; }
+
+            footer { padding: 2rem 1rem; }
+            footer p { font-size: 0.75rem; }
+        }
+
+        @media (max-width: 480px) {
+            nav { padding: 0.6rem 0.9rem; }
+            .nav-logo img { width: 30px; height: 30px; }
+            .nav-logo span { display: none; }
+
+            .hero { padding: 5rem 1rem 2.5rem; }
+            .hero h1 { font-size: clamp(1.7rem, 8vw, 2.2rem); }
+            .hero p { font-size: 0.95rem; }
+            .hero-actions { flex-direction: column; align-items: stretch; }
+            .btn { width: 100%; justify-content: center; }
+
+            #features, #install, #download { padding: 3rem 1rem; }
+            .docs-section h3 { font-size: 1rem; }
+            .docs-section h4 { font-size: 0.9rem !important; }
+
+            .docs-topbar-arrow { width: 28px; }
+            .docs-topbar-arrow svg { width: 14px; height: 14px; }
+            .docs-topbar a { padding: 0.55rem 0.65rem; font-size: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <a href="#" class="nav-logo">
+        <img src="icon.png" alt="MB Chat">
+        <span>Chat</span>
+    </a>
+    <div class="nav-links">
+        <a href="#features">Recursos</a>
+        <a href="#install">Instalação</a>
+        <a href="#docs">Docs</a>
+        <a href="#download" class="nav-btn">Download</a>
+    </div>
+</nav>
+
+<section class="hero">
+    <div class="hero-stripe"></div>
+    <div class="hero-content">
+        <div class="hero-badge">
+            <span class="dot"></span>
+            Open Source &middot; Gratuito
+        </div>
+        <h1>Comunicação <span class="highlight">instantânea</span> na sua rede local</h1>
+        <p>Mensageiro LAN para escritórios. Leve, prático e direto ao ponto.</p>
+        <div class="hero-actions">
+            <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_WebInstaller.exe" class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Instalador
+            </a>
+            <a href="https://github.com/pedropaivaf/MBchat" class="btn btn-secondary" target="_blank">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                GitHub
+            </a>
+        </div>
+        <p class="hero-version">Windows 10/11 &middot; ~20 MB</p>
+    </div>
+</section>
+
+<section id="features">
+    <h2 class="section-title fade-in">Recursos</h2>
+    <div class="features-list">
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Mensagens Instantâneas</h3>
+                <p>Chat individual e em grupo com emojis coloridos, estilo bolha ou linear.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Transferência de Arquivos</h3>
+                <p>Envie arquivos até 100 MB diretamente pela rede local com velocidade máxima.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Grupos Temporários e Fixos</h3>
+                <p>Crie grupos para equipes, departamentos ou projetos.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Notificações Windows</h3>
+                <p>Notificações clicáveis que abrem direto na conversa.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Auto-Update</h3>
+                <p>Atualizações automáticas. O app detecta, baixa e instala sozinho.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>100% Local</h3>
+                <p>Nenhum dado sai da sua rede. Comunicação direta entre máquinas, sem intermediários.</p>
+            </div>
+        </div>
+        <div class="feature-item fade-in">
+            <div class="feature-marker"></div>
+            <div>
+                <h3>Transmitir Mensagem</h3>
+                <p>Envie comunicados para vários contatos de uma vez.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="install">
+    <h2 class="section-title fade-in">Instalação em 3 passos</h2>
+    <div class="steps">
+        <div class="step fade-in">
+            <div class="step-num">01</div>
+            <h3>Baixe o instalador</h3>
+            <p>Execute o MBChat_Setup.exe em cada máquina.</p>
+        </div>
+        <div class="step fade-in">
+            <div class="step-num">02</div>
+            <h3>Abra o app</h3>
+            <p>Detecta automaticamente todos os colegas na rede.</p>
+        </div>
+        <div class="step fade-in">
+            <div class="step-num">03</div>
+            <h3>Comece a conversar</h3>
+            <p>Mensagens, arquivos e grupos funcionando instantaneamente.</p>
+        </div>
+    </div>
+</section>
+
+<section id="docs">
+    <div class="docs-header">
+        <h2>Documentação</h2>
+    </div>
+    <div class="docs-topbar" id="docs-nav">
+        <button class="docs-topbar-arrow left" id="docs-arrow-left" aria-label="Rolar para esquerda">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <div class="docs-topbar-inner" id="docs-topbar-inner">
+            <a href="#doc-arquivos" class="active">Estrutura de Arquivos</a>
+            <a href="#doc-banco">Banco de Dados</a>
+            <a href="#doc-portas">Portas de Rede</a>
+            <a href="#doc-discovery">Descoberta de Peers</a>
+            <a href="#doc-vpn">VPN / Home-office</a>
+            <a href="#doc-multiuser">Multi-usuário</a>
+            <a href="#doc-firewall">Firewall</a>
+            <a href="#doc-desinstalar">Desinstalação</a>
+        </div>
+        <button class="docs-topbar-arrow right" id="docs-arrow-right" aria-label="Rolar para direita">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </button>
+    </div>
+    <div class="docs-container">
+
+        <div class="docs-section fade-in" id="doc-arquivos">
+            <h3>Estrutura de Arquivos</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Caminho</th>
+                        <th>Descrição</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>%LOCALAPPDATA%\Programs\MBChat\</code></td>
+                        <td>Pasta de instalação (MBChat.exe + _internal/)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\</code></td>
+                        <td>Dados do usuário (banco, imagens, configurações)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\mbchat.db</code></td>
+                        <td>Banco de dados SQLite (mensagens, contatos, grupos, lembretes)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\.mbchat\images\</code></td>
+                        <td>Imagens recebidas no chat (clipboard paste)</td>
+                    </tr>
+                    <tr>
+                        <td><code>%APPDATA%\MBChat\mbchat.log</code></td>
+                        <td>Log de erros e debug</td>
+                    </tr>
+                    <tr>
+                        <td><code>%USERPROFILE%\LanMessenger_Files\</code></td>
+                        <td>Arquivos recebidos via transferência (padrão, configurável)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-banco">
+            <h3>Banco de Dados</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Tabela</th>
+                        <th>Conteúdo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>messages</code></td>
+                        <td>Histórico de mensagens (texto, imagens, arquivos)</td>
+                    </tr>
+                    <tr>
+                        <td><code>contacts</code></td>
+                        <td>Contatos conhecidos (nome, IP, status, departamento)</td>
+                    </tr>
+                    <tr>
+                        <td><code>groups</code></td>
+                        <td>Grupos criados (nome, tipo, membros)</td>
+                    </tr>
+                    <tr>
+                        <td><code>group_members</code></td>
+                        <td>Membros de cada grupo</td>
+                    </tr>
+                    <tr>
+                        <td><code>reminders</code></td>
+                        <td>Lembretes (simples e programados)</td>
+                    </tr>
+                    <tr>
+                        <td><code>file_transfers</code></td>
+                        <td>Histórico de transferências de arquivos</td>
+                    </tr>
+                    <tr>
+                        <td><code>settings</code></td>
+                        <td>Configurações do usuário (tema, alertas, rede)</td>
+                    </tr>
+                    <tr>
+                        <td><code>polls / poll_votes</code></td>
+                        <td>Enquetes de grupo e votos</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-portas">
+            <h3>Portas de Rede</h3>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Porta</th>
+                        <th>Protocolo</th>
+                        <th>Uso</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>50100</code></td>
+                        <td>UDP</td>
+                        <td>Discovery (multicast + broadcast)</td>
+                    </tr>
+                    <tr>
+                        <td><code>50101</code></td>
+                        <td>TCP</td>
+                        <td>Mensagens, convites de grupo, enquetes</td>
+                    </tr>
+                    <tr>
+                        <td><code>50102</code></td>
+                        <td>TCP</td>
+                        <td>Transferência de arquivos</td>
+                    </tr>
+                    <tr>
+                        <td><code>50200–51199</code></td>
+                        <td>TCP</td>
+                        <td>Lock de instância única <strong>por usuário</strong> (loopback). Cada login Windows obtém uma porta derivada de <code>MD5(usuário) mod 1000 + 50200</code>, permitindo que múltiplos usuários na mesma máquina abram o app simultaneamente sem conflito.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-discovery">
+            <h3>Descoberta de Peers — por que o MB Chat é mais confiável que o LAN Messenger</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O LAN Messenger tem um problema conhecido: peers somem da lista ou demoram a aparecer quando a rede tem VPN, Hyper-V, switches gerenciados ou filtros de multicast. O MB Chat resolveu isso com cinco decisões de design que trabalham juntas:
+            </p>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>Mecanismo</th>
+                        <th>O que faz</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Tri-broadcast</strong></td>
+                        <td>Cada announce sai por <strong>3 caminhos simultâneos</strong>: multicast (<code>239.255.100.200</code>), broadcast global (<code>255.255.255.255</code>) e subnet-directed broadcast (ex: <code>192.168.0.255</code>). Se o multicast for filtrado pelo switch/VPN, os broadcasts garantem entrega. Para um peer sumir, as 3 rotas teriam que falhar.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Anúncio imediato em eventos</strong></td>
+                        <td>Trocar status, nome, nota ou avatar dispara <code>_send_announce()</code> na hora — não espera o próximo ciclo. Mudanças chegam em menos de 1 segundo.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Anúncio no startup</strong></td>
+                        <td>O primeiro announce é enviado <strong>antes</strong> do loop periódico começar, então um peer recém-aberto aparece na rede instantaneamente.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Detecção de NIC correta</strong></td>
+                        <td>Função <code>get_local_ip()</code> usa rota real pra <code>8.8.8.8</code> + enumeração + filtro de interfaces virtuais (Hyper-V, Docker, VPN). Evita o bug clássico do LAN Messenger de sair pela NIC errada em PCs com VPN ativa.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Ciclo curto de refresh</strong></td>
+                        <td>Announce a cada <code>15s</code> (vs ~60s do LAN Messenger). Timeout de presença em <code>45s</code> — 3× o intervalo, garantindo que 1 pacote perdido não derrube o peer.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="docs-note">
+                <strong>Resultado:</strong> A combinação de tri-broadcast + anúncio imediato em eventos + detecção correta de NIC é o que faz o MB Chat ser mais confiável. O intervalo curto só amplifica esses ganhos. Um peer só some da lista se estiver realmente offline — nunca por falha de rede transitória.
+            </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-vpn">
+            <h3>VPN / Home-office — conectar no escritório de fora</h3>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat funciona via descoberta UDP <strong>multicast + broadcast</strong> na LAN. Como esses protocolos não cruzam túneis VPN L3 (o tunelamento entrega só tráfego unicast), um funcionário em home-office conectado por VPN não enxerga os colegas do escritório naturalmente. A partir da <strong>v1.4.63</strong> existe um modo <strong>unicast announce</strong> com <em>peer exchange</em> automático que resolve isso — você cadastra 1 IP âncora e o app descobre o resto da LAN sozinho.
+            </p>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Como funciona</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Você está fora do escritório, conectado na VPN que te dá IP da rede interna.</li>
+                <li>Cadastra o IP de <strong>1 PC do escritório</strong> (a âncora) — deve ser um PC que fica sempre ligado e tem IP fixo na rede interna.</li>
+                <li>Ativa a VPN no app. O MB Chat passa a enviar um <em>announce unicast</em> pra esse IP a cada 15 segundos.</li>
+                <li>O PC âncora recebe esse announce, percebe que veio de um IP fora do seu <code>/24</code>, e responde com a <strong>lista de peers que ele conhece</strong> (todos os colegas ativos na LAN).</li>
+                <li>Seu app adiciona esses IPs como <em>auto-targets</em> (sem persistir em DB, só em memória) e passa a anunciar unicast pra todos eles também.</li>
+                <li>Os 29 outros colegas do escritório te reconhecem como peer online e você já pode trocar mensagens normalmente via TCP (que atravessa VPN sem problema).</li>
+            </ol>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Passo a passo — Ativar VPN</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Abra o MB Chat normalmente.</li>
+                <li>Menu <strong>Ferramentas → Conectar fora da LAN (VPN)…</strong></li>
+                <li>No campo <strong>IP do peer</strong>, digite o IP do PC âncora (ex.: <code>192.168.0.10</code>). Pergunte à TI qual IP usar — precisa ser <strong>fixo</strong> (reservado por DHCP ou configurado manualmente), senão muda e quebra toda vez que a âncora renovar.</li>
+                <li>No campo <strong>Nota</strong>, coloque uma descrição (ex.: <em>"PC do Iuri — sempre ligado"</em>) só pra você lembrar depois.</li>
+                <li>Clique <strong>Adicionar</strong>. O IP aparece na lista <em>Peers cadastrados</em>. Pode cadastrar mais de um (redundância: se uma âncora cair, outra assume).</li>
+                <li>Marque o checkbox <strong>Ativar conexão VPN</strong>. O label à direita vira <span style="color: #16a34a; font-weight: 700;">ATIVADO</span>.</li>
+                <li>Feche a janela — o MB Chat já está anunciando unicast.</li>
+                <li>Em até 30 segundos você deve ver os colegas do escritório aparecendo na lista de contatos.</li>
+            </ol>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Passo a passo — Desativar (voltar pra LAN)</h4>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Menu <strong>Ferramentas → Conectar fora da LAN (VPN)…</strong></li>
+                <li>Desmarque o checkbox <strong>Ativar conexão VPN</strong>. Label vira <span style="color: #991b1b; font-weight: 700;">DESATIVADO</span>.</li>
+                <li>Pronto. O app para de anunciar unicast imediatamente e volta ao comportamento normal de LAN (multicast/broadcast).</li>
+            </ol>
+            <div class="docs-note">
+                <strong>A lista de IPs cadastrados fica salva no banco local</strong> (<code>%APPDATA%\.mbchat\mbchat.db</code>). Não precisa re-cadastrar toda vez. Desativar só para o anúncio — os IPs permanecem pra você religar depois sem retrabalho.
+            </div>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Segurança e impacto</h4>
+            <ul style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li><strong>Nos 30 usuários da LAN interna:</strong> zero impacto. A lista de peers manuais é vazia por default, o loop de unicast announce dorme e não envia nada. O caminho multicast/broadcast normal não foi tocado.</li>
+                <li><strong>Default seguro:</strong> VPN vem <em>desligada</em> por padrão em qualquer instalação nova. Só quem explicitamente marcar o checkbox ativa o modo.</li>
+                <li><strong>Sem duplicação de mensagens:</strong> o protocolo usa <code>user_id</code> único (MAC + hostname + login Windows), então mesmo recebendo announce de peer por multicast e unicast simultaneamente, ele é deduplicado na lista.</li>
+                <li><strong>Timeout curto:</strong> se a VPN cair e você não derivar um announce por ≥45s, os peers te marcam offline automaticamente (<code>PING_TIMEOUT</code>). Ao reconectar, volta em ≤15s.</li>
+                <li><strong>Mensagens TCP via VPN:</strong> funcionam sem alteração porque VPN tuneia unicast TCP normal — o único problema do home-office era <em>descobrir</em> os peers, não trocar mensagens com eles.</li>
+            </ul>
+
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Problemas comuns</h4>
+            <ul style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li><strong>Ninguém aparece depois de ativar:</strong> verifique se (1) o IP cadastrado está correto e o PC âncora está ligado; (2) o firewall do PC âncora permite UDP entrada na 50100 (a v1.4.59+ configura automaticamente via UAC); (3) a VPN realmente te coloca na subnet interna (teste <code>ping IP_ANCORA</code> no CMD).</li>
+                <li><strong>IP da âncora mudou:</strong> peça pra TI fixar o IP via reserva DHCP no roteador. Enquanto isso, atualize o IP cadastrado removendo o antigo e adicionando o novo.</li>
+                <li><strong>Voltei pro escritório mas esqueci de desativar:</strong> sem problema — na LAN o unicast announce só é extra, não conflita. Mas é boa prática desligar pra não gerar tráfego desnecessário.</li>
+            </ul>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-multiuser">
+            <h3>Multi-usuário — a mesma máquina com logins Windows diferentes</h3>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat <strong>suporta múltiplos logins Windows</strong> na mesma máquina simultaneamente. Cada usuário abre sua própria instância sem um bloquear o outro. Desde a <strong>v1.4.64</strong>, o lock de instância única é calculado por usuário: <code>porta = 50200 + MD5(getpass.getuser().toLower()) mod 1000</code>, gerando uma porta determinística distinta por login dentro da faixa <code>[50200, 51199]</code>.
+            </p>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                <strong>Antes da v1.4.64:</strong> o lock usava porta fixa <code>50199</code>. Quando um usuário deixava o MB Chat rodando em background (ex.: minimizado na bandeja) e outro login entrava na mesma máquina, o novo usuário não conseguia abrir o app — o check detectava o socket do outro e saía silenciosamente via <code>os._exit(0)</code>, sem erro visível.
+            </p>
+            <div class="docs-note">
+                <strong>Cenário típico:</strong> PC de trabalho compartilhado onde dois funcionários fazem login em momentos diferentes. A partir da v1.4.64 cada um tem sua própria porta — sem colisão, sem necessidade de fechar manualmente o app do outro usuário antes de abrir o seu. Se você está em uma versão anterior e o app não abre em um login, verifique se outro usuário da máquina ainda tem o MB Chat rodando na bandeja; feche por lá ou atualize para a v1.4.64+.
+            </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-firewall">
+            <h3>Firewall — PC aparece online pra outros mas não vê ninguém</h3>
+            <p style="color: var(--navy-900); font-size: 0.9rem; margin-bottom: 1rem;">
+                Sintoma: o PC abre o MB Chat e a lista fica vazia, mas os outros PCs enxergam ele como online normalmente. Reinstalar o app não resolve. Causa: o Windows Defender Firewall está bloqueando pacotes de entrada (inbound) nas portas do MB Chat. A partir da <strong>v1.4.59</strong> o app detecta isso na primeira execução e pede permissão via UAC para criar as regras automaticamente. Se a janela for recusada ou não aparecer, basta liberar manualmente:
+            </p>
+            <ol style="color: var(--navy-900); font-size: 0.9rem; line-height: 1.7; padding-left: 1.5rem;">
+                <li>Abrir <strong>Painel de Controle → Sistema e Segurança → Windows Defender Firewall → Aplicativos permitidos</strong> (ou rodar <code>control firewall.cpl</code> e clicar em <em>Permitir um aplicativo ou recurso pelo Firewall do Windows Defender</em>).</li>
+                <li>Clicar em <strong>Alterar configurações</strong> (precisa de admin).</li>
+                <li>Procurar <strong>MBChat</strong> na lista. Se já aparecer, marcar as duas caixas: <strong>Particular</strong> e <strong>Público</strong>.</li>
+                <li>Se não aparecer, clicar em <strong>Permitir outro aplicativo…</strong>, <strong>Procurar…</strong> e selecionar <code>MBChat.exe</code> em <code>C:\Program Files\MBChat\MBChat.exe</code> (ou <code>%LOCALAPPDATA%\Programs\MBChat\MBChat.exe</code>). Adicionar e marcar as duas caixas.</li>
+                <li>Clicar <strong>OK</strong>, fechar o MB Chat e abrir de novo — os peers aparecem em até 15 segundos.</li>
+            </ol>
+            <div class="docs-note">
+                <strong>Alternativa rápida via admin:</strong> rodar o <code>tools/fix_firewall.bat</code> (no repositório) como administrador — ele cria as regras por porta (<code>UDP 50100/50110/50120</code> + <code>TCP 50101/50102</code>), sobrevive a reinstalações e reinicia o app.
+            </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-desinstalar">
+            <h3>Desinstalação Completa</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O desinstalador (Painel de Controle > Desinstalar) remove o executável e oferece a opção de manter ou apagar o histórico. Para limpeza total manual, remova os seguintes itens:
+            </p>
+            <table class="docs-table">
+                <thead>
+                    <tr>
+                        <th>O que remover</th>
+                        <th>Caminho</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Aplicação</td>
+                        <td><code>%LOCALAPPDATA%\Programs\MBChat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Banco de dados e imagens</td>
+                        <td><code>%APPDATA%\.mbchat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Log</td>
+                        <td><code>%APPDATA%\MBChat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Arquivos recebidos</td>
+                        <td><code>%USERPROFILE%\LanMessenger_Files\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Atalho Desktop</td>
+                        <td><code>%USERPROFILE%\Desktop\MB Chat.lnk</code></td>
+                    </tr>
+                    <tr>
+                        <td>Atalho Iniciar com Windows</td>
+                        <td><code>%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\MB Chat.lnk</code></td>
+                    </tr>
+                    <tr>
+                        <td>Menu Iniciar</td>
+                        <td><code>%APPDATA%\Microsoft\Windows\Start Menu\Programs\MB Chat\</code></td>
+                    </tr>
+                    <tr>
+                        <td>Registro (auto-start)</td>
+                        <td><code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\MBChat</code></td>
+                    </tr>
+                    <tr>
+                        <td>Registro (protocolo URL)</td>
+                        <td><code>HKCU\Software\Classes\mbchat\</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="docs-note">
+                <strong>Dica:</strong> Ao desinstalar pelo Painel de Controle, escolha "SIM" para manter o histórico ou "NÃO" para apagar tudo automaticamente. A limpeza manual só é necessária se a desinstalação falhar ou se quiser remover absolutamente todos os rastros.
+            </div>
+        </div>
+
+    </div><!-- docs-container -->
+</section>
+
+<section id="download">
+    <h2 class="section-title fade-in">Download</h2>
+    <div class="download-box fade-in">
+        <h3>MB Chat para Windows</h3>
+        <p>Instalador <b>web</b>: sempre baixa a versão mais recente ao executar. Atalho no Desktop, Menu Iniciar e desinstalador completo.</p>
+        <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_WebInstaller.exe" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Baixar Instalador
+        </a>
+    </div>
+</section>
+
+<footer>
+    <div class="footer-logo">
+        <img src="icon.png" alt="MB Chat">
+        <span>Chat</span>
+    </div>
+    <p><a href="https://github.com/pedropaivaf" target="_blank">Autor - pedropaivaf</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
+</footer>
+
+<script>
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) entry.target.classList.add('visible');
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Scroll spy para nav lateral dos docs
+    const docSections = document.querySelectorAll('.docs-section[id]');
+    const docLinks = document.querySelectorAll('#docs-nav a');
+    const spyObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                docLinks.forEach(a => a.classList.remove('active'));
+                const link = document.querySelector('#docs-nav a[href="#' + entry.target.id + '"]');
+                if (link) {
+                    link.classList.add('active');
+                    // Auto-scroll horizontal pra manter item ativo visível
+                    const inner = document.getElementById('docs-topbar-inner');
+                    if (inner) {
+                        const linkRect = link.getBoundingClientRect();
+                        const innerRect = inner.getBoundingClientRect();
+                        if (linkRect.left < innerRect.left + 40) {
+                            inner.scrollBy({ left: linkRect.left - innerRect.left - 60, behavior: 'smooth' });
+                        } else if (linkRect.right > innerRect.right - 40) {
+                            inner.scrollBy({ left: linkRect.right - innerRect.right + 60, behavior: 'smooth' });
+                        }
+                    }
+                }
+            }
+        });
+    }, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
+    docSections.forEach(s => spyObserver.observe(s));
+
+    // Setas do topbar de docs: scroll horizontal + visibilidade condicional
+    (function() {
+        const inner = document.getElementById('docs-topbar-inner');
+        const leftBtn = document.getElementById('docs-arrow-left');
+        const rightBtn = document.getElementById('docs-arrow-right');
+        if (!inner || !leftBtn || !rightBtn) return;
+
+        function updateArrows() {
+            const hasOverflow = inner.scrollWidth > inner.clientWidth + 1;
+            if (!hasOverflow) {
+                leftBtn.classList.remove('visible');
+                rightBtn.classList.remove('visible');
+                return;
+            }
+            const atStart = inner.scrollLeft <= 2;
+            const atEnd = inner.scrollLeft + inner.clientWidth >= inner.scrollWidth - 2;
+            leftBtn.classList.toggle('visible', !atStart);
+            rightBtn.classList.toggle('visible', !atEnd);
+        }
+
+        function scrollByStep(dir) {
+            const step = Math.max(120, inner.clientWidth * 0.6);
+            inner.scrollBy({ left: dir * step, behavior: 'smooth' });
+        }
+
+        leftBtn.addEventListener('click', () => scrollByStep(-1));
+        rightBtn.addEventListener('click', () => scrollByStep(1));
+        inner.addEventListener('scroll', updateArrows, { passive: true });
+        window.addEventListener('resize', updateArrows);
+        // Checa inicialmente após render
+        setTimeout(updateArrows, 100);
+        setTimeout(updateArrows, 500);
+    })();
+</script>
+
+</body>
+</html>

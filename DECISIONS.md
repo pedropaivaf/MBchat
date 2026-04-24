@@ -1,0 +1,134 @@
+# MB Chat - Decisoes Tecnicas e Troubleshooting
+
+## Descoberta de peers (por que MBChat e mais confiavel que LAN Messenger)
+
+LAN Messenger tem bug onde peers somem em redes com VPN, Hyper-V, switches gerenciados ou filtros de multicast. MBChat resolveu com 5 decisoes que trabalham juntas — NAO afrouxar nenhuma sem entender o impacto:
+
+1. **Tri-broadcast** em `_send_announce()` (network.py:348): cada announce sai por 3 caminhos — multicast `239.255.100.200`, broadcast global `255.255.255.255` e subnet-directed broadcast (`_get_subnet_broadcast()`). Se multicast for filtrado, os broadcasts garantem entrega.
+2. **Anuncio imediato em eventos** (network.py:295-316): `update_status`/`update_name`/`update_note`/`update_avatar` chamam `_send_announce()` na hora, sem esperar o ciclo.
+3. **Anuncio no startup** (network.py:283): primeiro announce sai antes do loop periodico.
+4. **Deteccao correta de NIC** em `get_local_ip()`: rota real pro 8.8.8.8 + enumeracao + filtro de interfaces virtuais.
+5. **Ciclo curto** (`DISCOVERY_INTERVAL = 15`, `PING_TIMEOUT = 45`): NAO aumentar para 60s estilo LAN Messenger.
+
+## Troubleshooting de rede
+
+Se um PC nao descobre peers:
+1. **Firewall (v1.4.59+ auto-fix via UAC)**: o app detecta regras ausentes na 1a execucao e pede permissao. Se recusar, liberar manualmente em:
+   `Painel de Controle > Sistema e Seguranca > Windows Defender Firewall > Aplicativos permitidos` — marcar **MBChat** nas colunas **Particular** e **Publico**. Se nao aparecer, `Permitir outro aplicativo... > Procurar... > MBChat.exe`.
+   Via CLI (admin): `netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any` + mesmo para TCP 50101,50102 (single-instance roda em porta loopback per-user — nao precisa de regra firewall). Ou rodar `tools/fix_firewall.bat` como admin.
+2. **Antivirus**: Kaspersky, Norton podem bloquear. Adicionar excecao.
+3. **Multiplas NICs**: VPN, Hyper-V, Docker criam interfaces virtuais. get_local_ip() tenta detectar a correta, mas pode pegar a errada. Desativar NICs virtuais resolve.
+4. **Subnet diferente**: PC deve estar na mesma subnet /24.
+5. **Porta ocupada**: Se 50100 ocupada, app tenta +10, +20, depois aleatoria. Porta aleatoria nao recebe broadcasts. Verificar com `netstat -an | findstr 50100`.
+
+## Decisoes de build
+
+- **--onedir** (NAO --onefile): --onefile causa "Failed to load Python DLL" no Win10 porque o loader de DLLs nao resolve dependencias dentro da pasta temporaria _MEI*.
+- **--noupx**: evita compressao que corrompe DLLs do VC runtime.
+- **PowerShell no auto-update**: usar `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env vars do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP%.
+- **_apply_and_restart()**: NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado.
+
+## VPN / Home-office — conexao externa para LAN do escritorio (v1.4.63+)
+
+**Problema:** multicast UDP (239.255.100.200) e broadcast (255.255.255.255) nao
+atravessam tuneis VPN L3. Um funcionario em home-office com VPN tem IP da rede
+interna mas nao enxerga os colegas pelo discovery padrao — so tcp unicast
+funciona naturalmente.
+
+**Solucao aditiva (nao quebra os 30 LAN-only):**
+
+1. Tabela `manual_peers (ip, note, created_at)` persistida em DB.
+2. Setting `vpn_enabled` (default `False`) no DB controla se os peers sao aplicados.
+3. `UDPDiscovery._manual_announce_loop` (thread 4, daemon) dorme DISCOVERY_INTERVAL
+   e envia announce unicast a cada IP em `_unicast_targets` se e somente se a
+   lista nao esta vazia. Lista vazia = zero overhead.
+4. `Messenger.set_vpn_enabled(True)` aplica os IPs salvos (chamada
+   `discovery.set_manual_peers(ips)`); `False` aplica lista vazia (para de
+   anunciar, mas mantem IPs no DB).
+5. **Peer exchange** via `MT_PEER_LIST`: quando o peer ancora recebe um
+   announce com flag `via_manual=True`, responde unicast com `{peers:[...]}`.
+   O cliente VPN adiciona esses IPs como `'auto'` targets (memoria only) e
+   passa a anunciar pra eles tambem. Resultado: 1 IP cadastrado = LAN inteira
+   visivel.
+
+**Defaults seguros:**
+- `vpn_enabled=False` por default (setting nao existe = retorna False)
+- Lista `manual_peers` vazia por default
+- Loop dorme e nao faz IO quando vazio
+- Caminho multicast/broadcast/subnet-broadcast intocado
+- Zero impacto nos 30 LAN users
+
+**Verificado com 9 cenarios end-to-end** (`audit_vpn.db` test):
+1. LAN normal sem config — comportamento original
+2. Cadastra peer com VPN off — persiste mas nao aplica
+3. Ativa VPN — aplica IPs salvos imediatamente
+4. Add novo peer com VPN on — novo IP aplicado imediatamente
+5. Desativa VPN — limpa targets ativos, IPs permanecem no DB
+6. Remove peer com VPN off — sem efeito colateral
+7. Religa — reaplica apenas peers restantes
+8. Fecha/reabre app — estado persiste (ON/OFF e lista)
+9. Lista vazia + VPN off — no crash
+
+**Por que peer exchange usa `'auto'` em memoria:** se persistisse, a lista
+cresceria sem controle (cada reinicio adicionaria todos os peers vistos).
+Memoria-only garante que so os peers ativos no ciclo atual ficam no loop —
+quando usuario desliga VPN e religa, so os `'manual'` persistidos sao
+reaplicados; os `'auto'` sao reconstruidos via peer exchange.
+
+## Single-instance lock por usuario (v1.4.64+)
+
+**Problema:** ate v1.4.63, `SINGLE_INSTANCE_PORT = 50199` era fixo. Em maquinas
+multi-usuario (PC compartilhado onde logins trocam), se o usuario A deixasse
+MBChat rodando em background e o usuario B entrasse, B nao conseguia abrir
+o app: `_check_single_instance()` detectava o lock TCP de A e saia silencioso
+via `os._exit(0)`. Pedro viveu esse bug em sua propria maquina apos outro
+login usar o app.
+
+**Fix:** porta deterministica por login Windows, dentro de `[50200, 51200)`:
+
+```python
+user = getpass.getuser().lower()
+h = int(hashlib.md5(user.encode()).hexdigest()[:8], 16)
+SINGLE_INSTANCE_PORT = 50200 + (h % 1000)
+```
+
+Cada usuario tem sua propria porta — `pedro.paiva` -> 50854,
+`guilherme.barra` -> 51054, etc. Sessoes diferentes nao colidem.
+
+**Nao reverter** para porta fixa. Nao diminuir o range de 1000 portas
+(colisoes explodem pelo paradoxo do aniversario).
+
+## Decisoes de arquitetura
+
+1. **1 usuario por maquina**: user_id = MAC + hostname, sem login/senha
+2. **Portas independentes do LAN Messenger**: 50100-50102 (LAN Messenger usa 50000-50002)
+3. **SQLite local, sem servidor central**: cada maquina e independente
+4. **tkinter nativo**: zero dependencias de GUI externas
+5. **Dependencias opcionais com graceful degradation**: PIL, pystray, winotify
+6. **Thread-safe by design**: root.after(), conexao SQL por thread, I/O em threads daemon
+7. **Chat limpo ao abrir**: historico via botao History
+8. **Contatos offline persistidos**: PCs ja vistos aparecem como offline
+9. **Firewall auto-config**: netsh na importacao de network.py
+10. **Protocolo URL customizado**: mbchat:// registrado em HKCU
+11. **Grupo mesh**: sem servidor de grupo, cada membro envia para todos via TCP
+12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True
+
+## Ponto unico de entrega de mensagens
+
+### Chat individual
+`messenger._on_tcp_message` chama `db.save_message()` ANTES de disparar o callback `on_message`. Quando `_open_chat(surface_only=True)` cria a janela, ja carrega a mensagem via `get_unread_messages`. O callback `gui._on_message`/`_on_image` NAO deve chamar `cw.receive_message()` depois de `_open_chat(surface_only=True)` — duplica a msg. No branch "janela ja existe", chamar `receive_message` e correto.
+
+### Grupos
+Usam buffer `_pending_group_msgs` em memoria (nao DB). `_open_group` pop'a esse buffer ao criar a janela. `_on_group_message` NAO deve empurrar para o buffer antes do surface e DEVE chamar `gw.receive_message` na lambda `_create` apos o surface. Nao misturar os dois padroes.
+
+## Taskbar LAN Messenger-style
+
+AppUserModelID (`MBContabilidade.MBChat`) agrupa todas as janelas sob o mesmo icone na taskbar. Cada Toplevel recebe `WS_EX_APPWINDOW` via `_force_taskbar_entry()`. `_force_taskbar_entry` so faz o ciclo `SW_HIDE`+`SW_SHOWNA` se `winfo_ismapped()` — em janela withdrawn pula o SW_SHOWNA para evitar flash visivel.
+
+Quando mensagem chega com app no tray, `_surface_chat_from_tray()` cria janela oculta, aplica estilo sem SW_SHOWNA, minimiza via `SW_SHOWMINNOACTIVE` e pisca SOMENTE a propria janela. Root NAO pisca.
+
+## Notificacoes Windows (winotify)
+
+v1.4.54: para o clique no toast dispatchar o `launch`, Windows exige AUMID registrado via atalho Start Menu. `_ensure_start_menu_shortcut()` cria atalho em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\MB Chat.lnk` com `System.AppUserModel.ID = APP_AUMID` via `IPropertyStore`. Roda so em frozen, idempotente.
+
+v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `_open_from_notification(peer)` substitui `_restore_and_open` para notificacoes.
