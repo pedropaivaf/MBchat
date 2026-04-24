@@ -11190,10 +11190,30 @@ class LanMessengerApp:
                               sashwidth=4, sashrelief='flat', bd=0)
         main.pack(fill='both', expand=True, padx=8, pady=(6, 8))
 
-        # Painel esquerdo: lista de contatos
+        # Painel esquerdo: lista de contatos (A-Z) + campo de busca por nome
         left_frame = tk.Frame(main, bg=panel_bg)
         tk.Label(left_frame, text='Contatos', font=('Segoe UI', 9, 'bold'),
-                 bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(8, 4))
+                 bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(8, 2))
+
+        name_search_frame = tk.Frame(left_frame, bg=panel_bg)
+        name_search_frame.pack(fill='x', padx=10, pady=(0, 4))
+        name_search_var = tk.StringVar()
+        name_search_entry = tk.Entry(name_search_frame, textvariable=name_search_var,
+                                      font=('Segoe UI', 9))
+        name_search_entry.pack(fill='x')
+        _name_ph = 'Buscar contato...'
+        name_search_entry.insert(0, _name_ph)
+        name_search_entry.config(fg='#999999')
+        def _name_focus_in(e):
+            if name_search_entry.get() == _name_ph:
+                name_search_entry.delete(0, 'end')
+                name_search_entry.config(fg='#000000')
+        def _name_focus_out(e):
+            if not name_search_entry.get().strip():
+                name_search_entry.insert(0, _name_ph)
+                name_search_entry.config(fg='#999999')
+        name_search_entry.bind('<FocusIn>', _name_focus_in)
+        name_search_entry.bind('<FocusOut>', _name_focus_out)
 
         tree_wrap = tk.Frame(left_frame, bg=panel_bg)
         tree_wrap.pack(fill='both', expand=True, padx=4, pady=(0, 6))
@@ -11247,8 +11267,13 @@ class LanMessengerApp:
             _name_cache[peer_id] = name
             return name
 
-        # Lista de contatos (snapshot na abertura, ordenada por last_ts DESC)
-        all_contacts = db.get_history_contacts()
+        # Lista de contatos (snapshot na abertura). Depois ordena A-Z por display_name
+        # (case-insensitive, usando locale). Mantem o last_ts so por referencia.
+        _raw_contacts = db.get_history_contacts()
+        # Pre-resolve nome e ordena alfabeticamente
+        def _sort_key(c):
+            return _resolve_name(c['peer']).lower()
+        all_contacts = sorted(_raw_contacts, key=_sort_key)
 
         def _parse_date(s):
             s = s.strip()
@@ -11358,12 +11383,17 @@ class LanMessengerApp:
             # Preserva selecao se possivel
             prev = _current_peer[0]
             contacts_tree.delete(*contacts_tree.get_children())
+            # Filtro local por nome (entry "Buscar contato...")
+            raw_name_q = name_search_entry.get().strip()
+            name_q = '' if raw_name_q == _name_ph else raw_name_q.lower()
             shown = 0
             for c in all_contacts:
                 peer = c['peer']
                 if visible_peers is not None and peer not in visible_peers:
                     continue
                 name = _resolve_name(peer)
+                if name_q and name_q not in name.lower():
+                    continue
                 contacts_tree.insert('', 'end', iid=peer, values=(name,))
                 shown += 1
             if prev and contacts_tree.exists(prev):
@@ -11441,6 +11471,7 @@ class LanMessengerApp:
 
         contacts_tree.bind('<<TreeviewSelect>>', _on_select)
         search_var.trace_add('write', _schedule_refresh)
+        name_search_var.trace_add('write', _schedule_refresh)
         date_from_entry.bind('<KeyRelease>', _schedule_refresh)
         date_to_entry.bind('<KeyRelease>', _schedule_refresh)
         win.bind('<Control-f>', lambda e: search_entry.focus_set())
