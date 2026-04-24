@@ -108,6 +108,24 @@ _CODE_BLOCK_RE = re.compile(r'```([A-Za-z0-9_+-]*)?\s*\n?(.*?)```', re.DOTALL)
 # Codigo inline: `texto` (uma linha so, sem aspas duplicadas)
 _CODE_INLINE_RE = re.compile(r'`([^`\n]+)`')
 
+# Formatacao markdown-like nas mensagens.
+# Lookarounds (?<![\w*_~]) / (?![\w*_~]) evitam match em identificadores como
+# snake_case_var ou expressoes como 5*2*3 — so aplica se os markers estiverem
+# cercados por espaco, pontuacao comum ou inicio/fim de string.
+# Ordem importa: __underline__ antes de _italic_ (double antes de single).
+#   __texto__   = sublinhado
+#   *texto*     = negrito
+#   _texto_     = italico
+#   ~texto~     = tachado
+_MD_FORMAT_RE = re.compile(
+    r'(?<![\w*_~])(?:'
+    r'__([^_\n]+?)__'
+    r'|\*([^*\n]+?)\*'
+    r'|_([^_\n]+?)_'
+    r'|~([^~\n]+?)~'
+    r')(?![\w*_~])'
+)
+
 # Conjuntos de palavras-chave para syntax highlighting.
 _PY_KEYWORDS = {
     'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await',
@@ -981,7 +999,7 @@ def _allow_uipi_drop(widget):
 # - Edicao no meio do texto e livre (nao destroi o que o usuario esta editando)
 # - Cap de 8 digitos (10 chars com as barras)
 # - <<Paste>> reformata o texto colado
-def _bind_date_mask(entry, var, placeholder=''):
+def _bind_date_mask(entry, var, placeholder='', next_widget=None):
     NAV_KEYS = ('Left', 'Right', 'Home', 'End', 'Tab', 'Up', 'Down',
                 'Escape', 'Return', 'Shift_L', 'Shift_R',
                 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Caps_Lock')
@@ -1040,6 +1058,9 @@ def _bind_date_mask(entry, var, placeholder=''):
             if new_pos == len(new_val) and len(new_val) in (2, 5):
                 entry.insert('end', '/')
                 entry.icursor('end')
+            # Data completa (dd/mm/aaaa = 10 chars) → pula pro proximo campo
+            if next_widget is not None and len(entry.get()) == 10:
+                entry.after_idle(lambda: next_widget.focus_set())
         except (tk.TclError, ValueError):
             pass
         return 'break'
@@ -3235,6 +3256,26 @@ class ChatWindow(tk.Toplevel):
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
         _Tooltip(btn_emoji, 'Emojis')
 
+        # Botoes de formatacao: Negrito / Italico / Sublinhado / Tachado
+        import tkinter.font as _tkfont_btn
+        _fmt_u = _tkfont_btn.Font(family='Segoe UI', size=9, weight='bold', underline=True)
+        _fmt_s = _tkfont_btn.Font(family='Segoe UI', size=9, weight='bold', overstrike=True)
+        for _letter, _font, _cmd, _tip in [
+            ('B', ('Segoe UI', 9, 'bold'),
+             lambda: self._wrap_selection_fmt('*', '*'), 'Negrito (*texto*)'),
+            ('I', ('Segoe UI', 9, 'italic'),
+             lambda: self._wrap_selection_fmt('_', '_'), 'Italico (_texto_)'),
+            ('U', _fmt_u,
+             lambda: self._wrap_selection_fmt('__', '__'), 'Sublinhado (__texto__)'),
+            ('S', _fmt_s,
+             lambda: self._wrap_selection_fmt('~', '~'), 'Tachado (~texto~)'),
+        ]:
+            _b = tk.Button(btn_frame, text=_letter, font=_font,
+                           bg=win_bg, fg=flat_fg, relief='flat', bd=0,
+                           cursor='hand2', padx=4, pady=2, command=_cmd)
+            _b.pack(side='left', pady=2, padx=(0, 2))
+            _Tooltip(_b, _tip)
+
         # Botao <> para inserir bloco de codigo (triplo backtick)
         btn_code = tk.Button(btn_frame, text='</>',
                              font=('Consolas', 9, 'bold'),
@@ -3458,6 +3499,14 @@ class ChatWindow(tk.Toplevel):
                                      font=('Segoe UI', 9, 'bold'),
                                      lmargin1=14, lmargin2=14, rmargin=14,
                                      spacing1=6, spacing3=6)
+        # Formatacao inline: negrito, italico, sublinhado, tachado
+        import tkinter.font as _tkfont
+        _u_font = _tkfont.Font(family='Segoe UI', size=10, underline=True)
+        _s_font = _tkfont.Font(family='Segoe UI', size=10, overstrike=True)
+        self.chat_text.tag_configure('fmt_bold', font=('Segoe UI', 10, 'bold'))
+        self.chat_text.tag_configure('fmt_italic', font=('Segoe UI', 10, 'italic'))
+        self.chat_text.tag_configure('fmt_underline', font=_u_font)
+        self.chat_text.tag_configure('fmt_strike', font=_s_font)
         # Codigo: bloco escuro estilo Discord/Notion
         self.chat_text.tag_configure('code_block',
                                      background='#1e293b',
@@ -3753,6 +3802,28 @@ class ChatWindow(tk.Toplevel):
         except Exception:
             log.exception('erro em _wrap_selection_code')
 
+    # Envolve a selecao com os markers esquerdo/direito. Se nao ha selecao, insere
+    # os markers e posiciona o cursor entre eles para o usuario digitar dentro.
+    def _wrap_selection_fmt(self, left, right):
+        try:
+            try:
+                sel_start = self.entry.index('sel.first')
+                sel_end = self.entry.index('sel.last')
+                sel_text = self.entry.get(sel_start, sel_end)
+            except Exception:
+                sel_start = sel_end = None
+                sel_text = ''
+            if sel_text:
+                self.entry.delete(sel_start, sel_end)
+                self.entry.insert(sel_start, left + sel_text + right)
+            else:
+                cur = self.entry.index('insert')
+                self.entry.insert(cur, left + right)
+                self.entry.mark_set('insert', f'{cur}+{len(left)}c')
+            self.entry.focus_set()
+        except Exception:
+            log.exception('erro em _wrap_selection_fmt')
+
     # Lê o conteúdo do campo de entrada reconstruindo emojis a partir das imagens.
     # Percorre todos os tokens do widget Text (texto puro e imagens embutidas).
     # Imagens são convertidas de volta ao caractere emoji via o mapa interno.
@@ -3805,9 +3876,33 @@ class ChatWindow(tk.Toplevel):
         last = 0
         for m in _URL_RE.finditer(text):
             if m.start() > last:
-                self._insert_emoji_run(text[last:m.start()], tag, bg)
+                self._insert_format_run(text[last:m.start()], tag, bg)
             url = m.group(0)
             self._insert_link(url, tag)
+            last = m.end()
+        if last < len(text):
+            self._insert_format_run(text[last:], tag, bg)
+
+    # Aplica formatacao inline (negrito/italico/sublinhado/tachado) via markers markdown
+    # antes de delegar ao renderer de emojis. Cada segmento formatado ganha uma tag
+    # extra sobreposta ao tag base.
+    def _insert_format_run(self, text, tag, bg):
+        last = 0
+        for m in _MD_FORMAT_RE.finditer(text):
+            if m.start() > last:
+                self._insert_emoji_run(text[last:m.start()], tag, bg)
+            if m.group(1):
+                content, fmt_tag = m.group(1), 'fmt_underline'
+            elif m.group(2):
+                content, fmt_tag = m.group(2), 'fmt_bold'
+            elif m.group(3):
+                content, fmt_tag = m.group(3), 'fmt_italic'
+            else:
+                content, fmt_tag = m.group(4), 'fmt_strike'
+            seg_start = self.chat_text.index('end-1c')
+            self._insert_emoji_run(content, tag, bg)
+            seg_end = self.chat_text.index('end-1c')
+            self.chat_text.tag_add(fmt_tag, seg_start, seg_end)
             last = m.end()
         if last < len(text):
             self._insert_emoji_run(text[last:], tag, bg)
@@ -6445,6 +6540,26 @@ class GroupChatWindow(tk.Toplevel):
                                   command=self._show_emoji_picker)
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
 
+        # Botoes de formatacao: Negrito / Italico / Sublinhado / Tachado
+        import tkinter.font as _tkfont_grp
+        _gfmt_u = _tkfont_grp.Font(family='Segoe UI', size=9, weight='bold', underline=True)
+        _gfmt_s = _tkfont_grp.Font(family='Segoe UI', size=9, weight='bold', overstrike=True)
+        for _letter, _font, _cmd, _tip in [
+            ('B', ('Segoe UI', 9, 'bold'),
+             lambda: self._wrap_selection_fmt('*', '*'), 'Negrito (*texto*)'),
+            ('I', ('Segoe UI', 9, 'italic'),
+             lambda: self._wrap_selection_fmt('_', '_'), 'Italico (_texto_)'),
+            ('U', _gfmt_u,
+             lambda: self._wrap_selection_fmt('__', '__'), 'Sublinhado (__texto__)'),
+            ('S', _gfmt_s,
+             lambda: self._wrap_selection_fmt('~', '~'), 'Tachado (~texto~)'),
+        ]:
+            _b = tk.Button(btn_frame, text=_letter, font=_font,
+                           bg=win_bg, fg=flat_fg, relief='flat', bd=0,
+                           cursor='hand2', padx=4, pady=2, command=_cmd)
+            _b.pack(side='left', pady=2, padx=(0, 2))
+            _Tooltip(_b, _tip)
+
         # Botao <> para inserir bloco de codigo (triplo backtick)
         btn_code = tk.Button(btn_frame, text='</>',
                              font=('Consolas', 9, 'bold'), relief='flat',
@@ -6664,6 +6779,14 @@ class GroupChatWindow(tk.Toplevel):
                                      font=('Segoe UI', 9, 'bold'),
                                      lmargin1=14, lmargin2=14, rmargin=14,
                                      spacing1=6, spacing3=6)
+        # Formatacao inline: negrito, italico, sublinhado, tachado
+        import tkinter.font as _tkfont
+        _u_font = _tkfont.Font(family='Segoe UI', size=10, underline=True)
+        _s_font = _tkfont.Font(family='Segoe UI', size=10, overstrike=True)
+        self.chat_text.tag_configure('fmt_bold', font=('Segoe UI', 10, 'bold'))
+        self.chat_text.tag_configure('fmt_italic', font=('Segoe UI', 10, 'italic'))
+        self.chat_text.tag_configure('fmt_underline', font=_u_font)
+        self.chat_text.tag_configure('fmt_strike', font=_s_font)
         # Codigo: bloco escuro estilo Discord/Notion
         self.chat_text.tag_configure('code_block',
                                      background='#1e293b',
@@ -7140,6 +7263,28 @@ class GroupChatWindow(tk.Toplevel):
             self.entry.focus_set()
         except Exception:
             log.exception('erro em _wrap_selection_code')
+
+    # Envolve a selecao com markers (bold/italic/underline/strike). Sem selecao, posiciona
+    # o cursor entre os markers para o usuario digitar dentro.
+    def _wrap_selection_fmt(self, left, right):
+        try:
+            try:
+                sel_start = self.entry.index('sel.first')
+                sel_end = self.entry.index('sel.last')
+                sel_text = self.entry.get(sel_start, sel_end)
+            except Exception:
+                sel_start = sel_end = None
+                sel_text = ''
+            if sel_text:
+                self.entry.delete(sel_start, sel_end)
+                self.entry.insert(sel_start, left + sel_text + right)
+            else:
+                cur = self.entry.index('insert')
+                self.entry.insert(cur, left + right)
+                self.entry.mark_set('insert', f'{cur}+{len(left)}c')
+            self.entry.focus_set()
+        except Exception:
+            log.exception('erro em _wrap_selection_fmt')
 
     # Extrai o conteúdo do campo de entrada, convertendo imagens de volta para texto.
     # Percorre o dump do widget Text e reconstrói a string com emojis Unicode.
@@ -11179,7 +11324,8 @@ class LanMessengerApp:
         date_to_entry.bind('<FocusIn>', lambda e: _on_focus_in(date_to_entry))
         date_to_entry.bind('<FocusOut>', lambda e: _on_focus_out(date_to_entry))
 
-        _bind_date_mask(date_from_entry, date_from_var, placeholder=ph)
+        _bind_date_mask(date_from_entry, date_from_var, placeholder=ph,
+                         next_widget=date_to_entry)
         _bind_date_mask(date_to_entry, date_to_var, placeholder=ph)
 
         # Separador
@@ -11472,6 +11618,9 @@ class LanMessengerApp:
         contacts_tree.bind('<<TreeviewSelect>>', _on_select)
         search_var.trace_add('write', _schedule_refresh)
         name_search_var.trace_add('write', _schedule_refresh)
+        # Fallback: bind KeyRelease tambem (trace_add em textvariable pode nao disparar em alguns
+        # cenarios com Entry dentro de Toplevel; KeyRelease garante refresh a cada tecla)
+        name_search_entry.bind('<KeyRelease>', _schedule_refresh)
         date_from_entry.bind('<KeyRelease>', _schedule_refresh)
         date_to_entry.bind('<KeyRelease>', _schedule_refresh)
         win.bind('<Control-f>', lambda e: search_entry.focus_set())
