@@ -3461,6 +3461,12 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.tag_bind('copy_btn', '<Leave>',
                                 lambda e: self.chat_text.config(cursor='arrow'))
 
+        # Tag de mensagem do sistema (status do peer, etc) — cinza italico centralizado
+        self.chat_text.tag_configure('sys_msg',
+                                     font=('Segoe UI', 8, 'italic'),
+                                     foreground='#718096',
+                                     justify='center')
+
         # Tags para quote/reply (barra azul simulada via lmargin + background)
         self.chat_text.tag_configure('quote_name',
                                      background='#e2e8f0',
@@ -4385,6 +4391,17 @@ class ChatWindow(tk.Toplevel):
                                 lambda e: self.chat_text.config(cursor='hand2'))
         self.chat_text.tag_bind(link_tag, '<Leave>',
                                 lambda e: self.chat_text.config(cursor=''))
+
+    # Mensagem de sistema no chat (ex: 'X esta off-line.') — cinza italica centralizada,
+    # estilo LAN Messenger. Nao envia pela rede, nao salva no DB.
+    def system_message(self, text):
+        self.chat_text.configure(state='normal')
+        self.chat_text.insert('end', f'— {text} —\n\n', 'sys_msg')
+        self.chat_text.configure(state='disabled')
+        try:
+            self.chat_text.see('end')
+        except Exception:
+            pass
 
     # Adiciona uma mensagem à área de chat com formatação e suporte a emojis.
     #
@@ -9324,10 +9341,13 @@ class LanMessengerApp:
         self.tree = ttk.Treeview(tree_frame, style='Contacts.Treeview',
                                  show='tree', selectmode='browse')
 
-        # Custom thin scrollbar (LAN Messenger style)
+        # Custom thin scrollbar (LAN Messenger style) — sempre visivel quando o tree
+        # esta presente. Track sutil cinza-claro (#edf0f3), thumb so aparece quando ha
+        # overflow. Hover expande pra 12px; click+drag desliza.
+        self._SCROLL_TRACK_BG = '#edf0f3'
         self._scroll_canvas = tk.Canvas(tree_frame, width=6,
                                         highlightthickness=0, bd=0,
-                                        bg=BG_WHITE)
+                                        bg=self._SCROLL_TRACK_BG)
         self._scroll_thumb = None
         self._scroll_dragging = False
         self._scroll_drag_y = 0
@@ -9339,12 +9359,11 @@ class LanMessengerApp:
 
         def _scroll_set(lo, hi):
             self._scroll_lo, self._scroll_hi = float(lo), float(hi)
-            if float(lo) <= 0.0 and float(hi) >= 1.0:
-                self._scroll_canvas.pack_forget()
-            else:
-                if not self._scroll_canvas.winfo_ismapped():
-                    self._scroll_canvas.pack(side='right', fill='y')
-                _scroll_redraw()
+            # Sempre mantem o canvas visivel (track sutil sempre presente).
+            # O thumb so e desenhado se houver overflow real.
+            if not self._scroll_canvas.winfo_ismapped():
+                self._scroll_canvas.pack(side='right', fill='y')
+            _scroll_redraw()
 
         def _scroll_redraw():
             c = self._scroll_canvas
@@ -9352,17 +9371,27 @@ class LanMessengerApp:
             h = c.winfo_height()
             if h < 2:
                 return
+            # Sem overflow: nao desenha thumb, so o track de fundo continua visivel.
+            if self._scroll_lo <= 0.0 and self._scroll_hi >= 1.0:
+                return
             w = c.winfo_width()
             y1 = max(int(self._scroll_lo * h), 0)
             y2 = min(int(self._scroll_hi * h), h)
-            if y2 - y1 < 20:
+            if y2 - y1 < 24:
                 mid = (y1 + y2) // 2
-                y1, y2 = max(mid - 10, 0), min(mid + 10, h)
+                y1, y2 = max(mid - 12, 0), min(mid + 12, h)
             pad = 1 if w <= self._THIN else 2
             t = self._theme if hasattr(self, '_theme') else THEMES.get('MB Contabilidade')
-            thumb_color = t.get('fg_gray', '#888888')
-            c.create_rectangle(pad, y1 + 2, w - pad, y2 - 2,
+            # Thumb mais escuro quando hover (wide), mais sutil quando thin
+            thumb_color = '#94a3b8' if self._scroll_wide else '#cbd5e0'
+            # Cantos arredondados subtis no thumb (overlapping ovals nas pontas)
+            r = max((w - 2 * pad) // 2, 2)
+            c.create_rectangle(pad, y1 + r, w - pad, y2 - r,
                                fill=thumb_color, outline='', width=0)
+            c.create_oval(pad, y1, w - pad, y1 + 2 * r,
+                          fill=thumb_color, outline='', width=0)
+            c.create_oval(pad, y2 - 2 * r, w - pad, y2,
+                          fill=thumb_color, outline='', width=0)
 
         def _scroll_enter(e):
             self._scroll_wide = True
@@ -9375,13 +9404,28 @@ class LanMessengerApp:
                 self._scroll_canvas.configure(width=self._THIN)
                 _scroll_redraw()
 
+        # Drag position-based com feedback imediato. O thumb segue o cursor 1:1
+        # mesmo se o Treeview arredondar pra linha (o que daria sensacao de "pesado").
+        # Atualizamos lo/hi localmente e redesenhamos antes de chamar yview_moveto.
         def _scroll_press(e):
             self._scroll_dragging = True
-            self._scroll_drag_y = e.y
             h = self._scroll_canvas.winfo_height()
-            click_frac = e.y / h if h > 0 else 0
+            if h < 1:
+                self._scroll_drag_offset = 0
+                return
+            click_frac = e.y / h
+            visible = max(self._scroll_hi - self._scroll_lo, 0.001)
             if click_frac < self._scroll_lo or click_frac > self._scroll_hi:
-                self.tree.yview_moveto(max(click_frac - (self._scroll_hi - self._scroll_lo) / 2, 0))
+                # Click fora do thumb: centraliza o thumb sob o cursor e ja arrasta
+                new_lo = max(0.0, min(1.0 - visible, click_frac - visible / 2))
+                self._scroll_lo = new_lo
+                self._scroll_hi = new_lo + visible
+                _scroll_redraw()
+                self.tree.yview_moveto(new_lo)
+                self._scroll_drag_offset = e.y - int(new_lo * h)
+            else:
+                # Click no thumb: preserva offset (cursor pode estar em qq lugar dele)
+                self._scroll_drag_offset = e.y - int(self._scroll_lo * h)
 
         def _scroll_drag(e):
             if not self._scroll_dragging:
@@ -9389,10 +9433,17 @@ class LanMessengerApp:
             h = self._scroll_canvas.winfo_height()
             if h < 1:
                 return
-            dy = (e.y - self._scroll_drag_y) / h
-            self._scroll_drag_y = e.y
-            new_lo = self._scroll_lo + dy
-            self.tree.yview_moveto(max(0.0, min(1.0, new_lo)))
+            visible = max(self._scroll_hi - self._scroll_lo, 0.001)
+            # Posicao desejada do topo do thumb (cursor menos offset capturado)
+            top_y = e.y - self._scroll_drag_offset
+            new_lo = max(0.0, min(1.0 - visible, top_y / h))
+            # Atualiza estado e redesenha IMEDIATAMENTE — thumb segue o cursor
+            # mesmo se o Treeview arredondar pra linha (sensacao de leveza).
+            if abs(new_lo - self._scroll_lo) > 1e-6:
+                self._scroll_lo = new_lo
+                self._scroll_hi = new_lo + visible
+                _scroll_redraw()
+                self.tree.yview_moveto(new_lo)
 
         def _scroll_release(e):
             self._scroll_dragging = False
@@ -9424,9 +9475,10 @@ class LanMessengerApp:
         # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui (sempre ultimo)
         self.group_groups = self.tree.insert('', 'end', text='Grupos',
                                              open=True, tags=('group',))
-        # Offline: contatos offline nao aparecem no TreeView (sao detachados)
-        # group_offline mantido como atributo mas sem no visivel
-        self.group_offline = None
+        # Cria o no raiz "Offline" — contatos offline aparecem aqui recolhidos por padrao.
+        # Fica logicamente apos Grupos. Detachado quando vazio (via _update_offline_visibility).
+        self.group_offline = self.tree.insert('', 'end', text='Offline',
+                                              open=False, tags=('group',))
         # Dicionário que mapeia group_id -> iid do item no TreeView
         self._group_tree_items = {}  # group_id -> tree item id
         # Configura visual do cabeçalho de seção (cinza, bold, menor)
@@ -9447,6 +9499,94 @@ class LanMessengerApp:
         self.tree.bind('<Double-1>', self._on_tree_dbl)
         # Botão direito abre menu de contexto
         self.tree.bind('<Button-3>', self._on_tree_right)
+
+        # Tooltip flutuante com a nota completa do contato — aparece ao passar o
+        # mouse sobre uma linha e ficar parado por 700ms. Util quando a janela
+        # esta estreita e a nota fica cortada na renderizacao da linha.
+        self._note_tip = None
+        self._note_tip_iid = None
+        self._note_tip_after = None
+
+        def _note_tip_hide():
+            if self._note_tip is not None:
+                try:
+                    self._note_tip.destroy()
+                except Exception:
+                    pass
+                self._note_tip = None
+            self._note_tip_iid = None
+            if self._note_tip_after is not None:
+                try:
+                    self.root.after_cancel(self._note_tip_after)
+                except Exception:
+                    pass
+                self._note_tip_after = None
+
+        def _note_tip_show(iid, x_root, y_root):
+            uid = None
+            for u, i in self.peer_items.items():
+                if i == iid:
+                    uid = u
+                    break
+            if not uid:
+                return
+            note = self.peer_info.get(uid, {}).get('note', '')
+            if not note or not note.strip():
+                return
+            tw = tk.Toplevel(self.root)
+            tw.wm_overrideredirect(True)
+            tw.configure(bg='#1a202c')
+            try:
+                tw.attributes('-topmost', True)
+            except Exception:
+                pass
+            tk.Label(tw, text=note, font=('Segoe UI', 9),
+                     bg='#1a202c', fg='#ffffff', padx=8, pady=4,
+                     wraplength=320, justify='left').pack()
+            # Posicionamento inteligente: por padrao tenta a ESQUERDA do cursor
+            # (a lista de contatos ocupa o lado direito do app — abrir pra
+            # esquerda deixa o popup totalmente visivel sem cortar). Se nao
+            # couber a esquerda, fallback pra direita. Mesmo tratamento vertical.
+            tw.update_idletasks()
+            tw_w = tw.winfo_reqwidth()
+            tw_h = tw.winfo_reqheight()
+            try:
+                sw = self.root.winfo_screenwidth()
+                sh = self.root.winfo_screenheight()
+            except Exception:
+                sw, sh = 1920, 1080
+            margin = 8
+            x = x_root - tw_w - 14   # esquerda do cursor por padrao
+            if x < margin:
+                # Nao coube a esquerda: tenta a direita
+                x = x_root + 14
+                if x + tw_w > sw - margin:
+                    x = sw - tw_w - margin
+            y = y_root + 18
+            if y + tw_h > sh - margin:
+                y = y_root - tw_h - 8
+                if y < margin:
+                    y = margin
+            tw.wm_geometry(f'+{x}+{y}')
+            self._note_tip = tw
+
+        def _on_tree_motion(event):
+            iid = self.tree.identify_row(event.y)
+            if iid != self._note_tip_iid:
+                # Mudou de linha (ou saiu): esconde o tooltip atual e reagenda
+                _note_tip_hide()
+                self._note_tip_iid = iid
+                if iid:
+                    x_root = self.tree.winfo_rootx() + event.x
+                    y_root = self.tree.winfo_rooty() + event.y
+                    self._note_tip_after = self.root.after(
+                        700, lambda: _note_tip_show(iid, x_root, y_root))
+
+        def _on_tree_leave(_e=None):
+            _note_tip_hide()
+
+        self.tree.bind('<Motion>', _on_tree_motion)
+        self.tree.bind('<Leave>', _on_tree_leave)
 
         # Menu de contexto (clique direito no contato)
         self.ctx_menu = tk.Menu(self.root, tearoff=0, font=FONT)
@@ -9879,6 +10019,7 @@ class LanMessengerApp:
         query = self._search_var.get().strip().lower()  # texto de busca em minusculas
         if query == 'buscar contatos...' or not query:  # busca vazia ou placeholder
             # Restaurar todos os contatos online nos grupos corretos
+            touched_parents = set()
             for uid, iid in self.peer_items.items():
                 tags = self.tree.item(iid, 'tags')
                 if 'offline' in tags:
@@ -9887,7 +10028,14 @@ class LanMessengerApp:
                 if not cur_parent:
                     # Item estava detachado (filtrado), reattach em Geral
                     self.tree.reattach(iid, self.group_general, 'end')
-                # Se ja esta no parent correto, nao move (evita pipocar)
+                    touched_parents.add(self.group_general)
+            # Reatacha headers de secao caso tenham sido detachados quando vazios
+            self._update_general_visibility()
+            self._update_offline_visibility()
+            # Reordena alfabeticamente os parents que receberam reattach
+            # (reattach em 'end' nao mantem ordem alfabetica original)
+            for p in touched_parents:
+                self._sort_tree_children(p)
             return
         for uid, iid in self.peer_items.items():
             tags = self.tree.item(iid, 'tags')
@@ -9895,8 +10043,9 @@ class LanMessengerApp:
                 continue  # offline permanece escondido
             info = self.peer_info.get(uid, {})
             name = info.get('display_name', '').lower()
-            note = info.get('note', '').lower()
-            if query in name or query in note:
+            # Filtra somente por nome — incluir nota gera falsos positivos
+            # (ex: digitar 'ta' casava 'acredita' na nota da luana).
+            if query in name:
                 # Match: garantir que esta visivel sem mover de posicao
                 cur_parent = self.tree.parent(iid)
                 if not cur_parent:
@@ -10649,6 +10798,27 @@ class LanMessengerApp:
         except tk.TclError:
             pass
 
+    # Esconde a secao Offline quando vazia, mostra com contagem 'Offline (N)' quando tem filhos.
+    # Espelha o padrao de _update_general_visibility (mas Offline comeca recolhida com open=False).
+    def _update_offline_visibility(self):
+        try:
+            if self.group_offline is None:
+                return
+            children = self.tree.get_children(self.group_offline)
+            n = len(children)
+            root_children = self.tree.get_children('')
+            is_attached = self.group_offline in root_children
+            if n > 0:
+                self.tree.item(self.group_offline, text=f'Offline ({n})')
+                if not is_attached:
+                    self.tree.reattach(self.group_offline, '', 'end')
+                self._enforce_section_order()
+            else:
+                if is_attached:
+                    self.tree.detach(self.group_offline)
+        except tk.TclError:
+            pass
+
     # Reancora Geral imediatamente antes de Grupos, sem mexer nos depts existentes.
     def _reattach_general_before_groups(self):
         try:
@@ -10661,20 +10831,24 @@ class LanMessengerApp:
         except tk.TclError:
             pass
 
-    # Forca a ordem global [depts..., Geral, Grupos] entre os top-level do tree.
-    # Chamada apos qualquer mutacao que possa ter reorganizado Geral/Grupos.
+    # Forca a ordem global [depts..., Geral, Grupos, Offline] entre os top-level do tree.
+    # Chamada apos qualquer mutacao que possa ter reorganizado as secoes.
     def _enforce_section_order(self):
         try:
             root_children = list(self.tree.get_children(''))
             if not root_children:
                 return
-            section_nodes = {self.group_general, self.group_groups}
+            section_nodes = {self.group_general, self.group_groups,
+                             self.group_offline}
             depts = [c for c in root_children if c not in section_nodes]
             ordered = list(depts)
             if self.group_general in root_children:
                 ordered.append(self.group_general)
             if self.group_groups in root_children:
                 ordered.append(self.group_groups)
+            if (self.group_offline is not None
+                    and self.group_offline in root_children):
+                ordered.append(self.group_offline)
             for i, node in enumerate(ordered):
                 if root_children[i] != node:
                     self.tree.move(node, '', i)
@@ -10690,10 +10864,22 @@ class LanMessengerApp:
         dept = info.get('department', '')
         ramal = info.get('ramal', '')
 
-        # Determina o grupo pai (offline = detach; online/away/busy = Geral).
-        # Setor do contato e exibido na propria linha (acima do nome), nao como secao.
+        # Detecta transicao offline -> online: mostra system_message no chat
+        # aberto com esse peer (LAN Messenger style).
+        prev_status = self.peer_info.get(uid, {}).get('status', None)
+        if (prev_status == 'offline' and tag != 'offline'
+                and uid in self.chat_windows):
+            try:
+                cw = self.chat_windows[uid]
+                if cw.winfo_exists():
+                    cw.system_message(f'{name} está on-line.')
+            except Exception:
+                pass
+
+        # Determina o grupo pai. Setor do contato e exibido na propria linha
+        # (acima do nome), nao como secao. Offline vai pra secao recolhida no fim.
         if tag == 'offline':
-            parent = None  # offline nao aparece no TreeView
+            parent = self.group_offline
         else:
             parent = self.group_general
 
@@ -10735,26 +10921,16 @@ class LanMessengerApp:
             # Sempre atualiza (nota/status podem mudar)
             self.tree.item(iid, text=display, tags=(tag,), image=image)
 
-            if parent is None:
-                # Offline: esconde do TreeView
-                self.tree.detach(iid)
-            elif old_parent != parent:
+            if old_parent != parent:
                 self.tree.move(iid, parent, 'end')
                 self._sort_tree_children(parent)
             else:
                 self._sort_tree_children(parent)
         else:
-            if parent is None:
-                # Offline novo: insere em Geral e detacha (precisa existir para referencia)
-                iid = self.tree.insert(self.group_general, 'end',
-                                       text=display, tags=(tag,), image=image)
-                self.peer_items[uid] = iid
-                self.tree.detach(iid)
-            else:
-                iid = self.tree.insert(parent, 'end',
-                                       text=display, tags=(tag,), image=image)
-                self.peer_items[uid] = iid
-                self._sort_tree_children(parent)
+            iid = self.tree.insert(parent, 'end',
+                                   text=display, tags=(tag,), image=image)
+            self.peer_items[uid] = iid
+            self._sort_tree_children(parent)
 
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
 
@@ -10770,15 +10946,33 @@ class LanMessengerApp:
                 gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
         self._update_general_visibility()
+        self._update_offline_visibility()
 
-    # Marca peer como offline e esconde do TreeView.
+    # Marca peer como offline e move para a secao Offline (recolhida).
     def _remove_contact(self, uid):
         if uid in self.peer_items:
             iid = self.peer_items[uid]
             self.tree.item(iid, tags=('offline',))
-            self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+            if self.group_offline is not None:
+                try:
+                    self.tree.move(iid, self.group_offline, 'end')
+                except tk.TclError:
+                    pass
+            else:
+                self.tree.detach(iid)
+        # Se o usuario esta com a janela de chat aberta com esse peer,
+        # mostra mensagem de sistema cinza no chat (LAN Messenger style).
+        if uid in self.chat_windows:
+            try:
+                cw = self.chat_windows[uid]
+                if cw.winfo_exists():
+                    name = self.peer_info.get(uid, {}).get('display_name', uid)
+                    cw.system_message(f'{name} está off-line.')
+            except Exception:
+                pass
         self._contact_render_cache.pop(uid, None)
         self._update_general_visibility()
+        self._update_offline_visibility()
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
@@ -11672,6 +11866,28 @@ class LanMessengerApp:
         tk.Label(right, text='Enviar para:', font=('Segoe UI', 9, 'bold'),
                  bg='#f5f7fa', fg='#334155').pack(anchor='w', pady=(0, 4))
 
+        # Campo de busca por nome — filtra a lista abaixo em tempo real
+        bcast_search_var = tk.StringVar()
+        bcast_search_entry = tk.Entry(right, textvariable=bcast_search_var,
+                                       font=('Segoe UI', 9), relief='flat',
+                                       bd=1, highlightthickness=1,
+                                       highlightbackground='#cbd5e0',
+                                       highlightcolor='#0f2a5c')
+        bcast_search_entry.pack(fill='x', pady=(0, 6), ipady=3)
+        _bcast_ph = 'Buscar contato...'
+        bcast_search_entry.insert(0, _bcast_ph)
+        bcast_search_entry.config(fg='#94a3b8')
+        def _bcast_focus_in(e):
+            if bcast_search_entry.get() == _bcast_ph:
+                bcast_search_entry.delete(0, 'end')
+                bcast_search_entry.config(fg='#1a202c')
+        def _bcast_focus_out(e):
+            if not bcast_search_entry.get().strip():
+                bcast_search_entry.insert(0, _bcast_ph)
+                bcast_search_entry.config(fg='#94a3b8')
+        bcast_search_entry.bind('<FocusIn>', _bcast_focus_in)
+        bcast_search_entry.bind('<FocusOut>', _bcast_focus_out)
+
         list_border = tk.Frame(right, bg='#e2e8f0', bd=0)
         list_border.pack(fill='both', expand=True)
         list_inner = tk.Frame(list_border, bg='#ffffff', bd=0)
@@ -11692,6 +11908,8 @@ class LanMessengerApp:
                          scrollregion=(0, 0, e.width, e.height)))
 
         peer_vars = {}
+        peer_rows = {}    # uid -> p_row frame (pra filtrar via busca)
+        peer_names = {}   # uid -> display_name (cache pra filtro case-insensitive)
 
         # Linha "Todos" (seleciona todos)
         all_var = tk.BooleanVar(value=True)
@@ -11713,8 +11931,28 @@ class LanMessengerApp:
                        selectcolor='#e8f0fe', anchor='w',
                        command=toggle_all).pack(fill='x')
 
-        # Cada contato
+        # Dedupe por display_name: prefere entrada NAO-offline (uid antigo de
+        # migracao costuma ficar travado em offline). Sem isso, peers aparecem
+        # em duplicidade se ainda existir um uid antigo no cache peer_info.
+        _dedup = {}  # name_lc -> (uid, info)
         for uid, info in self.peer_info.items():
+            name = info.get('display_name', uid)
+            status = info.get('status', 'offline')
+            key = name.strip().lower()
+            existing = _dedup.get(key)
+            if existing is None:
+                _dedup[key] = (uid, info)
+            else:
+                ex_status = existing[1].get('status', 'offline')
+                # Substitui se a nova entrada esta online e a anterior offline
+                if status != 'offline' and ex_status == 'offline':
+                    _dedup[key] = (uid, info)
+        # Ordem alfabetica (case-insensitive) pra ficar consistente
+        _peers_ordered = sorted(_dedup.values(),
+                                 key=lambda t: t[1].get('display_name', '').lower())
+
+        # Cada contato
+        for uid, info in _peers_ordered:
             var = tk.BooleanVar(value=True)
             peer_vars[uid] = var
             name = info.get('display_name', uid)
@@ -11722,6 +11960,8 @@ class LanMessengerApp:
 
             p_row = tk.Frame(inner_r, bg='#ffffff')
             p_row.pack(fill='x')
+            peer_rows[uid] = p_row
+            peer_names[uid] = name
 
             # Separador sutil
             tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
@@ -11743,6 +11983,28 @@ class LanMessengerApp:
                 lbl_av.pack(side='right', padx=2)
             except Exception:
                 pass
+
+        # Filtro da busca. pack_forget TODOS antes pra resetar o layout, depois
+        # pack das linhas que casam iterando _peers_ordered em A-Z. Sem o
+        # forget previo, linhas ja packadas ficam "presas" na posicao anterior.
+        def _bcast_apply_filter(*_):
+            raw = bcast_search_entry.get().strip()
+            q = '' if raw == _bcast_ph else raw.lower()
+            for row in peer_rows.values():
+                row.pack_forget()
+            for uid, info in _peers_ordered:
+                row = peer_rows.get(uid)
+                if row is None:
+                    continue
+                name_lc = peer_names.get(uid, '').lower()
+                if not q or q in name_lc:
+                    row.pack(fill='x')
+            inner_r.update_idletasks()
+            canvas_r.configure(scrollregion=canvas_r.bbox('all'))
+        bcast_search_var.trace_add('write', _bcast_apply_filter)
+        # Fallback (KeyRelease) — trace_add em textvariable de Entry pode silenciar
+        # em alguns cenarios (mesmo bug do Historico). KeyRelease garante.
+        bcast_search_entry.bind('<KeyRelease>', _bcast_apply_filter)
 
         def _scroll_r(e):
             canvas_r.yview_scroll(-1 * (e.delta // 120), 'units')
@@ -12091,6 +12353,28 @@ class LanMessengerApp:
                                 selectcolor='#f0f5ff', command=toggle_pub)
         cb_pub.pack(fill='x')
 
+        # Campo de busca por nome — filtra a lista abaixo em tempo real
+        grp_search_var = tk.StringVar()
+        grp_search_entry = tk.Entry(content, textvariable=grp_search_var,
+                                     font=('Segoe UI', 9), relief='flat',
+                                     bd=1, highlightthickness=1,
+                                     highlightbackground='#cbd5e0',
+                                     highlightcolor=NAVY)
+        grp_search_entry.pack(fill='x', pady=(0, 6), ipady=3)
+        _grp_ph = 'Buscar contato...'
+        grp_search_entry.insert(0, _grp_ph)
+        grp_search_entry.config(fg='#94a3b8')
+        def _grp_focus_in(e):
+            if grp_search_entry.get() == _grp_ph:
+                grp_search_entry.delete(0, 'end')
+                grp_search_entry.config(fg='#1a202c')
+        def _grp_focus_out(e):
+            if not grp_search_entry.get().strip():
+                grp_search_entry.insert(0, _grp_ph)
+                grp_search_entry.config(fg='#94a3b8')
+        grp_search_entry.bind('<FocusIn>', _grp_focus_in)
+        grp_search_entry.bind('<FocusOut>', _grp_focus_out)
+
         # Lista de contatos ONLINE com scroll
         list_border = tk.Frame(content, bg='#e2e8f0', bd=0)
         list_border.pack(fill='both', expand=True, pady=(0, 4))
@@ -12124,16 +12408,39 @@ class LanMessengerApp:
         
         win.bind('<MouseWheel>', _scroll_g)
 
+        # Dedupe por display_name (preferindo nao-offline) — mesmo padrao do
+        # broadcast pra evitar dupla exibicao por uid antigo de migracao.
+        # Mantemos so contatos online aqui (grupo nao envia convite pra offline).
+        _grp_dedup = {}
         for uid, info in self.peer_info.items():
             status = info.get('status', 'offline')
             if status == 'offline':
-                continue  # Não mostrar offline
+                continue
+            name = info.get('display_name', uid)
+            key = name.strip().lower()
+            existing = _grp_dedup.get(key)
+            if existing is None:
+                _grp_dedup[key] = (uid, info)
+            else:
+                ex_status = existing[1].get('status', 'offline')
+                if status != 'offline' and ex_status == 'offline':
+                    _grp_dedup[key] = (uid, info)
+        _grp_ordered = sorted(_grp_dedup.values(),
+                               key=lambda t: t[1].get('display_name', '').lower())
+
+        peer_rows = {}    # uid -> p_row frame (pra filtrar via busca)
+        peer_names = {}   # uid -> display_name lowercase
+
+        for uid, info in _grp_ordered:
+            status = info.get('status', 'offline')
             var = tk.BooleanVar(value=False)
             peer_vars[uid] = var
             name = info.get('display_name', uid)
 
             p_row = tk.Frame(inner_g, bg='#ffffff', cursor='hand2')
             p_row.pack(fill='x')
+            peer_rows[uid] = p_row
+            peer_names[uid] = name
 
             tk.Frame(p_row, bg='#f0f2f5', height=1).pack(fill='x')
 
@@ -12154,6 +12461,27 @@ class LanMessengerApp:
                 lbl_av.pack(side='right', padx=2)
             except Exception:
                 pass
+
+        # Filtro pelo campo de busca. Garantia de ordem A-Z: pack_forget TODOS
+        # primeiro (mesmo os ja packados, pra resetar o layout), depois pack das
+        # linhas que casam iterando _grp_ordered em ordem alfabetica. Sem isso
+        # o widget que sobrou de uma busca anterior fica "preso" no topo.
+        def _grp_apply_filter(*_):
+            raw = grp_search_entry.get().strip()
+            q = '' if raw == _grp_ph else raw.lower()
+            for row in peer_rows.values():
+                row.pack_forget()
+            for uid, info in _grp_ordered:
+                row = peer_rows.get(uid)
+                if row is None:
+                    continue
+                name_lc = peer_names.get(uid, '').lower()
+                if not q or q in name_lc:
+                    row.pack(fill='x')
+            inner_g.update_idletasks()
+            canvas_g.configure(scrollregion=canvas_g.bbox('all'))
+        grp_search_var.trace_add('write', _grp_apply_filter)
+        grp_search_entry.bind('<KeyRelease>', _grp_apply_filter)
 
     def _create_group_window(self, group_id, group_name, member_ids,
                               group_type='temp'):
