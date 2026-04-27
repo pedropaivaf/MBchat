@@ -9475,10 +9475,9 @@ class LanMessengerApp:
         # Cria o nó raiz "Grupos" — grupos de bate papo aparecem aqui (sempre ultimo)
         self.group_groups = self.tree.insert('', 'end', text='Grupos',
                                              open=True, tags=('group',))
-        # Cria o no raiz "Offline" — contatos offline aparecem aqui recolhidos por padrao.
-        # Fica logicamente apos Grupos. Detachado quando vazio (via _update_offline_visibility).
-        self.group_offline = self.tree.insert('', 'end', text='Offline',
-                                              open=False, tags=('group',))
+        # Offline: contatos offline nao aparecem no TreeView (sao detachados).
+        # A informacao de offline e comunicada via system message no chat individual.
+        self.group_offline = None
         # Dicionário que mapeia group_id -> iid do item no TreeView
         self._group_tree_items = {}  # group_id -> tree item id
         # Configura visual do cabeçalho de seção (cinza, bold, menor)
@@ -10029,9 +10028,8 @@ class LanMessengerApp:
                     # Item estava detachado (filtrado), reattach em Geral
                     self.tree.reattach(iid, self.group_general, 'end')
                     touched_parents.add(self.group_general)
-            # Reatacha headers de secao caso tenham sido detachados quando vazios
+            # Reatacha header Geral caso tenha sido detachado quando vazio
             self._update_general_visibility()
-            self._update_offline_visibility()
             # Reordena alfabeticamente os parents que receberam reattach
             # (reattach em 'end' nao mantem ordem alfabetica original)
             for p in touched_parents:
@@ -10798,27 +10796,6 @@ class LanMessengerApp:
         except tk.TclError:
             pass
 
-    # Esconde a secao Offline quando vazia, mostra com contagem 'Offline (N)' quando tem filhos.
-    # Espelha o padrao de _update_general_visibility (mas Offline comeca recolhida com open=False).
-    def _update_offline_visibility(self):
-        try:
-            if self.group_offline is None:
-                return
-            children = self.tree.get_children(self.group_offline)
-            n = len(children)
-            root_children = self.tree.get_children('')
-            is_attached = self.group_offline in root_children
-            if n > 0:
-                self.tree.item(self.group_offline, text=f'Offline ({n})')
-                if not is_attached:
-                    self.tree.reattach(self.group_offline, '', 'end')
-                self._enforce_section_order()
-            else:
-                if is_attached:
-                    self.tree.detach(self.group_offline)
-        except tk.TclError:
-            pass
-
     # Reancora Geral imediatamente antes de Grupos, sem mexer nos depts existentes.
     def _reattach_general_before_groups(self):
         try:
@@ -10831,24 +10808,20 @@ class LanMessengerApp:
         except tk.TclError:
             pass
 
-    # Forca a ordem global [depts..., Geral, Grupos, Offline] entre os top-level do tree.
+    # Forca a ordem global [depts..., Geral, Grupos] entre os top-level do tree.
     # Chamada apos qualquer mutacao que possa ter reorganizado as secoes.
     def _enforce_section_order(self):
         try:
             root_children = list(self.tree.get_children(''))
             if not root_children:
                 return
-            section_nodes = {self.group_general, self.group_groups,
-                             self.group_offline}
+            section_nodes = {self.group_general, self.group_groups}
             depts = [c for c in root_children if c not in section_nodes]
             ordered = list(depts)
             if self.group_general in root_children:
                 ordered.append(self.group_general)
             if self.group_groups in root_children:
                 ordered.append(self.group_groups)
-            if (self.group_offline is not None
-                    and self.group_offline in root_children):
-                ordered.append(self.group_offline)
             for i, node in enumerate(ordered):
                 if root_children[i] != node:
                     self.tree.move(node, '', i)
@@ -10877,9 +10850,9 @@ class LanMessengerApp:
                 pass
 
         # Determina o grupo pai. Setor do contato e exibido na propria linha
-        # (acima do nome), nao como secao. Offline vai pra secao recolhida no fim.
+        # (acima do nome), nao como secao. Offline = parent None (sera detachado).
         if tag == 'offline':
-            parent = self.group_offline
+            parent = None
         else:
             parent = self.group_general
 
@@ -10921,16 +10894,26 @@ class LanMessengerApp:
             # Sempre atualiza (nota/status podem mudar)
             self.tree.item(iid, text=display, tags=(tag,), image=image)
 
-            if old_parent != parent:
+            if parent is None:
+                # Offline: esconde do TreeView
+                self.tree.detach(iid)
+            elif old_parent != parent:
                 self.tree.move(iid, parent, 'end')
                 self._sort_tree_children(parent)
             else:
                 self._sort_tree_children(parent)
         else:
-            iid = self.tree.insert(parent, 'end',
-                                   text=display, tags=(tag,), image=image)
-            self.peer_items[uid] = iid
-            self._sort_tree_children(parent)
+            if parent is None:
+                # Offline novo: insere em Geral e detacha (precisa existir como referencia)
+                iid = self.tree.insert(self.group_general, 'end',
+                                       text=display, tags=(tag,), image=image)
+                self.peer_items[uid] = iid
+                self.tree.detach(iid)
+            else:
+                iid = self.tree.insert(parent, 'end',
+                                       text=display, tags=(tag,), image=image)
+                self.peer_items[uid] = iid
+                self._sort_tree_children(parent)
 
         self.peer_info[uid] = info  # atualiza cache local de informacoes do contato
 
@@ -10946,20 +10929,14 @@ class LanMessengerApp:
                 gw.update_member_info(uid, info) # atualiza nome/nota no painel
 
         self._update_general_visibility()
-        self._update_offline_visibility()
 
-    # Marca peer como offline e move para a secao Offline (recolhida).
+    # Marca peer como offline e esconde do TreeView. A informacao de status
+    # offline aparece como system message no chat individual (se aberto).
     def _remove_contact(self, uid):
         if uid in self.peer_items:
             iid = self.peer_items[uid]
             self.tree.item(iid, tags=('offline',))
-            if self.group_offline is not None:
-                try:
-                    self.tree.move(iid, self.group_offline, 'end')
-                except tk.TclError:
-                    pass
-            else:
-                self.tree.detach(iid)
+            self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
         # Se o usuario esta com a janela de chat aberta com esse peer,
         # mostra mensagem de sistema cinza no chat (LAN Messenger style).
         if uid in self.chat_windows:
@@ -10972,7 +10949,6 @@ class LanMessengerApp:
                 pass
         self._contact_render_cache.pop(uid, None)
         self._update_general_visibility()
-        self._update_offline_visibility()
 
     # Adiciona grupo à seção Grupos do TreeView.
     def _add_group_to_tree(self, group_id, group_name, group_type='fixed'):
