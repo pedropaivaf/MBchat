@@ -1218,10 +1218,16 @@ class SoundPlayer:
         try:
             if platform.system() == 'Windows':
                 import winsound
-                if tone == 'ok':
-                    winsound.MessageBeep(winsound.MB_OK)
-                else:
-                    winsound.MessageBeep(winsound.MB_ICONINFORMATION)
+                # winsound.Beep gera um tom sintetico — toca independente das
+                # configs de sons de notificacao do Windows (MessageBeep falha
+                # quando usuario desativa sons do sistema).
+                freq, dur = {
+                    'ok': (880, 120),
+                    'reminder': (660, 250),
+                    'msg': (1000, 100),
+                    'group': (740, 120),
+                }.get(tone, (1000, 100))
+                winsound.Beep(freq, dur)
             elif platform.system() == 'Darwin':
                 os.system('afplay /System/Library/Sounds/Ping.aiff &')
             else:
@@ -1233,17 +1239,17 @@ class SoundPlayer:
     @staticmethod
     def play_msg_private():
         if SoundPlayer._gate('sound_msg_private'):
-            SoundPlayer._beep('info')
+            SoundPlayer._beep('msg')
 
     @staticmethod
     def play_msg_group():
         if SoundPlayer._gate('sound_msg_group'):
-            SoundPlayer._beep('info')
+            SoundPlayer._beep('group')
 
     @staticmethod
     def play_msg_broadcast():
         if SoundPlayer._gate('sound_msg_broadcast'):
-            SoundPlayer._beep('info')
+            SoundPlayer._beep('msg')
 
     @staticmethod
     def play_file_start():
@@ -1258,7 +1264,7 @@ class SoundPlayer:
     @staticmethod
     def play_reminder():
         if SoundPlayer._gate('sound_reminder'):
-            SoundPlayer._beep('info')
+            SoundPlayer._beep('reminder')
 
     # Compat: chamadas antigas ainda funcionam (mapeia pra msg_private)
     @staticmethod
@@ -1796,25 +1802,46 @@ class PreferencesWindow(tk.Toplevel):
         lf2.pack(fill='x', padx=10, pady=(0, 8))
         tk.Checkbutton(lf2, text='Ativar sons (mestre)',
                        variable=self.var_sound_master, font=FONT,
-                       bg=BG_WINDOW).grid(row=0, column=0, columnspan=2,
+                       bg=BG_WINDOW).grid(row=0, column=0, columnspan=3,
                                           sticky='w', pady=(0, 2))
+        # Cada som tem botao "Testar" ao lado pra usuario validar antes de salvar
         sound_items = [
-            ('Mensagem privada', self.var_sound_msg_private),
-            ('Mensagem de grupo', self.var_sound_msg_group),
-            ('Transmissão', self.var_sound_msg_broadcast),
-            ('Recebendo arquivo', self.var_sound_file_start),
-            ('Transferência concluída', self.var_sound_file_done),
-            ('Lembrete', self.var_sound_reminder),
+            ('Mensagem privada', self.var_sound_msg_private,
+             SoundPlayer.play_msg_private),
+            ('Mensagem de grupo', self.var_sound_msg_group,
+             SoundPlayer.play_msg_group),
+            ('Transmissão', self.var_sound_msg_broadcast,
+             SoundPlayer.play_msg_broadcast),
+            ('Recebendo arquivo', self.var_sound_file_start,
+             SoundPlayer.play_file_start),
+            ('Transferência concluída', self.var_sound_file_done,
+             SoundPlayer.play_file_done),
+            ('Lembrete', self.var_sound_reminder,
+             SoundPlayer.play_reminder),
         ]
-        for i, (label, var) in enumerate(sound_items):
+        for i, (label, var, play_fn) in enumerate(sound_items):
             r = 1 + (i // 2)
-            c = i % 2
-            padx = (20, 10) if c == 0 else (0, 0)
+            c = (i % 2) * 2  # par de colunas: checkbox + testar
+            padx = (20, 4) if c == 0 else (10, 4)
             tk.Checkbutton(lf2, text=label, variable=var, font=FONT,
                            bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
                                               padx=padx)
+            # Botao "Testar" — toca o som independente do checkbox (forca por cima)
+            def _test_play(fn=play_fn):
+                # Bypass do gate (master/individual) pra usuario sempre ouvir o teste
+                try:
+                    saved_db = SoundPlayer.db
+                    SoundPlayer.db = None  # _gate retorna True quando db is None
+                    fn()
+                finally:
+                    SoundPlayer.db = saved_db
+            tk.Button(lf2, text='▶ Testar', font=('Segoe UI', 8),
+                      bg='#e2e8f0', fg='#1a202c', relief='flat', bd=0,
+                      padx=8, pady=1, cursor='hand2',
+                      command=_test_play).grid(row=r, column=c + 1,
+                                                sticky='w', padx=(0, 8))
         lf2.grid_columnconfigure(0, weight=1)
-        lf2.grid_columnconfigure(1, weight=1)
+        lf2.grid_columnconfigure(2, weight=1)
 
         # --- Piscar barra de tarefas ---
         lf3 = tk.LabelFrame(parent, text='Piscar na barra de tarefas', font=FONT,
@@ -3579,11 +3606,11 @@ class ChatWindow(tk.Toplevel):
         self._long_press_msg_idx = None
         self._selection_bullets = {}   # idx -> Label widget (bolinha clicavel)
 
-        # Botao de copiar que aparece no hover da mensagem
+        # Botao Copiar estilo code-block (pill escuro, mais visivel que MDL2)
         self._hover_copy_btn = tk.Label(
-            self.chat_text, text='\uE8C8', font=('Segoe MDL2 Assets', 9),
-            bg='#f0f0f0', fg='#666666', cursor='hand2', bd=0, relief='flat',
-            padx=2, pady=0)
+            self.chat_text, text='⧩ Copiar', font=('Segoe UI', 8),
+            bg='#0f172a', fg='#94a3b8', cursor='hand2', bd=0, relief='flat',
+            padx=8, pady=2)
         self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
         self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
         self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
@@ -3627,6 +3654,8 @@ class ChatWindow(tk.Toplevel):
                 self.update_idletasks()
                 _center_window(self, 420, 480)
                 self.deiconify()
+                # Foca o input depois do deiconify pra usuario digitar direto
+                self.after(50, lambda: self.entry.focus_set())
             except Exception:
                 pass
 
@@ -4787,7 +4816,7 @@ class ChatWindow(tk.Toplevel):
                 return
             x, y, w, h = bbox
             chat_w = self.chat_text.winfo_width()
-            btn_x = max(4, chat_w - 32)
+            btn_x = max(4, chat_w - 80)
             btn_y = max(2, y - 2)
             self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
             self._hover_copy_visible_idx = idx
@@ -4803,10 +4832,9 @@ class ChatWindow(tk.Toplevel):
             return
         self.clipboard_clear()
         self.clipboard_append(text)
-        # Feedback visual: muda para check por 600ms
-        original = self._hover_copy_btn.cget('text')
-        self._hover_copy_btn.config(text='\u2714', fg='#2a7f3f')
-        self.after(600, lambda: self._hover_copy_btn.config(text=original, fg='#4a5568'))
+        # Feedback visual: muda para 'Copiado' por 1.5s (estilo code-block)
+        self._hover_copy_btn.config(text='✓ Copiado', fg='#22c55e')
+        self.after(1500, lambda: self._hover_copy_btn.config(text='⧩ Copiar', fg='#94a3b8'))
 
     # --- Long-press detection ---
     def _on_chat_press(self, event):
@@ -6873,9 +6901,9 @@ class GroupChatWindow(tk.Toplevel):
         self._long_press_msg_idx = None
 
         self._hover_copy_btn = tk.Label(
-            self.chat_text, text='\uE8C8', font=('Segoe MDL2 Assets', 9),
-            bg='#f0f0f0', fg='#666666', cursor='hand2', bd=0, relief='flat',
-            padx=2, pady=0)
+            self.chat_text, text='⧩ Copiar', font=('Segoe UI', 8),
+            bg='#0f172a', fg='#94a3b8', cursor='hand2', bd=0, relief='flat',
+            padx=8, pady=2)
         self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
         self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
         self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
@@ -7799,7 +7827,7 @@ class GroupChatWindow(tk.Toplevel):
                 return
             lx, ly, lw, lh, _ = info
             chat_w = self.chat_text.winfo_width()
-            btn_x = min(chat_w - 20, lx + lw + 6)
+            btn_x = min(chat_w - 80, lx + lw + 6)
             btn_y = ly + 1
             self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
             self._hover_copy_visible_idx = idx
@@ -7815,9 +7843,8 @@ class GroupChatWindow(tk.Toplevel):
             return
         self.clipboard_clear()
         self.clipboard_append(text)
-        original = self._hover_copy_btn.cget('text')
-        self._hover_copy_btn.config(text='\u2714', fg='#2a7f3f')
-        self.after(600, lambda: self._hover_copy_btn.config(text=original, fg='#4a5568'))
+        self._hover_copy_btn.config(text='✓ Copiado', fg='#22c55e')
+        self.after(1500, lambda: self._hover_copy_btn.config(text='⧩ Copiar', fg='#94a3b8'))
 
     def _on_chat_press(self, event):
         if self._selection_mode:
@@ -11114,6 +11141,10 @@ class LanMessengerApp:
                 gw.deiconify()   # exibe se estava oculta (hidden)
                 gw.lift()        # traz para frente de outras janelas
                 gw.focus_force() # forca o foco do sistema operacional
+                try:
+                    gw.after(50, lambda: gw.entry.focus_set())  # foca caixa de texto
+                except Exception:
+                    pass
         else:  # janela nao existe: precisa criar
             group_data = self.messenger._groups.get(group_id)  # dados do grupo no messenger
             if not group_data:  # grupo nao existe mais?
@@ -11594,7 +11625,10 @@ class LanMessengerApp:
         def _render_messages(peer_id, msgs, query=''):
             peer_name = _resolve_name(peer_id)
             if msgs:
-                right_hdr.config(text=f'Conversa com {peer_name}  ({len(msgs)} mensagens)')
+                hdr_extra = f'  ({len(msgs)} mensagens)'
+                if query:
+                    hdr_extra += f'  · buscando "{query}"'
+                right_hdr.config(text=f'Conversa com {peer_name}{hdr_extra}')
             else:
                 right_hdr.config(text=f'Conversa com {peer_name}')
             msg_text.configure(state='normal')
@@ -11606,6 +11640,8 @@ class LanMessengerApp:
                 return
             my_name = self.messenger.display_name
             query_lower = query.lower() if query else ''
+            first_match_idx = None  # posicao da primeira ocorrencia pra scroll
+            match_count = 0
             for m in msgs:
                 is_mine = bool(m.get('is_sent'))
                 who = my_name if is_mine else peer_name
@@ -11637,9 +11673,20 @@ class LanMessengerApp:
                         h_start = f'{start_idx}+{pos}c'
                         h_end = f'{start_idx}+{pos + len(query_lower)}c'
                         msg_text.tag_add('highlight', h_start, h_end)
+                        if first_match_idx is None:
+                            first_match_idx = h_start
+                        match_count += 1
                         s = pos + len(query_lower)
             msg_text.configure(state='disabled')
-            msg_text.see('end')
+            # Se ha busca: rola ate a primeira ocorrencia (mostra contexto antes e
+            # depois da mensagem encontrada). Sem busca: scroll pro fim.
+            if first_match_idx is not None:
+                try:
+                    msg_text.see(first_match_idx)
+                except Exception:
+                    msg_text.see('end')
+            else:
+                msg_text.see('end')
 
         def _populate_tree(visible_peers):
             # Preserva selecao se possivel
@@ -12959,13 +13006,34 @@ class LanMessengerApp:
                   command=dlg.destroy).pack(side='right', padx=4)
 
     def _show_reminders(self):
+        # Reusa janela existente se ja estiver aberta (evita duplicar quando
+        # notificacao de lembrete e clicada e o caminho do tray ja abriu uma).
+        existing = getattr(self, '_reminders_window', None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    try:
+                        if str(existing.state()) == 'withdrawn':
+                            existing.deiconify()
+                    except Exception:
+                        pass
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
         win = tk.Toplevel(self.root)
         win.title('Lembretes')
-        win.transient(self.root)
+        # Sem transient: precisa do botao proprio na taskbar pra flash funcionar
         win.configure(bg='#ffffff')
         _center_window(win, 440, 450)
         _apply_rounded_corners(win)
         win.bind('<Escape>', lambda e: win.destroy())
+        # WS_EX_APPWINDOW pra forcar entrada propria na taskbar (essencial pro flash)
+        try:
+            self._force_taskbar_entry(win)
+        except Exception:
+            pass
 
         # Header
         hdr = tk.Frame(win, bg='#0f2a5c')
@@ -13359,6 +13427,36 @@ class LanMessengerApp:
                     time_str = '\u26a0 ' + time_str + ' (atrasado)'
         tk.Label(info, text=time_str, font=('Segoe UI', 8),
                  bg=bg, fg=fg_time, anchor='w').pack(anchor='w')
+        # Linha extra para lembrete COMPARTILHADO: mostra quem criou e quem foi marcado
+        if is_shared:
+            try:
+                import json as _json
+                creator_uid = rem.get('creator_uid', '') or ''
+                creator_nm = rem.get('creator_name', '') or 'Algu\u00e9m'
+                invited_raw = rem.get('invited_uids', '') or ''
+                invited_uids = []
+                if invited_raw:
+                    try:
+                        invited_uids = _json.loads(invited_raw) or []
+                    except Exception:
+                        invited_uids = []
+                # Exclui o criador da lista de "marcados" pra nao duplicar
+                marked = [u for u in invited_uids if u != creator_uid]
+                marked_names = self._format_invited_names(marked) if marked else ''
+                # Voce e o criador? Mostra "Marcou: <nomes>"
+                # Caso contrario, mostra "Marcado por: <criador>"
+                my_uid = self.messenger.user_id
+                if creator_uid == my_uid and marked_names:
+                    share_txt = f'\U0001f465 Marcou: {marked_names}'
+                elif marked_names and creator_nm:
+                    share_txt = f'\U0001f465 De {creator_nm} para {marked_names}'
+                else:
+                    share_txt = f'\U0001f4e9 Compartilhado por {creator_nm}'
+                tk.Label(info, text=share_txt, font=('Segoe UI', 8),
+                         bg=bg, fg='#92400e', anchor='w', wraplength=260,
+                         justify='left').pack(anchor='w', pady=(2, 0))
+            except Exception:
+                pass
         # Botao X (deletar)
         del_btn = tk.Button(row, text='\u2715', font=('Segoe UI', 9),
                             bg=bg, fg='#ef4444', relief='flat', bd=0,
