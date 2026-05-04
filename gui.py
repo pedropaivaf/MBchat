@@ -12838,7 +12838,7 @@ class LanMessengerApp:
                     self._flash_window(gw, gate_key='flash_taskbar_group')
                     # Pisca tambem a root para chamar atencao na barra principal
                     # (caso usuario esteja em outra janela com a root minimizada)
-                    self._flash_window(self.root, gate_key='flash_taskbar_group')
+                    # self._flash_window(self.root, gate_key='flash_taskbar_group')
             except Exception:
                 pass
         else:
@@ -12855,7 +12855,7 @@ class LanMessengerApp:
             # Adicionalmente pisca a root para garantir atencao mesmo se a
             # janela do grupo nao for criada (caso _open_group falhe).
             try:
-                self._flash_window(self.root, gate_key='flash_taskbar_group')
+                # self._flash_window(self.root, gate_key='flash_taskbar_group')
             except Exception:
                 pass
 
@@ -13032,7 +13032,7 @@ class LanMessengerApp:
                     # Pisca a root tambem — assim a barra de tarefas chama
                     # atencao mesmo se a janela de lembretes ja estava aberta
                     # em segundo plano ou se _show_reminders nao deiconify-ou.
-                    self._flash_window(self.root, gate_key='flash_reminder')
+                    # self._flash_window(self.root, gate_key='flash_reminder')
                 except Exception:
                     log.exception('Erro ao surfacear janela de lembretes')
             # Atualiza janela de lembretes se estiver aberta
@@ -15406,7 +15406,7 @@ class LanMessengerApp:
             pass
         self._pending_flash_target = '__reminders__'
         try:
-            self._flash_window(self.root, gate_key='flash_reminder')
+            # self._flash_window(self.root, gate_key='flash_reminder')
         except Exception:
             pass
         try:
@@ -15734,12 +15734,13 @@ class LanMessengerApp:
             FLASHW_TIMERNOFG = 12  # continua piscando ate a janela receber foco
 
             target = widget or self.root
-            # wm_frame() retorna o HWND real da moldura da janela no Windows.
-            # int(..., 16) converte a string hexadecimal do Tkinter para o handle HWND.
-            try:
-                hwnd = int(target.wm_frame(), 16)
-            except (ValueError, TypeError, tk.TclError):
-                hwnd = target.winfo_id()
+            hwnd = target.winfo_id()
+            if target != self.root:
+                # Para Toplevels, o winfo_id() e o frame interno. 
+                # O botao da taskbar pertence ao Parent (wrapper OS criado pelo Tkinter).
+                parent = ctypes.windll.user32.GetParent(hwnd)
+                if parent:
+                    hwnd = parent
 
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
@@ -15772,10 +15773,11 @@ class LanMessengerApp:
 
             FLASHW_STOP = 0  # flag para parar o piscamento
             target = widget or self.root
-            try:
-                hwnd = int(target.wm_frame(), 16)
-            except (ValueError, TypeError, tk.TclError):
-                hwnd = target.winfo_id()
+            hwnd = target.winfo_id()
+            if target != self.root:
+                parent = ctypes.windll.user32.GetParent(hwnd)
+                if parent:
+                    hwnd = parent
 
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
