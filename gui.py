@@ -1981,7 +1981,7 @@ class PreferencesWindow(tk.Toplevel):
                       command=_test_play).grid(row=r, column=4,
                                                sticky='w', padx=(8, 0))
         lf.grid_columnconfigure(0, weight=1)
-        lf3.grid_columnconfigure(1, weight=1)
+        lf.grid_columnconfigure(1, weight=1)
 
     # ----- REDE -----
     def _build_rede(self, parent):
@@ -12796,7 +12796,7 @@ class LanMessengerApp:
                                                           from_uid)
         gw.system_message(f'{from_name} criou este grupo.')
         self._pending_flash_target = f'group:{group_id}'
-        self._flash_window(gw)
+        self._flash_window(gw, gate_key='flash_taskbar_group')
         self._add_group_to_tree(group_id, group_name, group_type)
 
     def _on_group_message(self, group_id, from_uid, display_name,
@@ -12849,7 +12849,7 @@ class LanMessengerApp:
             # deste callback rodar, entao NAO chamar receive_message aqui (dup).
             def _create():
                 return self._open_group(group_id, surface_only=True)
-            self._surface_chat_from_tray(_create)
+            self._surface_chat_from_tray(_create, gate_key='flash_taskbar_group')
             # Adicionalmente pisca a root para garantir atencao mesmo se a
             # janela do grupo nao for criada (caso _open_group falhe).
             try:
@@ -13023,7 +13023,7 @@ class LanMessengerApp:
                                 pass
                         self._show_reminders()
                         return getattr(self, '_reminders_window', None)
-                    self._surface_chat_from_tray(_create_reminders)
+                    self._surface_chat_from_tray(_create_reminders, gate_key='flash_reminder')
                     win = getattr(self, '_reminders_window', None)
                     if win is not None:
                         self._flash_window(win, gate_key='flash_reminder')
@@ -15284,7 +15284,8 @@ class LanMessengerApp:
                 if not cw.focus_displayof():
                     self._show_toast(from_user, content, is_broadcast=is_broadcast)
                     self._pending_flash_target = from_user
-                    self._flash_window(cw)
+                    gate = 'flash_taskbar_broadcast' if is_broadcast else 'flash_taskbar_msg'
+                    self._flash_window(cw, gate_key=gate)
             except Exception:
                 pass
         else:
@@ -15295,7 +15296,8 @@ class LanMessengerApp:
             # por messenger._on_tcp_message). NAO chamar receive_message aqui — dup.
             def _create():
                 return self._open_chat(from_user, surface_only=True)
-            self._surface_chat_from_tray(_create)
+            gate = 'flash_taskbar_broadcast' if is_broadcast else 'flash_taskbar_msg'
+            self._surface_chat_from_tray(_create, gate_key=gate)
 
     # Callback: imagem recebida via TCP (MT_IMAGE).
     def _on_image(self, from_user, image_path, msg_id, timestamp,
@@ -15316,18 +15318,16 @@ class LanMessengerApp:
                                 self._show_in_taskbar_minimized(gw)
                         except Exception:
                             pass
-                        self._flash_window(gw)
+                        self._flash_window(gw, gate_key='flash_taskbar_group')
                 except Exception:
                     pass
             else:
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                 self._pending_flash_target = f'group:{group_id}'
-                # _open_group ja carrega historico do DB no __init__ — imagem
-                # ja foi persistida pelo messenger antes deste callback rodar.
                 def _create():
                     return self._open_group(group_id, surface_only=True)
-                self._surface_chat_from_tray(_create)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_group')
         else:
             SoundPlayer.play_msg_private()
             # Imagem individual
@@ -15338,7 +15338,7 @@ class LanMessengerApp:
                     if not cw.focus_displayof():
                         self._show_toast(from_user, '[Imagem]')
                         self._pending_flash_target = from_user
-                        self._flash_window(cw)
+                        self._flash_window(cw, gate_key='flash_taskbar_msg')
                 except Exception:
                     pass
             else:
@@ -15348,7 +15348,7 @@ class LanMessengerApp:
                 # _open_chat ja carrega imagens nao lidas do DB — ver _on_message.
                 def _create():
                     return self._open_chat(from_user, surface_only=True)
-                self._surface_chat_from_tray(_create)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_msg')
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
     def _on_poll(self, group_id, poll_data):
@@ -15373,12 +15373,9 @@ class LanMessengerApp:
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, poll_data.get('creator', ''), '\U0001f4ca Enquete')
                 self._pending_flash_target = f'group:{group_id}'
-                # Surface a janela do grupo minimizada na taskbar e pisca especificamente
-                # ela (nao a root). _open_group com surface_only=True puxa o poll pendente
-                # via _pending_group_msgs no proprio construtor.
                 def _create():
                     return self._open_group(group_id, surface_only=True)
-                self._surface_chat_from_tray(_create)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_group')
 
     # Convite de lembrete compartilhado recebido. Mostra notificacao + flash.
     def _on_reminder_invite(self, info):
@@ -15476,7 +15473,7 @@ class LanMessengerApp:
             def _create():
                 return self._open_chat(from_user, surface_only=True)
             try:
-                self._surface_chat_from_tray(_create)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_file')
                 cw = self.chat_windows.get(from_user)
                 if cw:
                     self._flash_window(cw, gate_key='flash_taskbar_file')
@@ -15537,7 +15534,7 @@ class LanMessengerApp:
             try:
                 def _create():
                     return self._open_chat(peer_id, surface_only=True)
-                self._surface_chat_from_tray(_create)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_file')
             except Exception:
                 pass
         if window_was_open and peer_id in self.chat_windows:
@@ -15691,7 +15688,7 @@ class LanMessengerApp:
     # 2) Cria a janela via create_fn (que deve usar surface_only=True)
     # 3) Minimiza a janela recem criada na taskbar
     # 4) Pisca ela para chamar atencao do usuario
-    def _surface_chat_from_tray(self, create_fn):
+    def _surface_chat_from_tray(self, create_fn, gate_key='flash_taskbar_msg'):
         try:
             if self.root.state() == 'withdrawn':
                 self._show_in_taskbar_minimized(self.root)
@@ -15706,7 +15703,7 @@ class LanMessengerApp:
         try:
             win.update_idletasks()
             self._show_in_taskbar_minimized(win)
-            self._flash_window(win)
+            self._flash_window(win, gate_key=gate_key)
         except Exception:
             pass
 
@@ -15733,16 +15730,20 @@ class LanMessengerApp:
             FLASHW_ALL = 3         # pisca janela + botao da taskbar
             FLASHW_TIMERNOFG = 12  # continua piscando ate a janela receber foco
 
-            target = widget or self.root  # janela alvo (chat, grupo ou principal)
-            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())  # handle Win32
+            target = widget or self.root
+            # GetAncestor(..., 2) [GA_ROOT] pega a janela real gerenciada pelo Windows
+            hwnd = ctypes.windll.user32.GetAncestor(target.winfo_id(), 2)
+            if not hwnd:
+                hwnd = target.winfo_id()
+
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
                 hwnd=hwnd,
-                dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,  # pisca ate receber foco
-                uCount=0,      # 0 = pisca indefinidamente ate receber foco
-                dwTimeout=0,   # 0 = usa intervalo padrao do cursor piscante
+                dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+                uCount=0,
+                dwTimeout=0,
             )
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))  # chama API Win32
+            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
             # Registra janela no tracking de flashes ativos (root fica de fora — tem semantica propria)
             if widget is not None and widget is not self.root:
                 self._flashing_widgets[id(widget)] = widget
@@ -15765,16 +15766,19 @@ class LanMessengerApp:
                 ]
 
             FLASHW_STOP = 0  # flag para parar o piscamento
-            target = widget or self.root  # janela alvo
-            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())  # handle Win32
+            target = widget or self.root
+            hwnd = ctypes.windll.user32.GetAncestor(target.winfo_id(), 2)
+            if not hwnd:
+                hwnd = target.winfo_id()
+
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
                 hwnd=hwnd,
-                dwFlags=FLASHW_STOP,  # para o flash imediatamente
+                dwFlags=FLASHW_STOP,
                 uCount=0,
                 dwTimeout=0,
             )
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))  # para o piscamento
+            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
             # Remove APENAS a janela especifica do tracking — nao afeta outras
             if widget is not None and widget is not self.root:
                 self._flashing_widgets.pop(id(widget), None)
