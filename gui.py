@@ -15734,9 +15734,11 @@ class LanMessengerApp:
             FLASHW_TIMERNOFG = 12  # continua piscando ate a janela receber foco
 
             target = widget or self.root
-            # Pega o wrapper OS da janela (necessario para FlashWindowEx e estilos)
-            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
-            if not hwnd:
+            # wm_frame() retorna o HWND real da moldura da janela no Windows.
+            # int(..., 16) converte a string hexadecimal do Tkinter para o handle HWND.
+            try:
+                hwnd = int(target.wm_frame(), 16)
+            except (ValueError, TypeError, tk.TclError):
                 hwnd = target.winfo_id()
 
             finfo = FLASHWINFO(
@@ -15770,8 +15772,9 @@ class LanMessengerApp:
 
             FLASHW_STOP = 0  # flag para parar o piscamento
             target = widget or self.root
-            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
-            if not hwnd:
+            try:
+                hwnd = int(target.wm_frame(), 16)
+            except (ValueError, TypeError, tk.TclError):
                 hwnd = target.winfo_id()
 
             finfo = FLASHWINFO(
