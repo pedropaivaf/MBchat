@@ -15731,8 +15731,8 @@ class LanMessengerApp:
             FLASHW_TIMERNOFG = 12  # continua piscando ate a janela receber foco
 
             target = widget or self.root
-            # GetAncestor(..., 2) [GA_ROOT] pega a janela real gerenciada pelo Windows
-            hwnd = ctypes.windll.user32.GetAncestor(target.winfo_id(), 2)
+            # Pega o wrapper OS da janela (necessario para FlashWindowEx e estilos)
+            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
             if not hwnd:
                 hwnd = target.winfo_id()
 
@@ -15767,7 +15767,7 @@ class LanMessengerApp:
 
             FLASHW_STOP = 0  # flag para parar o piscamento
             target = widget or self.root
-            hwnd = ctypes.windll.user32.GetAncestor(target.winfo_id(), 2)
+            hwnd = ctypes.windll.user32.GetParent(target.winfo_id())
             if not hwnd:
                 hwnd = target.winfo_id()
 
