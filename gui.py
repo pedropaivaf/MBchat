@@ -12855,6 +12855,7 @@ class LanMessengerApp:
             # Adicionalmente pisca a root para garantir atencao mesmo se a
             # janela do grupo nao for criada (caso _open_group falhe).
             try:
+                pass
                 # self._flash_window(self.root, gate_key='flash_taskbar_group')
             except Exception:
                 pass
@@ -15406,6 +15407,7 @@ class LanMessengerApp:
             pass
         self._pending_flash_target = '__reminders__'
         try:
+            pass
             # self._flash_window(self.root, gate_key='flash_reminder')
         except Exception:
             pass
