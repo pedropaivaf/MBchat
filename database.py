@@ -847,6 +847,55 @@ class Database:
         self.conn.commit()
 
     # ========================================
+    # GROUP MESSAGES — Historico de mensagens de grupo
+    # ========================================
+    # Reusa a tabela messages com a convencao to_user='group:GROUP_ID'.
+    # Evita criar nova tabela e mantem schema existente. msg_type pode ser
+    # 'text' ou 'image'. from_user = uid do remetente (proprio uid se enviada).
+
+    # Salva uma mensagem de grupo no historico local. group_id sem prefixo.
+    def save_group_message(self, group_id, msg_id, from_user, content,
+                           sender_name='', msg_type='text',
+                           is_sent=False, timestamp=None,
+                           reply_to_id=''):
+        ts = timestamp or time.time()
+        # Codifica nome do remetente no campo file_path (string livre, vazio
+        # por default) para nao depender da tabela contacts ao reabrir grupo
+        # — peer pode ter saido ou ainda nao ter sido descoberto.
+        self.conn.execute("""
+            INSERT INTO messages (msg_id, from_user, to_user, content,
+                                  msg_type, timestamp, is_sent, reply_to_id,
+                                  file_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (msg_id, from_user, f'group:{group_id}', content, msg_type, ts,
+              int(is_sent), reply_to_id or '', sender_name or ''))
+        self.conn.commit()
+
+    # Retorna historico completo de um grupo em ordem cronologica ASC.
+    def get_group_history(self, group_id, limit=None):
+        target = f'group:{group_id}'
+        if limit is not None:
+            rows = self.conn.execute("""
+                SELECT * FROM messages WHERE to_user=?
+                ORDER BY timestamp DESC LIMIT ?
+            """, (target, limit)).fetchall()
+            return [dict(r) for r in reversed(rows)]
+        rows = self.conn.execute("""
+            SELECT * FROM messages WHERE to_user=?
+            ORDER BY timestamp ASC
+        """, (target,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # Idempotencia: verifica se um msg_id de grupo ja existe (evita dup)
+    def has_group_message(self, msg_id):
+        if not msg_id:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM messages WHERE msg_id=? LIMIT 1",
+            (msg_id,)).fetchone()
+        return row is not None
+
+    # ========================================
     # SETTINGS — Configurações chave-valor
     # ========================================
 

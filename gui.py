@@ -1194,12 +1194,58 @@ def _get_avatars_dir():
     return d
 
 
-# Reproduz sons de notificação usando a API nativa de cada sistema operacional.
-# Usa winsound no Windows (sons do sistema), afplay no macOS e paplay no Linux.
-# Todos os métodos são estáticos — não precisam de instância.
+# Diretorio com sons customizados (sounds/*.wav, sounds/*.mp3).
+# Compatibilidade PyInstaller: tenta sys._MEIPASS antes do diretorio do script.
+def _get_sounds_dir():
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, 'sounds')
+    if os.path.isdir(d):
+        return d
+    # Fallback: ao lado do executavel quando frozen
+    if getattr(sys, 'frozen', False):
+        d2 = os.path.join(os.path.dirname(sys.executable), 'sounds')
+        if os.path.isdir(d2):
+            return d2
+    return d  # retorna caminho mesmo que nao exista — caller checa existencia
+
+
+# Reproduz sons de notificação. Prioriza arquivos WAV/MP3 da pasta sounds/
+# (estilo MSN Messenger), com fallback para tons sintéticos via winsound.Beep.
+#
+# Mapeamento canonico de tom -> nomes de arquivo (na pasta sounds/, sem
+# extensao). O primeiro arquivo encontrado em qualquer extensao suportada
+# (.wav, .mp3) e usado. Se nenhum existir, cai pro Beep sintetico.
 class SoundPlayer:
     # Referencia ao banco, setada pelo app no startup para ler settings
     db = None
+    # Cache do diretorio (calculado uma vez)
+    _sounds_dir = None
+    # Contador de aliases MCI para nao colidir entre execucoes simultaneas
+    _mci_counter = 0
+    _mci_lock = threading.Lock()
+
+    # Mapeia tom -> lista de nomes de arquivo aceitos (primeiro existente vence,
+    # extensoes .wav/.mp3 testadas em ordem). Convencao escolhida apos analise
+    # da pasta sounds/:
+    #   msn-sound_1.mp3       -> mensagem privada (classico "nova mensagem")
+    #   discord-notification.mp3 -> grupo (curto/leve, igual chat de equipe)
+    #   gta-v-notification.mp3   -> lembrete e broadcast (mais marcante/alertar)
+    # Tons sem arquivo dedicado (ok/info/connect) usam beeps sinteticos
+    # distintos para nao saturar com sons longos em eventos secundarios.
+    # Para trocar: renomeie o arquivo ou ponha um override (ex: 'msg.wav' vence
+    # sobre 'msn-sound_1.mp3' porque vem antes na lista).
+    _SOUND_FILES = {
+        'msg':       ['msg', 'message', 'msn-sound_1'],
+        'group':     ['group', 'msg_group', 'discord-notification'],
+        'broadcast': ['broadcast', 'msg_broadcast', 'gta-v-notification'],
+        'reminder':  ['reminder', 'alert', 'gta-v-notification'],
+        'ok':        ['ok', 'done', 'success'],
+        'info':      ['info', 'file', 'incoming'],
+        'connect':   ['connect', 'login', 'online'],
+    }
 
     @staticmethod
     def _gate(key):
@@ -1214,20 +1260,99 @@ class SoundPlayer:
             return True
 
     @staticmethod
-    def _beep(tone='info'):
+    def _find_sound_file(tone):
+        # Procura arquivo (.wav ou .mp3) na pasta sounds/ para o tom dado.
+        # Retorna caminho absoluto ou None se nenhum existir.
+        if SoundPlayer._sounds_dir is None:
+            SoundPlayer._sounds_dir = _get_sounds_dir()
+        d = SoundPlayer._sounds_dir
+        if not d or not os.path.isdir(d):
+            return None
+        names = SoundPlayer._SOUND_FILES.get(tone, [tone])
+        for name in names:
+            for ext in ('.wav', '.mp3'):
+                p = os.path.join(d, name + ext)
+                if os.path.isfile(p):
+                    return p
+        return None
+
+    @staticmethod
+    def _play_file_mci(path):
+        # Toca MP3/WAV via MCI (winmm) — nao bloqueia, sem dependencia externa.
+        # Usa um alias unico por play para nao interromper sons concorrentes.
+        try:
+            import ctypes
+            with SoundPlayer._mci_lock:
+                SoundPlayer._mci_counter += 1
+                alias = f'mbchat_snd_{SoundPlayer._mci_counter}'
+            # Caminhos com espacos precisam ficar entre aspas no comando MCI
+            cmd_open = f'open "{path}" alias {alias}'
+            cmd_play = f'play {alias}'
+            cmd_close = f'close {alias}'
+            mci = ctypes.windll.winmm.mciSendStringW
+            mci(cmd_open, None, 0, 0)
+            mci(cmd_play, None, 0, 0)
+            # Fecha o alias depois — nao espera o som terminar (tocaria sincrono).
+            # Em vez disso agenda o close apos a duracao tipica (~3s suficiente
+            # pra sons curtos de notificacao). MCI nao expoe duracao facilmente
+            # em ctypes, entao usamos timer simples.
+            def _close_later():
+                try:
+                    mci(cmd_close, None, 0, 0)
+                except Exception:
+                    pass
+            t = threading.Timer(5.0, _close_later)
+            t.daemon = True
+            t.start()
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _play_wav_winsound(path):
+        # PlaySound async + sem fallback ao default beep do sistema.
+        try:
+            import winsound
+            winsound.PlaySound(
+                path,
+                winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _play_tone(tone):
+        # 1) Tenta arquivo customizado da pasta sounds/ (preferencia MSN-style)
         try:
             if platform.system() == 'Windows':
+                f = SoundPlayer._find_sound_file(tone)
+                if f:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext == '.wav':
+                        if SoundPlayer._play_wav_winsound(f):
+                            return
+                    if SoundPlayer._play_file_mci(f):
+                        return
+                # 2) Fallback: tons sinteticos inspirados no MSN Messenger
                 import winsound
-                # winsound.Beep gera um tom sintetico — toca independente das
-                # configs de sons de notificacao do Windows (MessageBeep falha
-                # quando usuario desativa sons do sistema).
-                freq, dur = {
-                    'ok': (880, 120),
-                    'reminder': (660, 250),
-                    'msg': (1000, 100),
-                    'group': (740, 120),
-                }.get(tone, (1000, 100))
-                winsound.Beep(freq, dur)
+                seqs = {
+                    # Mensagem privada: bing-bong ascendente curto (MSN classic)
+                    'msg':      [(659, 80), (988, 120)],
+                    # Grupo: dois tons distintos para nao confundir com privada
+                    'group':    [(523, 100), (784, 120)],
+                    # Broadcast: triplo crescente — chama mais atencao
+                    'broadcast': [(659, 80), (784, 80), (988, 120)],
+                    # Lembrete: descendente arpejado
+                    'reminder': [(1175, 120), (988, 120), (784, 180)],
+                    # OK / conclusao: harmonico C-E (ding)
+                    'ok':       [(1046, 80), (1318, 130)],
+                    # Info / file in: tom unico neutro
+                    'info':     [(880, 110)],
+                    # Connect / login: arpejo ascendente C-E-G
+                    'connect':  [(523, 70), (659, 70), (784, 110)],
+                }
+                for freq, dur in seqs.get(tone, [(1000, 100)]):
+                    winsound.Beep(freq, dur)
             elif platform.system() == 'Darwin':
                 os.system('afplay /System/Library/Sounds/Ping.aiff &')
             else:
@@ -1235,6 +1360,12 @@ class SoundPlayer:
                           'message-new-instant.oga 2>/dev/null &')
         except Exception:
             pass
+
+    @staticmethod
+    def _beep(tone='info'):
+        # API legacy mantida — toca em thread para nao bloquear UI
+        threading.Thread(target=SoundPlayer._play_tone,
+                         args=(tone,), daemon=True).start()
 
     @staticmethod
     def play_msg_private():
@@ -1249,7 +1380,7 @@ class SoundPlayer:
     @staticmethod
     def play_msg_broadcast():
         if SoundPlayer._gate('sound_msg_broadcast'):
-            SoundPlayer._beep('msg')
+            SoundPlayer._beep('broadcast')
 
     @staticmethod
     def play_file_start():
@@ -1277,9 +1408,7 @@ class SoundPlayer:
             if SoundPlayer.db is not None:
                 if SoundPlayer.db.get_setting('sound_master', '1') != '1':
                     return
-            if platform.system() == 'Windows':
-                import winsound
-                winsound.MessageBeep(winsound.MB_OK)
+            SoundPlayer._beep('connect')
         except Exception:
             pass
 
@@ -1410,6 +1539,10 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('flash_taskbar_msg', '1') == '1')
         self.var_flash_taskbar_file = tk.BooleanVar(
             value=db.get_setting('flash_taskbar_file', '1') == '1')
+        self.var_flash_taskbar_group = tk.BooleanVar(
+            value=db.get_setting('flash_taskbar_group', '1') == '1')
+        self.var_flash_taskbar_broadcast = tk.BooleanVar(
+            value=db.get_setting('flash_taskbar_broadcast', '1') == '1')
         self.var_flash_reminder = tk.BooleanVar(
             value=db.get_setting('flash_reminder', '1') == '1')
         self.var_save_history = tk.BooleanVar(value=True)
@@ -1456,7 +1589,9 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_master, self.var_sound_msg_private, self.var_sound_msg_group,
             self.var_sound_msg_broadcast, self.var_sound_file_start,
             self.var_sound_file_done, self.var_sound_reminder,
-            self.var_flash_taskbar_msg, self.var_flash_taskbar_file, self.var_flash_reminder,
+            self.var_flash_taskbar_msg, self.var_flash_taskbar_file,
+            self.var_flash_taskbar_group, self.var_flash_taskbar_broadcast,
+            self.var_flash_reminder,
             self.var_save_history, self.var_history_path, self.var_download_dir,
             self.var_udp_port, self.var_tcp_port, self.var_multicast,
             self.var_font_size, self.var_theme, self.var_enter_send,
@@ -1775,91 +1910,77 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(parent, text='Alertas', font=FONT_SECTION,
                  bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
 
-        # --- Notificacoes (toast Windows) ---
-        lf = tk.LabelFrame(parent, text='Notificações', font=FONT,
-                            bg=BG_WINDOW, padx=10, pady=5)
-        lf.pack(fill='x', padx=10, pady=(0, 8))
-        notif_items = [
-            ('Mensagem privada', self.var_notif_msg_private),
-            ('Mensagem de grupo', self.var_notif_msg_group),
-            ('Transmissão', self.var_notif_msg_broadcast),
-            ('Arquivo', self.var_notif_file),
-            ('Lembrete', self.var_notif_reminder),
-        ]
-        for i, (label, var) in enumerate(notif_items):
-            r = i // 2
-            c = i % 2
-            padx = (0, 20) if c == 0 else (0, 0)
-            tk.Checkbutton(lf, text=label, variable=var, font=FONT,
-                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
-                                              padx=padx)
-        lf.grid_columnconfigure(0, weight=1)
-        lf.grid_columnconfigure(1, weight=1)
-
-        # --- Sons ---
-        lf2 = tk.LabelFrame(parent, text='Sons', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=5)
-        lf2.pack(fill='x', padx=10, pady=(0, 8))
-        tk.Checkbutton(lf2, text='Ativar sons (mestre)',
+        # Master de sons (uma unica chave global) — fora da tabela
+        lf_master = tk.Frame(parent, bg=BG_WINDOW)
+        lf_master.pack(fill='x', padx=10, pady=(0, 6))
+        tk.Checkbutton(lf_master, text='Ativar sons',
                        variable=self.var_sound_master, font=FONT,
-                       bg=BG_WINDOW).grid(row=0, column=0, columnspan=3,
-                                          sticky='w', pady=(0, 2))
-        # Cada som tem botao "Testar" ao lado pra usuario validar antes de salvar
-        sound_items = [
-            ('Mensagem privada', self.var_sound_msg_private,
-             SoundPlayer.play_msg_private),
-            ('Mensagem de grupo', self.var_sound_msg_group,
-             SoundPlayer.play_msg_group),
-            ('Transmissão', self.var_sound_msg_broadcast,
-             SoundPlayer.play_msg_broadcast),
-            ('Recebendo arquivo', self.var_sound_file_start,
-             SoundPlayer.play_file_start),
-            ('Transferência concluída', self.var_sound_file_done,
-             SoundPlayer.play_file_done),
-            ('Lembrete', self.var_sound_reminder,
-             SoundPlayer.play_reminder),
+                       bg=BG_WINDOW).pack(anchor='w')
+
+        # --- Tabela unificada: 4 eventos x 3 acoes (Toast / Som / Pisca) + Testar
+        # Mantem so o essencial. Eventos secundarios (arquivo recebido/concluido)
+        # ficam ligados por padrao sem UI dedicada.
+        lf = tk.LabelFrame(parent, text='Notificações', font=FONT,
+                           bg=BG_WINDOW, padx=10, pady=8)
+        lf.pack(fill='x', padx=10, pady=(0, 8))
+
+        # Cabecalho
+        hdr_font = ('Segoe UI', 8, 'bold')
+        tk.Label(lf, text='', bg=BG_WINDOW).grid(row=0, column=0)
+        tk.Label(lf, text='Aviso', font=hdr_font,
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=1, padx=8)
+        tk.Label(lf, text='Som', font=hdr_font,
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=2, padx=8)
+        tk.Label(lf, text='Piscar', font=hdr_font,
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=3, padx=8)
+        tk.Label(lf, text='', bg=BG_WINDOW).grid(row=0, column=4)
+
+        # Linha de separacao do cabecalho
+        tk.Frame(lf, bg='#e2e8f0', height=1).grid(
+            row=1, column=0, columnspan=5, sticky='ew', pady=(2, 4))
+
+        # 4 eventos essenciais. Cada item: (label, var_notif, var_sound,
+        # var_flash, play_fn).
+        items = [
+            ('Mensagem privada',
+             self.var_notif_msg_private, self.var_sound_msg_private,
+             self.var_flash_taskbar_msg, SoundPlayer.play_msg_private),
+            ('Mensagem de grupo',
+             self.var_notif_msg_group, self.var_sound_msg_group,
+             self.var_flash_taskbar_group, SoundPlayer.play_msg_group),
+            ('Transmissão',
+             self.var_notif_msg_broadcast, self.var_sound_msg_broadcast,
+             self.var_flash_taskbar_broadcast, SoundPlayer.play_msg_broadcast),
+            ('Lembrete',
+             self.var_notif_reminder, self.var_sound_reminder,
+             self.var_flash_reminder, SoundPlayer.play_reminder),
         ]
-        for i, (label, var, play_fn) in enumerate(sound_items):
-            r = 1 + (i // 2)
-            c = (i % 2) * 2  # par de colunas: checkbox + testar
-            padx = (20, 4) if c == 0 else (10, 4)
-            tk.Checkbutton(lf2, text=label, variable=var, font=FONT,
-                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
-                                              padx=padx)
-            # Botao "Testar" — toca o som independente do checkbox (forca por cima)
+        for i, (label, vn, vs, vf, play_fn) in enumerate(items):
+            r = i + 2
+            tk.Label(lf, text=label, font=FONT, bg=BG_WINDOW,
+                     anchor='w').grid(row=r, column=0, sticky='w',
+                                      padx=(0, 6), pady=2)
+            tk.Checkbutton(lf, variable=vn, bg=BG_WINDOW
+                           ).grid(row=r, column=1, padx=8)
+            tk.Checkbutton(lf, variable=vs, bg=BG_WINDOW
+                           ).grid(row=r, column=2, padx=8)
+            tk.Checkbutton(lf, variable=vf, bg=BG_WINDOW
+                           ).grid(row=r, column=3, padx=8)
+
+            # Botao Testar — toca o som ignorando gate master/individual
             def _test_play(fn=play_fn):
-                # Bypass do gate (master/individual) pra usuario sempre ouvir o teste
                 try:
                     saved_db = SoundPlayer.db
-                    SoundPlayer.db = None  # _gate retorna True quando db is None
+                    SoundPlayer.db = None  # _gate retorna True quando db=None
                     fn()
                 finally:
                     SoundPlayer.db = saved_db
-            tk.Button(lf2, text='▶ Testar', font=('Segoe UI', 8),
+            tk.Button(lf, text='▶ Testar', font=('Segoe UI', 8),
                       bg='#e2e8f0', fg='#1a202c', relief='flat', bd=0,
                       padx=8, pady=1, cursor='hand2',
-                      command=_test_play).grid(row=r, column=c + 1,
-                                                sticky='w', padx=(0, 8))
-        lf2.grid_columnconfigure(0, weight=1)
-        lf2.grid_columnconfigure(2, weight=1)
-
-        # --- Piscar barra de tarefas ---
-        lf3 = tk.LabelFrame(parent, text='Piscar na barra de tarefas', font=FONT,
-                             bg=BG_WINDOW, padx=10, pady=5)
-        lf3.pack(fill='x', padx=10, pady=(0, 8))
-        flash_items = [
-            ('Mensagens', self.var_flash_taskbar_msg),
-            ('Arquivos', self.var_flash_taskbar_file),
-            ('Lembretes', self.var_flash_reminder),
-        ]
-        for i, (label, var) in enumerate(flash_items):
-            r = i // 2
-            c = i % 2
-            padx = (0, 20) if c == 0 else (0, 0)
-            tk.Checkbutton(lf3, text=label, variable=var, font=FONT,
-                           bg=BG_WINDOW).grid(row=r, column=c, sticky='w',
-                                              padx=padx)
-        lf3.grid_columnconfigure(0, weight=1)
+                      command=_test_play).grid(row=r, column=4,
+                                               sticky='w', padx=(8, 0))
+        lf.grid_columnconfigure(0, weight=1)
         lf3.grid_columnconfigure(1, weight=1)
 
     # ----- REDE -----
@@ -2070,6 +2191,10 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_flash_taskbar_msg.get() else '0')
         db.set_setting('flash_taskbar_file',
                        '1' if self.var_flash_taskbar_file.get() else '0')
+        db.set_setting('flash_taskbar_group',
+                       '1' if self.var_flash_taskbar_group.get() else '0')
+        db.set_setting('flash_taskbar_broadcast',
+                       '1' if self.var_flash_taskbar_broadcast.get() else '0')
         db.set_setting('sound_reminder',
                        '1' if self.var_sound_reminder.get() else '0')
         db.set_setting('notif_reminder',
@@ -2193,6 +2318,8 @@ class PreferencesWindow(tk.Toplevel):
             self.var_sound_reminder.set(True)
             self.var_flash_taskbar_msg.set(True)
             self.var_flash_taskbar_file.set(True)
+            self.var_flash_taskbar_group.set(True)
+            self.var_flash_taskbar_broadcast.set(True)
             self.var_flash_reminder.set(True)
             self.var_tray_icon.set(True)
             self.var_balloon.set(True)
@@ -2874,6 +3001,15 @@ class FileTransfersWindow(tk.Toplevel):
     def _open_folder_selected(self):
         fid, row = self._get_selected()
         if not fid:
+            # Lista vazia ou sem selecao: abre a pasta de downloads diretamente
+            download_dir = self.app.messenger.db.get_setting(
+                'download_dir',
+                os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
+            try:
+                os.makedirs(download_dir, exist_ok=True)
+                os.startfile(download_dir)
+            except Exception:
+                log.exception('Erro ao abrir pasta de downloads')
             return
         fp = row._entry.get('filepath', '')
         if not fp:
@@ -3606,14 +3742,18 @@ class ChatWindow(tk.Toplevel):
         self._long_press_msg_idx = None
         self._selection_bullets = {}   # idx -> Label widget (bolinha clicavel)
 
-        # Botao Copiar estilo code-block (pill escuro, mais visivel que MDL2)
+        # Botao Copiar pill arredondado (cinza claro suave, hover escurece)
         self._hover_copy_btn = tk.Label(
-            self.chat_text, text='⧩ Copiar', font=('Segoe UI', 8),
-            bg='#0f172a', fg='#94a3b8', cursor='hand2', bd=0, relief='flat',
-            padx=8, pady=2)
+            self.chat_text, text='⎘  Copiar', font=('Segoe UI', 8),
+            bg='#e2e8f0', fg='#475569', cursor='hand2', bd=0, relief='flat',
+            padx=10, pady=3)
         self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
-        self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
-        self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
+        self._hover_copy_btn.bind('<Enter>',
+            lambda e: (self._cancel_hover_hide(),
+                       self._hover_copy_btn.config(bg='#cbd5e1', fg='#1e293b')))
+        self._hover_copy_btn.bind('<Leave>',
+            lambda e: (self._schedule_hover_hide(),
+                       self._hover_copy_btn.config(bg='#e2e8f0', fg='#475569')))
         self._hover_copy_visible_idx = None
         self._hover_hide_after = None
 
@@ -4811,13 +4951,17 @@ class ChatWindow(tk.Toplevel):
             pass
         start_mark, end_mark = self._msg_ranges_idx[idx]
         try:
-            bbox = self.chat_text.bbox(start_mark)
+            # Posiciona colado a hora, com topo do botao acima do header
+            # (= alinhado ao topo do balao da mensagem).
+            header_end = self.chat_text.index(f'{start_mark} -2c')
+            bbox = self.chat_text.bbox(header_end)
             if not bbox:
                 return
-            x, y, w, h = bbox
+            cx, cy, cw, ch = bbox
             chat_w = self.chat_text.winfo_width()
-            btn_x = max(4, chat_w - 80)
-            btn_y = max(2, y - 2)
+            btn_h = self._hover_copy_btn.winfo_reqheight() or 22
+            btn_x = min(chat_w - 90, cx + cw + 6)
+            btn_y = max(0, cy - (btn_h - ch) // 2 - 4)
             self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
             self._hover_copy_visible_idx = idx
         except Exception:
@@ -4833,8 +4977,9 @@ class ChatWindow(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(text)
         # Feedback visual: muda para 'Copiado' por 1.5s (estilo code-block)
-        self._hover_copy_btn.config(text='✓ Copiado', fg='#22c55e')
-        self.after(1500, lambda: self._hover_copy_btn.config(text='⧩ Copiar', fg='#94a3b8'))
+        self._hover_copy_btn.config(text='✓  Copiado', fg='#16a34a', bg='#dcfce7')
+        self.after(1500, lambda: self._hover_copy_btn.config(
+            text='⎘  Copiar', fg='#475569', bg='#e2e8f0'))
 
     # --- Long-press detection ---
     def _on_chat_press(self, event):
@@ -6505,6 +6650,12 @@ class GroupChatWindow(tk.Toplevel):
         self._theme = t
         self._build_ui(t)
         self.bind('<FocusIn>', lambda e: app._stop_flash(self))
+        # Carrega historico persistido do grupo (mensagens + imagens) em ordem
+        # cronologica. Roda apos o build_ui para que chat_text exista.
+        try:
+            self._load_history()
+        except Exception:
+            log.exception('Erro ao carregar historico do grupo')
 
     def _build_ui(self, t):
         NAVY = '#0f2a5c'
@@ -6900,13 +7051,18 @@ class GroupChatWindow(tk.Toplevel):
         self._long_press_origin = None
         self._long_press_msg_idx = None
 
+        # Botao Copiar pill arredondado (cinza claro suave, hover escurece)
         self._hover_copy_btn = tk.Label(
-            self.chat_text, text='⧩ Copiar', font=('Segoe UI', 8),
-            bg='#0f172a', fg='#94a3b8', cursor='hand2', bd=0, relief='flat',
-            padx=8, pady=2)
+            self.chat_text, text='⎘  Copiar', font=('Segoe UI', 8),
+            bg='#e2e8f0', fg='#475569', cursor='hand2', bd=0, relief='flat',
+            padx=10, pady=3)
         self._hover_copy_btn.bind('<Button-1>', self._on_hover_copy_click)
-        self._hover_copy_btn.bind('<Enter>', lambda e: self._cancel_hover_hide())
-        self._hover_copy_btn.bind('<Leave>', lambda e: self._schedule_hover_hide())
+        self._hover_copy_btn.bind('<Enter>',
+            lambda e: (self._cancel_hover_hide(),
+                       self._hover_copy_btn.config(bg='#cbd5e1', fg='#1e293b')))
+        self._hover_copy_btn.bind('<Leave>',
+            lambda e: (self._schedule_hover_hide(),
+                       self._hover_copy_btn.config(bg='#e2e8f0', fg='#475569')))
         self._hover_copy_visible_idx = None
         self._hover_hide_after = None
 
@@ -7820,15 +7976,15 @@ class GroupChatWindow(tk.Toplevel):
             return
         start_mark, end_mark = self._msg_ranges_idx[idx]
         try:
-            # Linha do header (sender + horario): 1 linha acima do body_start
-            header_idx = self.chat_text.index(f'{start_mark} -1c linestart')
-            info = self.chat_text.dlineinfo(header_idx)
-            if not info:
+            # Posiciona colado a hora, alinhado ao topo do balao
+            header_end = self.chat_text.index(f'{start_mark} -2c')
+            bbox = self.chat_text.bbox(header_end)
+            if not bbox:
                 return
-            lx, ly, lw, lh, _ = info
+            cx, cy, cw, ch = bbox
             chat_w = self.chat_text.winfo_width()
-            btn_x = min(chat_w - 80, lx + lw + 6)
-            btn_y = ly + 1
+            btn_x = min(chat_w - 90, cx + cw + 6)
+            btn_y = cy
             self._hover_copy_btn.place(in_=self.chat_text, x=btn_x, y=btn_y)
             self._hover_copy_visible_idx = idx
         except Exception:
@@ -7843,8 +7999,9 @@ class GroupChatWindow(tk.Toplevel):
             return
         self.clipboard_clear()
         self.clipboard_append(text)
-        self._hover_copy_btn.config(text='✓ Copiado', fg='#22c55e')
-        self.after(1500, lambda: self._hover_copy_btn.config(text='⧩ Copiar', fg='#94a3b8'))
+        self._hover_copy_btn.config(text='✓  Copiado', fg='#16a34a', bg='#dcfce7')
+        self.after(1500, lambda: self._hover_copy_btn.config(
+            text='⎘  Copiar', fg='#475569', bg='#e2e8f0'))
 
     def _on_chat_press(self, event):
         if self._selection_mode:
@@ -8510,6 +8667,34 @@ class GroupChatWindow(tk.Toplevel):
     # Chamado quando imagem e recebida de outro membro do grupo
     def receive_image(self, display_name, image_path, timestamp=None):
         self._append_image(display_name, image_path, False, timestamp=timestamp)
+
+    # Carrega historico do grupo do banco (texto + imagens).
+    # Renderiza tudo em ordem cronologica como se fosse uma conversa normal.
+    # is_mine determinado por from_user == proprio uid; sender_name lido do
+    # campo file_path (que armazena o nome de exibicao no save_group_message).
+    def _load_history(self):
+        my_uid = self.app.messenger.user_id
+        history = self.app.messenger.get_group_history(self.group_id)
+        for msg in history:
+            from_user = msg.get('from_user', '')
+            is_mine = (from_user == my_uid)
+            sender = msg.get('file_path', '') or msg.get('sender_name', '') or from_user
+            if is_mine:
+                sender = self.app.messenger.display_name
+            ts = msg.get('timestamp')
+            content = msg.get('content', '')
+            mtype = msg.get('msg_type', 'text')
+            mid = msg.get('msg_id', '')
+            rto = msg.get('reply_to_id', '')
+            if mtype == 'image':
+                if content and os.path.exists(content):
+                    self._append_image(sender, content, is_mine, timestamp=ts)
+                else:
+                    self._append_message(sender, '[Imagem indisponível]',
+                                         is_mine, timestamp=ts, msg_id=mid)
+            else:
+                self._append_message(sender, content, is_mine,
+                                     timestamp=ts, msg_id=mid, reply_to=rto)
 
     # Renderiza imagem no chat do grupo (thumbnail clicavel)
     def _append_image(self, sender, image_path, is_mine, timestamp=None):
@@ -11513,11 +11698,38 @@ class LanMessengerApp:
         contacts_tree = ttk.Treeview(tree_wrap, columns=('nome',), show='',
                                       selectmode='browse')
         contacts_tree.column('nome', anchor='w', stretch=True)
-        tree_scroll = ttk.Scrollbar(tree_wrap, command=contacts_tree.yview,
-                                     style='Clean.Vertical.TScrollbar')
-        contacts_tree.configure(yscrollcommand=tree_scroll.set)
-        tree_scroll.pack(side='right', fill='y')
+        # Scrollbar minimalista auto-hide: aparece ao hover, some quando cabe
+        tree_scroll = tk.Scrollbar(tree_wrap, command=contacts_tree.yview,
+                                    width=4, relief='flat',
+                                    troughcolor=panel_bg,
+                                    bg='#cbd5e0', activebackground='#a0aec0')
+        _tree_scroll_visible = [False]
+        def _tree_yscroll(first, last):
+            tree_scroll.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                if _tree_scroll_visible[0]:
+                    tree_scroll.pack_forget()
+                    _tree_scroll_visible[0] = False
+        def _tree_show_scroll(e=None):
+            first, last = contacts_tree.yview()
+            if (first > 0.0 or last < 1.0) and not _tree_scroll_visible[0]:
+                tree_scroll.pack(side='right', fill='y')
+                _tree_scroll_visible[0] = True
+        def _tree_hide_scroll(e=None):
+            if _tree_scroll_visible[0]:
+                try:
+                    x, y = tree_wrap.winfo_pointerxy()
+                    w = tree_wrap.winfo_containing(x, y)
+                    if w and (w == contacts_tree or w == tree_scroll):
+                        return
+                except Exception:
+                    pass
+                tree_scroll.pack_forget()
+                _tree_scroll_visible[0] = False
+        contacts_tree.configure(yscrollcommand=_tree_yscroll)
         contacts_tree.pack(side='left', fill='both', expand=True)
+        contacts_tree.bind('<Enter>', _tree_show_scroll)
+        contacts_tree.bind('<Leave>', _tree_hide_scroll)
 
         main.add(left_frame, minsize=200, width=320)
 
@@ -11533,11 +11745,38 @@ class LanMessengerApp:
         msg_text = tk.Text(right_txt_wrap, font=FONT_SMALL, wrap='word', bg=panel_bg,
                            fg=fg_text, state='disabled', relief='flat',
                            bd=0, padx=10, pady=4)
-        msg_scroll = ttk.Scrollbar(right_txt_wrap, command=msg_text.yview,
-                                    style='Clean.Vertical.TScrollbar')
-        msg_text.configure(yscrollcommand=msg_scroll.set)
-        msg_scroll.pack(side='right', fill='y')
+        # Scrollbar minimalista auto-hide: mesmo padrao da ChatWindow
+        msg_scroll = tk.Scrollbar(right_txt_wrap, command=msg_text.yview,
+                                   width=4, relief='flat',
+                                   troughcolor=panel_bg,
+                                   bg='#cbd5e0', activebackground='#a0aec0')
+        _msg_scroll_visible = [False]
+        def _msg_yscroll(first, last):
+            msg_scroll.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                if _msg_scroll_visible[0]:
+                    msg_scroll.pack_forget()
+                    _msg_scroll_visible[0] = False
+        def _msg_show_scroll(e=None):
+            first, last = msg_text.yview()
+            if (first > 0.0 or last < 1.0) and not _msg_scroll_visible[0]:
+                msg_scroll.pack(side='right', fill='y')
+                _msg_scroll_visible[0] = True
+        def _msg_hide_scroll(e=None):
+            if _msg_scroll_visible[0]:
+                try:
+                    x, y = right_txt_wrap.winfo_pointerxy()
+                    w = right_txt_wrap.winfo_containing(x, y)
+                    if w and (w == msg_text or w == msg_scroll):
+                        return
+                except Exception:
+                    pass
+                msg_scroll.pack_forget()
+                _msg_scroll_visible[0] = False
+        msg_text.configure(yscrollcommand=_msg_yscroll)
         msg_text.pack(side='left', fill='both', expand=True)
+        msg_text.bind('<Enter>', _msg_show_scroll)
+        msg_text.bind('<Leave>', _msg_hide_scroll)
 
         msg_text.tag_configure('ts', foreground='#888888')
         msg_text.tag_configure('me', foreground='#0d47a1', font=('Segoe UI', 9, 'bold'))
@@ -12572,6 +12811,12 @@ class LanMessengerApp:
         # no TreeView, mostra toast e pisca a taskbar principal.
         # Em ambos os casos toca o som de notificacao.
         SoundPlayer.play_msg_group()
+        # Recovery: se grupo nao esta no tree (perdeu MT_GROUP_INV ou foi recem
+        # criado pelo messenger via stub), adiciona agora para o usuario ver.
+        if group_id not in self._group_tree_items:
+            g_name = kw.get('group_name', '') or 'Grupo'
+            g_type = kw.get('group_type', 'temp')
+            self._add_group_to_tree(group_id, g_name, g_type)
         if group_id in self.group_windows:  # janela do grupo esta aberta?
             gw = self.group_windows[group_id]
             gw.receive_message(display_name, content, timestamp,
@@ -12588,7 +12833,10 @@ class LanMessengerApp:
                             self._show_in_taskbar_minimized(gw)
                     except Exception:
                         pass
-                    self._flash_window(gw)
+                    self._flash_window(gw, gate_key='flash_taskbar_group')
+                    # Pisca tambem a root para chamar atencao na barra principal
+                    # (caso usuario esteja em outra janela com a root minimizada)
+                    self._flash_window(self.root, gate_key='flash_taskbar_group')
             except Exception:
                 pass
         else:
@@ -12596,14 +12844,18 @@ class LanMessengerApp:
             self._mark_group_unread(group_id)
             self._show_group_toast(group_id, display_name, content)
             self._pending_flash_target = f'group:{group_id}'
+            # _open_group cria a janela que ja carrega historico do DB no __init__
+            # — a mensagem recem-recebida ja foi persistida pelo messenger antes
+            # deste callback rodar, entao NAO chamar receive_message aqui (dup).
             def _create():
-                gw = self._open_group(group_id, surface_only=True)
-                if gw:
-                    gw.receive_message(display_name, content, timestamp,
-                                       reply_to=reply_to, mentions=mentions,
-                                       msg_id=msg_id)
-                return gw
+                return self._open_group(group_id, surface_only=True)
             self._surface_chat_from_tray(_create)
+            # Adicionalmente pisca a root para garantir atencao mesmo se a
+            # janela do grupo nao for criada (caso _open_group falhe).
+            try:
+                self._flash_window(self.root, gate_key='flash_taskbar_group')
+            except Exception:
+                pass
 
     # Processa notificacao de saida de membro do grupo (MT_GROUP_LEAVE).
     #
@@ -12757,7 +13009,8 @@ class LanMessengerApp:
                     self.root.after(0, lambda t=text, ti=title: messagebox.showinfo(ti, t))
                 SoundPlayer.play_reminder()
                 # Abre a janela de Lembretes surfaceando do tray (igual a chat)
-                # e pisca-a na taskbar (gate proprio de lembrete)
+                # e pisca-a na taskbar (gate proprio de lembrete) + pisca a root
+                # para garantir que a barra de tarefas chame atencao do usuario.
                 try:
                     self._pending_flash_target = '__reminders__'
                     def _create_reminders():
@@ -12774,6 +13027,10 @@ class LanMessengerApp:
                     win = getattr(self, '_reminders_window', None)
                     if win is not None:
                         self._flash_window(win, gate_key='flash_reminder')
+                    # Pisca a root tambem — assim a barra de tarefas chama
+                    # atencao mesmo se a janela de lembretes ja estava aberta
+                    # em segundo plano ou se _show_reminders nao deiconify-ou.
+                    self._flash_window(self.root, gate_key='flash_reminder')
                 except Exception:
                     log.exception('Erro ao surfacear janela de lembretes')
             # Atualiza janela de lembretes se estiver aberta
@@ -15066,11 +15323,10 @@ class LanMessengerApp:
                 self._mark_group_unread(group_id)
                 self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                 self._pending_flash_target = f'group:{group_id}'
+                # _open_group ja carrega historico do DB no __init__ — imagem
+                # ja foi persistida pelo messenger antes deste callback rodar.
                 def _create():
-                    gw = self._open_group(group_id, surface_only=True)
-                    if gw:
-                        gw.receive_image(display_name or from_user, image_path, timestamp)
-                    return gw
+                    return self._open_group(group_id, surface_only=True)
                 self._surface_chat_from_tray(_create)
         else:
             SoundPlayer.play_msg_private()

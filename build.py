@@ -152,6 +152,13 @@ def _do_build():
         MAIN,
     ]
 
+    # Inclui pasta sounds/ se existir (arquivos WAV/MP3 estilo MSN).
+    # Inserido antes do --name para manter ordem de --add-data agrupada.
+    sounds_dir = os.path.join(HERE, 'sounds')
+    if os.path.isdir(sounds_dir):
+        cmd.insert(cmd.index(f'--add-data={ICON};assets') + 1,
+                   f'--add-data={sounds_dir};sounds')
+
     print('Executando PyInstaller...')
     result = subprocess.run(cmd, cwd=HERE)
 

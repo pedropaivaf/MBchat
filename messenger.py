@@ -319,6 +319,15 @@ class Messenger:
             if group_id:
                 # Imagem de grupo — notifica via on_group_message com marcador especial
                 display_name = msg.get('display_name', from_user)
+                # Persiste imagem no historico do grupo (idempotente por msg_id)
+                try:
+                    if msg_id and not self.db.has_group_message(msg_id):
+                        self.db.save_group_message(
+                            group_id, msg_id, from_user, image_path,
+                            sender_name=display_name, msg_type='image',
+                            is_sent=False, timestamp=timestamp)
+                except Exception:
+                    pass
                 if self.on_image:
                     self.on_image(from_user, image_path, msg_id, timestamp,
                                   group_id=group_id, display_name=display_name)
@@ -371,11 +380,72 @@ class Messenger:
             reply_to = msg.get('reply_to', '')
             mentions = msg.get('mentions', [])
             msg_id = msg.get('msg_id', '')
+            # Recovery: se o grupo nao esta em memoria, e provavel que o
+            # MT_GROUP_INV tenha sido perdido (peer offline na hora da criacao
+            # do grupo, ou grupo criado antes do peer abrir o app). Reconstroi
+            # um stub com o que veio na propria mensagem para o usuario ver
+            # o grupo aparecer e poder continuar a conversa.
+            group_name = msg.get('group_name', '') or 'Grupo'
+            group_type = msg.get('group_type', 'temp')
+            recovered = False
+            if group_id and group_id not in self._groups:
+                # Tenta carregar do DB (caso seja fixo ja salvo)
+                rows = self.db.get_groups()
+                db_g = next((g for g in rows if g['group_id'] == group_id), None)
+                if db_g:
+                    members = self.db.get_group_members(group_id)
+                    self._groups[group_id] = {
+                        'name': db_g['name'],
+                        'group_type': db_g['group_type'],
+                        'members': [{'uid': m['uid'],
+                                     'display_name': m['display_name'],
+                                     'ip': m['ip']} for m in members],
+                    }
+                    group_name = db_g['name']
+                    group_type = db_g['group_type']
+                else:
+                    # Stub minimo: dois membros conhecidos (eu + remetente).
+                    # Se mais membros existirem, vao se materializando via
+                    # mensagens subsequentes (ainda da pra responder).
+                    sender_ip = addr[0] if addr else ''
+                    self._groups[group_id] = {
+                        'name': group_name,
+                        'group_type': group_type,
+                        'members': [
+                            {'uid': self.user_id,
+                             'display_name': self.display_name,
+                             'ip': get_local_ip()},
+                            {'uid': from_user,
+                             'display_name': display_name,
+                             'ip': sender_ip},
+                        ],
+                    }
+                    if group_type == 'fixed':
+                        self.db.save_group(group_id, group_name, 'fixed')
+                        self.db.save_group_member(group_id, self.user_id,
+                                                  self.display_name,
+                                                  get_local_ip())
+                        self.db.save_group_member(group_id, from_user,
+                                                  display_name, sender_ip)
+                    recovered = True
+            # Persiste a mensagem no historico do grupo (idempotente por msg_id)
+            try:
+                if msg_id and not self.db.has_group_message(msg_id):
+                    self.db.save_group_message(
+                        group_id, msg_id, from_user, content,
+                        sender_name=display_name, msg_type='text',
+                        is_sent=False, timestamp=timestamp,
+                        reply_to_id=reply_to)
+            except Exception:
+                pass
 
             if self.on_group_message:
                 self.on_group_message(group_id, from_user, display_name,
                                       content, timestamp, reply_to=reply_to,
-                                      mentions=mentions, msg_id=msg_id)
+                                      mentions=mentions, msg_id=msg_id,
+                                      group_name=group_name,
+                                      group_type=group_type,
+                                      recovered=recovered)
 
         # --- Membro saiu do grupo ---
         elif msg_type == MT_GROUP_LEAVE:
@@ -580,6 +650,15 @@ class Messenger:
         image_path = self._save_image_to_disk(image_bytes, msg_id)
         b64 = base64.b64encode(image_bytes).decode('ascii')
 
+        # Persiste a imagem no historico local do grupo (content = caminho)
+        try:
+            self.db.save_group_message(
+                group_id, msg_id, self.user_id, image_path,
+                sender_name=self.display_name, msg_type='image',
+                is_sent=True, timestamp=timestamp)
+        except Exception:
+            pass
+
         for member in group['members']:
             uid = member['uid']
             if uid == self.user_id:
@@ -589,6 +668,8 @@ class Messenger:
                 'from_user': self.user_id,
                 'display_name': self.display_name,
                 'group_id': group_id,
+                'group_name': group.get('name', 'Grupo'),
+                'group_type': group.get('group_type', 'temp'),
                 'msg_id': msg_id,
                 'image_data': b64,
                 'timestamp': timestamp,
@@ -852,6 +933,19 @@ class Messenger:
         timestamp = time.time()
         msg_id = self._next_msg_id()
 
+        # Persiste a mensagem enviada no historico local do grupo
+        try:
+            self.db.save_group_message(
+                group_id, msg_id, self.user_id, content,
+                sender_name=self.display_name, msg_type='text',
+                is_sent=True, timestamp=timestamp,
+                reply_to_id=reply_to_id)
+        except Exception:
+            pass
+
+        # Inclui group_name e group_type no payload — assim o receptor que
+        # nao recebeu o MT_GROUP_INV (peer offline na criacao) consegue
+        # reconstruir o grupo localmente e ver a conversa imediatamente.
         for member in group['members']:
             uid = member['uid']
             if uid == self.user_id:
@@ -861,6 +955,8 @@ class Messenger:
                 'from_user': self.user_id,
                 'display_name': self.display_name,
                 'group_id': group_id,
+                'group_name': group.get('name', 'Grupo'),
+                'group_type': group.get('group_type', 'temp'),
                 'msg_id': msg_id,
                 'content': content,
                 'timestamp': timestamp,
@@ -954,6 +1050,10 @@ class Messenger:
     # Retorna historico de conversa com um peer
     def get_chat_history(self, peer_id, limit=None):
         return self.db.get_chat_history(self.user_id, peer_id, limit)
+
+    # Retorna historico completo de um grupo (texto + imagens), ordem ASC
+    def get_group_history(self, group_id, limit=None):
+        return self.db.get_group_history(group_id, limit)
 
     # Retorna lista de contatos do banco
     def get_contacts(self, online_only=False):
