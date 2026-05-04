@@ -15250,8 +15250,9 @@ class LanMessengerApp:
     def _on_user_found(self, uid, info):
         is_new = uid not in self.peer_items  # e um contato novo (nao estava na lista)?
         self._add_contact(uid, info)          # adiciona/atualiza no TreeView e peer_info
-        if is_new:
-            SoundPlayer.play_connect()
+        # Som de conexao desativado para evitar beeps excessivos no startup
+        # if is_new:
+        #     SoundPlayer.play_connect()
 
     # Callback: peer saiu da rede (timeout no UDP discovery).
     #
