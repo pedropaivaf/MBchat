@@ -4718,8 +4718,10 @@ class ChatWindow(tk.Toplevel):
         self._append_message(self.peer_name, content, False,
                              timestamp=timestamp, msg_id=msg_id,
                              reply_to=reply_to)
-        self.messenger.mark_as_read(self.peer_id)
-        if self.focus_get() is None:
+        # Se a janela ja estiver ativa/focada, marca como lida imediatamente
+        if self.focus_get():
+            self.messenger.mark_as_read(self.peer_id)
+        elif self.focus_get() is None:
             self.bell()   # bipe do sistema quando a janela está sem foco
 
     # Atualiza o label de 'está digitando...' no cabeçalho da janela.
@@ -15791,6 +15793,9 @@ class LanMessengerApp:
     # janela na taskbar (surface pattern), usuario escolhe qual restaurar via
     # thumbnail. Apenas lembretes abrem aqui, pois nao tem janela dedicada.
     def _on_main_focus(self, event=None):
+        # Garante que o FocusIn veio realmente do root e nao de propagacao/transients
+        if event and event.widget != self.root:
+            return
         self._stop_flash()
         target = self._pending_flash_target
         self._pending_flash_target = None
