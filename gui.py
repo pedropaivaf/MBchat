@@ -1237,10 +1237,16 @@ class SoundPlayer:
     # distintos para nao saturar com sons longos em eventos secundarios.
     # Para trocar: renomeie o arquivo ou ponha um override (ex: 'msg.wav' vence
     # sobre 'msn-sound_1.mp3' porque vem antes na lista).
+    # Mapeamento canonico dos 3 sons em sounds/:
+    #   msn-sound_1.mp3      = mensagens privadas (1:1 e broadcast)
+    #   discord-notification = mensagens de grupo
+    #   gta-v-notification   = lembretes
+    # Demais categorias (ok/info/connect) sao silenciosas se nao houver arquivo
+    # dedicado em sounds/ — sem fallback de beep do SO.
     _SOUND_FILES = {
         'msg':       ['msg', 'message', 'msn-sound_1'],
         'group':     ['group', 'msg_group', 'discord-notification'],
-        'broadcast': ['broadcast', 'msg_broadcast', 'gta-v-notification'],
+        'broadcast': ['broadcast', 'msg_broadcast', 'msn-sound_1'],
         'reminder':  ['reminder', 'alert', 'gta-v-notification'],
         'ok':        ['ok', 'done', 'success'],
         'info':      ['info', 'file', 'incoming'],
@@ -1333,26 +1339,8 @@ class SoundPlayer:
                             return
                     if SoundPlayer._play_file_mci(f):
                         return
-                # 2) Fallback: tons sinteticos inspirados no MSN Messenger
-                import winsound
-                seqs = {
-                    # Mensagem privada: bing-bong ascendente curto (MSN classic)
-                    'msg':      [(659, 80), (988, 120)],
-                    # Grupo: dois tons distintos para nao confundir com privada
-                    'group':    [(523, 100), (784, 120)],
-                    # Broadcast: triplo crescente — chama mais atencao
-                    'broadcast': [(659, 80), (784, 80), (988, 120)],
-                    # Lembrete: descendente arpejado
-                    'reminder': [(1175, 120), (988, 120), (784, 180)],
-                    # OK / conclusao: harmonico C-E (ding)
-                    'ok':       [(1046, 80), (1318, 130)],
-                    # Info / file in: tom unico neutro
-                    'info':     [(880, 110)],
-                    # Connect / login: arpejo ascendente C-E-G
-                    'connect':  [(523, 70), (659, 70), (784, 110)],
-                }
-                for freq, dur in seqs.get(tone, [(1000, 100)]):
-                    winsound.Beep(freq, dur)
+                # 2) Fallback removido a pedido do usuario: sons agora sao apenas os arquivos em sounds/
+                pass
             elif platform.system() == 'Darwin':
                 os.system('afplay /System/Library/Sounds/Ping.aiff &')
             else:
@@ -1462,7 +1450,6 @@ class PreferencesWindow(tk.Toplevel):
         self.right = tk.Frame(top, bg=BG_WINDOW)
         self.right.pack(side='left', fill='both', expand=True, padx=(6, 0))
 
-        # Category items
         self.categories = [
             ('Geral', self._build_geral),
             ('Conta', self._build_conta),
@@ -1472,6 +1459,7 @@ class PreferencesWindow(tk.Toplevel):
             ('Transferência de arq.', self._build_transferencia),
             ('Aparência', self._build_aparencia),
             ('Teclas de atalho', self._build_atalhos),
+            ('Utilitários', self._build_utilitarios),
         ]
 
         self.cat_buttons = []
@@ -2030,6 +2018,18 @@ class PreferencesWindow(tk.Toplevel):
                   command=lambda: self.app._open_network_diag()
                   ).pack(anchor='w')
 
+        vpn_lf = tk.LabelFrame(parent, text='Conexão VPN / Conectar Fora da LAN', font=FONT,
+                                bg=BG_WINDOW, padx=10, pady=8)
+        vpn_lf.pack(fill='x', padx=10, pady=(0, 8))
+        tk.Label(vpn_lf,
+                 text='Configurar IPs manuais ou conexões fora da rede local.',
+                 font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW,
+                 wraplength=360, justify='left').pack(anchor='w', pady=(0, 6))
+        tk.Button(vpn_lf, text='Conectar fora da LAN (VPN)...',
+                  font=FONT,
+                  command=lambda: self.app._open_vpn_peers()
+                  ).pack(anchor='w')
+
     # ----- TRANSFERÊNCIA -----
     def _build_transferencia(self, parent):
         tk.Label(parent, text='Transferência de Arquivos', font=FONT_SECTION,
@@ -2048,9 +2048,9 @@ class PreferencesWindow(tk.Toplevel):
         dir_row.pack(fill='x', pady=2)
         tk.Entry(dir_row, textvariable=self.var_download_dir, font=FONT_SMALL
                  ).pack(side='left', fill='x', expand=True)
-        tk.Button(dir_row, text='Procurar...', font=FONT_SMALL,
+        tk.Button(dir_row, text='Selecionar', font=FONT_SMALL,
                   command=lambda: self.var_download_dir.set(
-                      filedialog.askdirectory(parent=self) or
+                      filedialog.askdirectory(parent=self, initialdir=self.var_download_dir.get()) or
                       self.var_download_dir.get())
                   ).pack(side='right', padx=4)
 
@@ -2139,6 +2139,24 @@ class PreferencesWindow(tk.Toplevel):
                      width=20, anchor='w').pack(side='left')
             tk.Label(r, text=key, font=FONT_BOLD, bg=BG_WINDOW,
                      fg=FG_BLUE).pack(side='left')
+
+    # ----- UTILITÁRIOS -----
+    def _build_utilitarios(self, parent):
+        tk.Label(parent, text='Utilitários', font=FONT_SECTION,
+                 bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
+
+        lf = tk.LabelFrame(parent, text='Piscamento da Barra de Tarefas', font=FONT,
+                            bg=BG_WINDOW, padx=10, pady=8)
+        lf.pack(fill='x', padx=10, pady=(0, 8))
+
+        tk.Label(lf, text='Testa o piscamento laranja na barra de tarefas para garantir que as notificações visuais estão funcionando corretamente no seu sistema.',
+                 font=FONT_SMALL, fg=FG_GRAY, bg=BG_WINDOW,
+                 wraplength=360, justify='left').pack(anchor='w', pady=(0, 6))
+
+        tk.Button(lf, text='Testar piscar barra de tarefas',
+                  font=FONT,
+                  command=lambda: self.app._test_flash_taskbar()
+                  ).pack(anchor='w')
 
     # ----- SAVE ALL -----
     # Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
@@ -3771,7 +3789,7 @@ class ChatWindow(tk.Toplevel):
         self._ctx_click_index = None
 
         self.protocol('WM_DELETE_WINDOW', self._on_close)  # trata fechamento da janela
-        self.bind('<FocusIn>', lambda e: self.app._stop_flash(self))  # para o flash da taskbar ao focar
+        self.bind('<FocusIn>', self._on_focus_in)  # para flash + marca como lida ao focar
 
         # Drag & Drop de arquivos (windnd) — hook na janela E na caixa de entrada
         if HAS_WINDND:
@@ -3798,6 +3816,8 @@ class ChatWindow(tk.Toplevel):
                 self.after(50, lambda: self.entry.focus_set())
             except Exception:
                 pass
+
+        # self._load_history()
 
     # Callback do windnd: arquivos arrastados para a janela
     def _on_drop_files(self, files):
@@ -4718,11 +4738,11 @@ class ChatWindow(tk.Toplevel):
         self._append_message(self.peer_name, content, False,
                              timestamp=timestamp, msg_id=msg_id,
                              reply_to=reply_to)
-        # Se a janela ja estiver ativa/focada, marca como lida imediatamente
-        if self.focus_get():
+        # Marca como lida APENAS se a janela esta em foreground real do Windows.
+        # Se nao estiver, fica unread no DB ate o usuario focar a janela —
+        # o handler _on_focus_in dispara mark_as_read nesse momento.
+        if self.app._window_is_foreground(self):
             self.messenger.mark_as_read(self.peer_id)
-        elif self.focus_get() is None:
-            self.bell()   # bipe do sistema quando a janela está sem foco
 
     # Atualiza o label de 'está digitando...' no cabeçalho da janela.
     #
@@ -6488,9 +6508,9 @@ class ChatWindow(tk.Toplevel):
     # Chamado quando uma imagem e recebida do peer
     def receive_image(self, image_path, timestamp=None):
         self._append_image(self.peer_name, image_path, False, timestamp=timestamp)
-        self.messenger.mark_as_read(self.peer_id)
-        if self.focus_get() is None:
-            self.bell()
+        # Mesma regra de receive_message: so marca como lida se em foreground real.
+        if self.app._window_is_foreground(self):
+            self.messenger.mark_as_read(self.peer_id)
 
     # Renderiza imagem no chat (thumbnail clicavel)
     def _append_image(self, sender, image_path, is_mine, timestamp=None):
@@ -6589,6 +6609,20 @@ class ChatWindow(tk.Toplevel):
             except Exception:
                 log.exception('Erro ao salvar imagem')
 
+    def _on_focus_in(self, event=None):
+        # FocusIn dispara para qualquer widget filho — confirma que e a Toplevel
+        if event is not None and event.widget is not self:
+            return
+        if not self.app._window_is_foreground(self):
+            return
+        self.app._stop_flash(self)
+        try:
+            if self.peer_id in self.app.peer_items:
+                self.app._clear_unread(self.peer_id)
+            self.messenger.mark_as_read(self.peer_id)
+        except Exception:
+            pass
+
     def _on_close(self):
         # Cancela timer de typing e notifica que parou de digitar
         if self._typing_timer:
@@ -6600,6 +6634,10 @@ class ChatWindow(tk.Toplevel):
                              args=(self.peer_id, False), daemon=True).start()
         if self.peer_id in self.app.chat_windows:
             del self.app.chat_windows[self.peer_id]
+        try:
+            self.app._flashing_widgets.pop(id(self), None)
+        except Exception:
+            pass
         self.destroy()
 
 
@@ -6651,13 +6689,13 @@ class GroupChatWindow(tk.Toplevel):
                        THEMES.get('MB Contabilidade', {}))
         self._theme = t
         self._build_ui(t)
-        self.bind('<FocusIn>', lambda e: app._stop_flash(self))
+        self.bind('<FocusIn>', self._on_focus_in)
         # Carrega historico persistido do grupo (mensagens + imagens) em ordem
         # cronologica. Roda apos o build_ui para que chat_text exista.
-        try:
-            self._load_history()
-        except Exception:
-            log.exception('Erro ao carregar historico do grupo')
+        # try:
+        #     self._load_history()
+        # except Exception:
+        #     log.exception('Erro ao carregar historico do grupo')
 
     def _build_ui(self, t):
         NAVY = '#0f2a5c'
@@ -8800,6 +8838,18 @@ class GroupChatWindow(tk.Toplevel):
                                 parent=self):
             self._leave_group()
 
+    def _on_focus_in(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if not self.app._window_is_foreground(self):
+            return
+        self.app._stop_flash(self)
+        try:
+            if self.group_id:
+                self.app._clear_group_unread(self.group_id)
+        except Exception:
+            pass
+
     def _on_close(self):
         if self.group_type == 'fixed':
             # Grupo fixo: esconder janela, permanece no grupo
@@ -9070,9 +9120,6 @@ class LanMessengerApp:
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
         m2.add_separator()
-        m2.add_command(label='Conectar fora da LAN (VPN)...',
-                       command=self._open_vpn_peers)
-        m2.add_separator()
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -9314,9 +9361,6 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
-        m2.add_separator()
-        m2.add_command(label='Conectar fora da LAN (VPN)...',
-                       command=self._open_vpn_peers)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -11508,25 +11552,7 @@ class LanMessengerApp:
         self.chat_windows[peer_id] = cw       # registra no dicionario
         if hasattr(self, '_theme'):            # tema configurado?
             self._apply_theme_to_chat(cw, self._theme)  # aplica tema atual
-        # Carrega mensagens nao lidas do banco e exibe na janela recem-aberta
-        try:
-            unread = self.messenger.db.get_unread_messages(
-                self.messenger.user_id, peer_id)
-            for msg in unread:
-                if msg.get('msg_type') == 'image':
-                    cw.receive_image(msg['content'], msg['timestamp'])
-                elif msg.get('msg_type') == 'file':
-                    cw._append_message(name, msg['content'], False,
-                                       timestamp=msg['timestamp'],
-                                       msg_id=msg.get('msg_id', ''),
-                                       msg_type='file',
-                                       file_path=msg.get('file_path', ''))
-                else:
-                    cw.receive_message(msg['content'], msg['timestamp'],
-                                       reply_to=msg.get('reply_to_id', ''),
-                                       msg_id=msg.get('msg_id', ''))
-        except Exception:
-            pass
+        
         if not surface_only:
             self._clear_unread(peer_id)           # remove marcacao de nao lido
         return cw
@@ -11672,8 +11698,17 @@ class LanMessengerApp:
 
         # Painel esquerdo: lista de contatos (A-Z) + campo de busca por nome
         left_frame = tk.Frame(main, bg=panel_bg)
-        tk.Label(left_frame, text='Contatos', font=('Segoe UI', 9, 'bold'),
-                 bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(8, 2))
+        
+        # Seletor de Modo (Contatos vs Grupos)
+        mode_frame = tk.Frame(left_frame, bg=panel_bg)
+        mode_frame.pack(fill='x', padx=10, pady=(8, 4))
+        mode_var = tk.StringVar(value='Contatos')
+        mode_combo = ttk.Combobox(mode_frame, textvariable=mode_var, 
+                                  values=('Contatos', 'Grupos'), state='readonly', font=('Segoe UI', 9))
+        mode_combo.pack(fill='x')
+        
+        tk.Label(left_frame, text='Conversas', font=('Segoe UI', 9, 'bold'),
+                 bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(4, 2))
 
         name_search_frame = tk.Frame(left_frame, bg=panel_bg)
         name_search_frame.pack(fill='x', padx=10, pady=(0, 4))
@@ -11793,11 +11828,38 @@ class LanMessengerApp:
         def _resolve_name(peer_id):
             if peer_id in _name_cache:
                 return _name_cache[peer_id]
+            
+            # Se for um grupo
+            if peer_id.startswith('group:'):
+                gid = peer_id[6:]
+                g = self.messenger._groups.get(gid)
+                if not g:
+                    rows = db.get_groups()
+                    db_g = next((x for x in rows if x['group_id'] == gid), None)
+                    name = db_g['name'] if db_g else gid
+                else:
+                    name = g['name']
+                _name_cache[peer_id] = name
+                return name
+
+            # Tenta cache de peers online
             info = self.peer_info.get(peer_id, {})
             name = info.get('display_name', '')
+            
+            # Tenta busca profunda no banco (contacts + group_members)
             if not name:
-                row = db.get_contact(peer_id)
-                name = row['display_name'] if row else peer_id[:20]
+                name = db.find_user_name(peer_id)
+            
+            # Fallback final amigável em vez de apenas o ID bruto
+            if not name:
+                # Se for um ID de broadcast ou sistema, mantem como esta
+                if peer_id in ('broadcast', 'system', 'all'):
+                    name = peer_id
+                else:
+                    # Formata como [Desconhecido] (026DKT0...)
+                    short_id = peer_id.split('_')[1] if '_' in peer_id else peer_id[:8]
+                    name = f'[Desconhecido] ({short_id})'
+            
             _name_cache[peer_id] = name
             return name
 
@@ -11883,9 +11945,14 @@ class LanMessengerApp:
             query_lower = query.lower() if query else ''
             first_match_idx = None  # posicao da primeira ocorrencia pra scroll
             match_count = 0
+            is_group = peer_id.startswith('group:')
             for m in msgs:
                 is_mine = bool(m.get('is_sent'))
-                who = my_name if is_mine else peer_name
+                if is_group:
+                    who = m.get('file_path') or m.get('sender_name') or m.get('from_user', 'Desconhecido')
+                    if is_mine: who = my_name
+                else:
+                    who = my_name if is_mine else peer_name
                 ts = datetime.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
                 content = m.get('content', '') or ''
                 start_idx = msg_text.index('end-1c')
@@ -11897,6 +11964,17 @@ class LanMessengerApp:
                     msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
                     msg_text.tag_bind(gtag, '<Button-1>',
                                       lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
+                    msg_text.tag_bind(gtag, '<Enter>',
+                                      lambda e: msg_text.config(cursor='hand2'))
+                    msg_text.tag_bind(gtag, '<Leave>',
+                                      lambda e: msg_text.config(cursor=''))
+                elif m.get('msg_type') == 'file' and m.get('file_path'):
+                    fp = m.get('file_path', '')
+                    gtag = f'hfile_{id(m)}'
+                    msg_text.insert('end', f'{content}\n', gtag)
+                    msg_text.tag_config(gtag, foreground='#0066cc', underline=True)
+                    msg_text.tag_bind(gtag, '<Button-1>',
+                                      lambda e, path=fp: _open_file_location(path))
                     msg_text.tag_bind(gtag, '<Enter>',
                                       lambda e: msg_text.config(cursor='hand2'))
                     msg_text.tag_bind(gtag, '<Leave>',
@@ -11937,15 +12015,30 @@ class LanMessengerApp:
             raw_name_q = name_search_entry.get().strip()
             name_q = '' if raw_name_q == _name_ph else raw_name_q.lower()
             shown = 0
-            for c in all_contacts:
-                peer = c['peer']
-                if visible_peers is not None and peer not in visible_peers:
-                    continue
-                name = _resolve_name(peer)
-                if name_q and name_q not in name.lower():
-                    continue
-                contacts_tree.insert('', 'end', iid=peer, values=(name,))
-                shown += 1
+            
+            mode = mode_var.get()
+            if mode == 'Grupos':
+                groups = db.get_groups(group_type='fixed')
+                for g in groups:
+                    gid = f"group:{g['group_id']}"
+                    if visible_peers is not None and gid not in visible_peers:
+                        continue
+                    name = g['name']
+                    if name_q and name_q not in name.lower():
+                        continue
+                    contacts_tree.insert('', 'end', iid=gid, values=(name,))
+                    shown += 1
+            else:
+                for c in all_contacts:
+                    peer = c['peer']
+                    if visible_peers is not None and peer not in visible_peers:
+                        continue
+                    name = _resolve_name(peer)
+                    if name_q and name_q not in name.lower():
+                        continue
+                    contacts_tree.insert('', 'end', iid=peer, values=(name,))
+                    shown += 1
+            
             if prev and contacts_tree.exists(prev):
                 contacts_tree.selection_set(prev)
                 contacts_tree.see(prev)
@@ -12013,13 +12106,23 @@ class LanMessengerApp:
                 return
             d_from_ts = d_from.timestamp() if d_from else None
             d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
-            msgs = db.get_messages_with_peer(user_id, peer_id,
-                                              date_from=d_from_ts,
-                                              date_to=d_to_ts,
-                                              search_text=query if query else None)
+            
+            if peer_id.startswith('group:'):
+                gid = peer_id[6:]
+                # Grupos reusam a mesma logica de mensagens, mas filtrando por to_user='group:GID'
+                msgs = db.get_messages_with_peer(user_id, peer_id,
+                                                  date_from=d_from_ts,
+                                                  date_to=d_to_ts,
+                                                  search_text=query if query else None)
+            else:
+                msgs = db.get_messages_with_peer(user_id, peer_id,
+                                                  date_from=d_from_ts,
+                                                  date_to=d_to_ts,
+                                                  search_text=query if query else None)
             _render_messages(peer_id, msgs, query)
 
         contacts_tree.bind('<<TreeviewSelect>>', _on_select)
+        mode_combo.bind('<<ComboboxSelected>>', lambda e: _run_refresh())
         search_var.trace_add('write', _schedule_refresh)
         name_search_var.trace_add('write', _schedule_refresh)
         # Fallback: bind KeyRelease tambem (trace_add em textvariable pode nao disparar em alguns
@@ -12811,7 +12914,6 @@ class LanMessengerApp:
         # - Se nao esta em foco: mostra toast + pisca janela e taskbar.
         # Se a janela NAO esta aberta: salva em _pending_group_msgs, marca unread
         # no TreeView, mostra toast e pisca a taskbar principal.
-        # Em ambos os casos toca o som de notificacao.
         SoundPlayer.play_msg_group()
         # Recovery: se grupo nao esta no tree (perdeu MT_GROUP_INV ou foi recem
         # criado pelo messenger via stub), adiciona agora para o usuario ver.
@@ -12825,7 +12927,7 @@ class LanMessengerApp:
                                reply_to=reply_to, mentions=mentions,
                                msg_id=msg_id)
             try:
-                if not gw.focus_displayof():
+                if not self._window_is_foreground(gw):
                     self._show_group_toast(group_id, display_name, content)
                     self._pending_flash_target = f'group:{group_id}'
                     # Se o grupo fixo foi fechado (withdrawn), nao tem botao na
@@ -12846,11 +12948,13 @@ class LanMessengerApp:
             self._mark_group_unread(group_id)
             self._show_group_toast(group_id, display_name, content)
             self._pending_flash_target = f'group:{group_id}'
-            # _open_group cria a janela que ja carrega historico do DB no __init__
-            # — a mensagem recem-recebida ja foi persistida pelo messenger antes
-            # deste callback rodar, entao NAO chamar receive_message aqui (dup).
+            # Com _load_history desativado no __init__, precisamos adicionar a msg manualmente
             def _create():
-                return self._open_group(group_id, surface_only=True)
+                gw = self._open_group(group_id, surface_only=True)
+                gw.receive_message(display_name, content, timestamp,
+                                   reply_to=reply_to, mentions=mentions,
+                                   msg_id=msg_id)
+                return gw
             self._surface_chat_from_tray(_create, gate_key='flash_taskbar_group')
             # Adicionalmente pisca a root para garantir atencao mesmo se a
             # janela do grupo nao for criada (caso _open_group falhe).
@@ -14654,6 +14758,141 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Teste manual de FlashWindowEx. Cria Toplevel de teste, minimiza e dispara
+    # 2 modos diferentes: (1) FLASHW_ALL|FLASHW_TIMER (modo imune do app) e
+    # (2) FLASHW_ALL com uCount=20 (forca 20 piscadas independente de foreground).
+    # Se modo (1) nao pisca mas modo (2) sim, problema e flag TIMER/Focus Assist.
+    # Se nenhum dos dois pisca, problema e config do Windows (Focus Assist, registry).
+    def _test_flash_taskbar(self):
+        import ctypes
+        from ctypes import wintypes
+        from tkinter import messagebox
+        def _l(s):
+            print('[TEST FLASH]', s)
+        try:
+            user32 = ctypes.windll.user32
+            user32.GetParent.restype = wintypes.HWND
+            user32.GetParent.argtypes = [wintypes.HWND]
+            user32.GetForegroundWindow.restype = wintypes.HWND
+            user32.GetForegroundWindow.argtypes = []
+            user32.IsWindow.restype = wintypes.BOOL
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.GetWindowLongW.restype = ctypes.c_long
+            user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.FlashWindowEx.restype = wintypes.BOOL
+
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wintypes.UINT),
+                    ('hwnd', wintypes.HWND),
+                    ('dwFlags', wintypes.DWORD),
+                    ('uCount', wintypes.UINT),
+                    ('dwTimeout', wintypes.DWORD),
+                ]
+
+            _l('=' * 60)
+            _l(f'Foreground HWND atual: {user32.GetForegroundWindow()}')
+
+            # Cria Toplevel de teste — withdraw imediato pra nao roubar foreground
+            tw = tk.Toplevel(self.root)
+            tw.withdraw()
+            tw.title('TESTE FLASH')
+            tw.geometry('420x180+300+300')
+            tk.Label(tw, text='Janela de teste — minimizada.\n'
+                              'Va pra outra app (VS Code, navegador) e\n'
+                              'observe a barra de tarefas piscar laranja.',
+                     font=('Segoe UI', 10), pady=20).pack()
+            self._force_taskbar_entry(tw)
+            tw.update() # Forca a criacao do wrapper Win32 antes de obter o HWND
+
+            inner = tw.winfo_id()
+            parent = user32.GetParent(inner)
+            resolved = self._resolve_hwnd(tw)
+            _l(f'  winfo_id (inner)   = {inner}')
+            _l(f'  GetParent(inner)   = {parent}')
+            _l(f'  _resolve_hwnd      = {resolved}')
+            _l(f'  IsWindow(resolved) = {bool(user32.IsWindow(resolved))}')
+            style = user32.GetWindowLongW(resolved, -20)
+            _l(f'  EXSTYLE = 0x{style & 0xFFFFFFFF:08x} '
+               f'(WS_EX_APPWINDOW={"YES" if style & 0x40000 else "no"})')
+
+            # Surface minimizada (apareca na taskbar mas nao foreground)
+            self._show_in_taskbar_minimized(tw)
+            _l('Janela criada e minimizada na taskbar')
+
+            # Avisa o usuario antes de disparar
+            messagebox.showinfo(
+                'Teste Flash — Passo 1',
+                'Clique OK e IMEDIATAMENTE va pra outra janela '
+                '(VS Code, navegador, qualquer coisa).\n\n'
+                'Tem 3 segundos antes do flash disparar.\n'
+                'Olhe a barra de tarefas — deve piscar laranja.',
+                parent=self.root)
+
+            def _fire():
+                fg_before = user32.GetForegroundWindow()
+                _l(f'Foreground antes do flash = {fg_before}')
+                _l(f'Foreground == resolved?    = {fg_before == resolved}')
+
+                # MODO 1: FLASHW_ALL | FLASHW_TIMER (modo imune do app)
+                fi1 = FLASHWINFO(
+                    cbSize=ctypes.sizeof(FLASHWINFO),
+                    hwnd=resolved,
+                    dwFlags=3 | 4,  # FLASHW_ALL | FLASHW_TIMER (valor 7)
+                    uCount=0,
+                    dwTimeout=0,
+                )
+                ret1 = user32.FlashWindowEx(ctypes.byref(fi1))
+                _l(f'MODO 1 (TIMER, infinito): FlashWindowEx retornou {ret1}')
+
+                # Espera 3s pra usuario ver, depois para flash 1 e dispara MODO 2
+                def _mode2():
+                    fi_stop = FLASHWINFO(
+                        cbSize=ctypes.sizeof(FLASHWINFO),
+                        hwnd=resolved, dwFlags=0, uCount=0, dwTimeout=0,
+                    )
+                    user32.FlashWindowEx(ctypes.byref(fi_stop))
+                    _l('Parou MODO 1, disparando MODO 2 (count fixo 20)...')
+
+                    fi2 = FLASHWINFO(
+                        cbSize=ctypes.sizeof(FLASHWINFO),
+                        hwnd=resolved,
+                        dwFlags=3,  # FLASHW_ALL apenas (count fixo)
+                        uCount=20,
+                        dwTimeout=300,  # 300ms entre piscadas
+                    )
+                    ret2 = user32.FlashWindowEx(ctypes.byref(fi2))
+                    _l(f'MODO 2 (count=20): FlashWindowEx retornou {ret2}')
+                    _l('Aguardando 8s pra ver as 20 piscadas...')
+
+                    def _final():
+                        fg_after = user32.GetForegroundWindow()
+                        _l(f'Foreground apos teste = {fg_after}')
+                        _l('=' * 60)
+                        try:
+                            tw.destroy()
+                        except Exception:
+                            pass
+                        messagebox.showinfo(
+                            'Teste Flash — Resultado',
+                            f'HWND alvo: {resolved}\n'
+                            f'EXSTYLE: 0x{style & 0xFFFFFFFF:08x}\n'
+                            f'FlashWindowEx MODO 1 (TIMER imune) retornou: {ret1}\n'
+                            f'FlashWindowEx MODO 2 (COUNT fixo) retornou: {ret2}\n\n'
+                            f'Voce viu a barra de tarefas piscar laranja?\n'
+                            f'- SE NAO: problema e Focus Assist do Windows '
+                            f'ou config de notificacoes\n'
+                            f'- SE SIM no MODO 1 ou MODO 2: sistema funcional!\n'
+                            f'- O MODO 1 usa a flag robusta FLASHW_TIMER imune ao bug do Win11.',
+                            parent=self.root)
+                    self.root.after(8000, _final)
+                self.root.after(3500, _mode2)
+            self.root.after(3000, _fire)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror('Teste Flash', f'Erro: {e}', parent=self.root)
+
     # Janela de diagnostico (acessada via Preferencias > Rede)
     def _open_network_diag(self):
         # Se foi aberto a partir de uma janela modal (Preferencias),
@@ -15276,30 +15515,38 @@ class LanMessengerApp:
     # mostra toast de notificacao, pisca taskbar e toca o bell do sistema.
     def _on_message(self, from_user, content, msg_id, timestamp,
                     reply_to='', is_broadcast=False, **kw):
+        print(f'[DEBUG ON_MSG] Iniciado from_user={from_user} is_broadcast={is_broadcast}')
         if is_broadcast:
             SoundPlayer.play_msg_broadcast()
         else:
             SoundPlayer.play_msg_private()
         if from_user in self.chat_windows:
             cw = self.chat_windows[from_user]
+            print(f'[DEBUG ON_MSG] Janela ja aberta: cw={cw}')
             cw.receive_message(content, timestamp, reply_to=reply_to,
                                msg_id=msg_id)
             try:
-                if not cw.focus_displayof():
+                is_fg = self._window_is_foreground(cw)
+                print(f'[DEBUG ON_MSG] is_window_is_foreground={is_fg}')
+                if not is_fg:
                     self._show_toast(from_user, content, is_broadcast=is_broadcast)
                     self._pending_flash_target = from_user
                     gate = 'flash_taskbar_broadcast' if is_broadcast else 'flash_taskbar_msg'
                     self._flash_window(cw, gate_key=gate)
-            except Exception:
+            except Exception as e:
+                print(f'[DEBUG ON_MSG] Erro ao tratar janela aberta: {e}')
                 pass
         else:
+            print(f'[DEBUG ON_MSG] Janela nao aberta, criando via _surface_chat_from_tray')
             self._mark_unread(from_user)
             self._show_toast(from_user, content, is_broadcast=is_broadcast)
             self._pending_flash_target = from_user
-            # _open_chat carrega mensagens nao lidas do DB (inclui esta recem-salva
-            # por messenger._on_tcp_message). NAO chamar receive_message aqui — dup.
+            # Com _load_history desativado no __init__, precisamos adicionar a msg manualmente
             def _create():
-                return self._open_chat(from_user, surface_only=True)
+                print('[DEBUG ON_MSG] Chamando _create()')
+                cw = self._open_chat(from_user, surface_only=True)
+                cw.receive_message(content, timestamp, reply_to=reply_to, msg_id=msg_id)
+                return cw
             gate = 'flash_taskbar_broadcast' if is_broadcast else 'flash_taskbar_msg'
             self._surface_chat_from_tray(_create, gate_key=gate)
 
@@ -15313,7 +15560,7 @@ class LanMessengerApp:
                 gw = self.group_windows[group_id]
                 gw.receive_image(display_name or from_user, image_path, timestamp)
                 try:
-                    if not gw.focus_displayof():
+                    if not self._window_is_foreground(gw):
                         self._show_group_toast(group_id, display_name or from_user, '[Imagem]')
                         self._pending_flash_target = f'group:{group_id}'
                         # Grupo fixo fechado (withdrawn) nao tem botao na taskbar — surface antes
@@ -15339,7 +15586,7 @@ class LanMessengerApp:
                 cw = self.chat_windows[from_user]
                 cw.receive_image(image_path, timestamp)
                 try:
-                    if not cw.focus_displayof():
+                    if not self._window_is_foreground(cw):
                         self._show_toast(from_user, '[Imagem]')
                         self._pending_flash_target = from_user
                         self._flash_window(cw, gate_key='flash_taskbar_msg')
@@ -15349,9 +15596,11 @@ class LanMessengerApp:
                 self._mark_unread(from_user)
                 self._show_toast(from_user, '[Imagem]')
                 self._pending_flash_target = from_user
-                # _open_chat ja carrega imagens nao lidas do DB — ver _on_message.
+                # Com _load_history desativado, adicionamos a imagem manualmente
                 def _create():
-                    return self._open_chat(from_user, surface_only=True)
+                    cw = self._open_chat(from_user, surface_only=True)
+                    cw.receive_image(image_path, timestamp)
+                    return cw
                 self._surface_chat_from_tray(_create, gate_key='flash_taskbar_msg')
 
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
@@ -15626,10 +15875,21 @@ class LanMessengerApp:
             if not getattr(cw, '_mapped_once', False):
                 cw._mapped_once = True
                 return
+            # So para o flash se a janela esta REALMENTE em foreground do Windows.
+            # Estado 'normal' (deiconified) nao basta — outro app pode ainda ser o
+            # foreground. <FocusIn> e o trigger canonico (cobre o caso comum);
+            # este aqui cobre transicao iconic→normal quando a janela ja vai pro topo.
+            if not self._window_is_foreground(cw):
+                return
             self._stop_flash(cw)
             peer_id = getattr(cw, 'peer_id', None)
-            if peer_id and peer_id in self.peer_items:
-                self._clear_unread(peer_id)
+            if peer_id:
+                if peer_id in self.peer_items:
+                    self._clear_unread(peer_id)
+                try:
+                    self.messenger.mark_as_read(peer_id)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -15638,6 +15898,8 @@ class LanMessengerApp:
         try:
             if not getattr(gw, '_mapped_once', False):
                 gw._mapped_once = True
+                return
+            if not self._window_is_foreground(gw):
                 return
             self._stop_flash(gw)
             gid = getattr(gw, 'group_id', None)
@@ -15651,25 +15913,32 @@ class LanMessengerApp:
     def _force_taskbar_entry(self, win):
         try:
             import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            user32.GetWindowLongW.restype = ctypes.c_long
+            user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.SetWindowLongW.restype = ctypes.c_long
+            user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
             SW_HIDE, SW_SHOWNA = 0, 8
-            hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+            hwnd = self._resolve_hwnd(win)
             if not hwnd:
                 return
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             new_style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
             if new_style != style:
-                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
                 # Se a janela ja esta mapeada, precisa do ciclo HIDE+SHOW pra
                 # Windows reprocessar a taskbar. Se foi criada withdrawn, o
                 # proximo ShowWindow (SW_SHOWMINNOACTIVE) ja pega o estilo novo
                 # sem flash visivel.
                 try:
                     if win.winfo_ismapped():
-                        ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNA)
+                        user32.ShowWindow(hwnd, SW_HIDE)
+                        user32.ShowWindow(hwnd, SW_SHOWNA)
                 except Exception:
                     pass
         except Exception:
@@ -15680,13 +15949,60 @@ class LanMessengerApp:
     def _show_in_taskbar_minimized(self, win):
         try:
             import ctypes
+            user32 = ctypes.windll.user32
             SW_SHOWMINNOACTIVE = 7
-            hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+            hwnd = self._resolve_hwnd(win)
             if not hwnd:
                 return
-            ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+            user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
         except Exception:
             pass
+
+    # Resolve a HWND OS-level de uma Tk window. Para Toplevels usa GetParent
+    # (que retorna o wrapper OS — o que recebe FlashWindowEx). Para root usa
+    # winfo_id() direto. Mesma logica do v1.6.7 que funcionava, agora com
+    # restype/argtypes declarados explicitamente para evitar truncamento de
+    # ponteiro em Python 64-bit.
+    def _resolve_hwnd(self, win):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            user32.GetParent.restype = wintypes.HWND
+            user32.GetParent.argtypes = [wintypes.HWND]
+            hwnd = win.winfo_id()
+            if win is self.root:
+                return hwnd
+            parent = user32.GetParent(hwnd)
+            return parent or hwnd
+        except Exception:
+            try:
+                return win.winfo_id()
+            except Exception:
+                return 0
+
+    # Retorna True se a Toplevel e a janela em foreground do Windows.
+    # Diferente de focus_displayof(), que retorna truthy se QUALQUER janela do app
+    # tem foco — inadequado para decidir se UMA janela especifica precisa flashar.
+    def _window_is_foreground(self, win):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            if not win or not win.winfo_exists():
+                return False
+            try:
+                if str(win.state()) in ('withdrawn', 'iconic'):
+                    return False
+            except Exception:
+                pass
+            user32 = ctypes.windll.user32
+            user32.GetForegroundWindow.restype = wintypes.HWND
+            user32.GetForegroundWindow.argtypes = []
+            hwnd = self._resolve_hwnd(win)
+            fg = user32.GetForegroundWindow()
+            return bool(fg) and bool(hwnd) and fg == hwnd
+        except Exception:
+            return False
 
     # Orquestra surface de uma janela de chat quando mensagem chega com app no tray.
     # 1) Garante que a root apareca minimizada na taskbar (se estava withdrawn)
@@ -15694,34 +16010,49 @@ class LanMessengerApp:
     # 3) Minimiza a janela recem criada na taskbar
     # 4) Pisca ela para chamar atencao do usuario
     def _surface_chat_from_tray(self, create_fn, gate_key='flash_taskbar_msg'):
+        print(f'[DEBUG SURFACE] Iniciado gate_key={gate_key}')
         try:
             if self.root.state() == 'withdrawn':
+                print('[DEBUG SURFACE] root esta withdrawn, minimizando root na taskbar')
                 self._show_in_taskbar_minimized(self.root)
-        except Exception:
+        except Exception as e:
+            print(f'[DEBUG SURFACE] Erro ao tratar root: {e}')
             pass
         try:
+            print('[DEBUG SURFACE] Chamando create_fn()')
             win = create_fn()
-        except Exception:
+        except Exception as e:
+            print(f'[DEBUG SURFACE] Erro ao chamar create_fn(): {e}')
             win = None
         if win is None:
+            print('[DEBUG SURFACE] win is None, retornando')
             return
         try:
-            win.update_idletasks()
+            print(f'[DEBUG SURFACE] Chamando win.update() para {win}')
+            win.update()
+            print('[DEBUG SURFACE] Chamando _show_in_taskbar_minimized()')
             self._show_in_taskbar_minimized(win)
-            self._flash_window(win, gate_key=gate_key)
-        except Exception:
+            # Maior delay garante que o Windows registrou a janela na taskbar antes do flash
+            print('[DEBUG SURFACE] Agendando _flash_window em 500ms')
+            self.root.after(500, lambda: self._flash_window(win, gate_key=gate_key))
+        except Exception as e:
+            print(f'[DEBUG SURFACE] Erro no fluxo final: {e}')
             pass
 
     # Pisca o ícone na barra de tarefas (Windows FlashWindowEx).
     def _flash_window(self, widget=None, gate_key='flash_taskbar_msg'):
         try:
-            if self.messenger.db.get_setting(gate_key, '1') != '1':
+            val = self.messenger.db.get_setting(gate_key, '1')
+            print(f'[DEBUG FLASH] gate_key={gate_key} valor={val}')
+            if val != '1':
                 return
-        except Exception:
+        except Exception as e:
+            print(f'[DEBUG FLASH] Erro ao ler setting {gate_key}: {e}')
             pass
         try:
             import ctypes
             from ctypes import wintypes
+            user32 = ctypes.windll.user32
 
             class FLASHWINFO(ctypes.Structure):
                 _fields_ = [
@@ -15732,30 +16063,30 @@ class LanMessengerApp:
                     ('dwTimeout', wintypes.DWORD),
                 ]
 
-            FLASHW_ALL = 3         # pisca janela + botao da taskbar
-            FLASHW_TIMERNOFG = 12  # continua piscando ate a janela receber foco
+            user32.FlashWindowEx.argtypes = [ctypes.c_void_p]
+
+            FLASHW_ALL = 3    # pisca janela + botao da taskbar
+            FLASHW_TIMER = 4  # pisca continuamente ate FLASHW_STOP ser chamado
 
             target = widget or self.root
-            hwnd = target.winfo_id()
-            if target != self.root:
-                # Para Toplevels, o winfo_id() e o frame interno. 
-                # O botao da taskbar pertence ao Parent (wrapper OS criado pelo Tkinter).
-                parent = ctypes.windll.user32.GetParent(hwnd)
-                if parent:
-                    hwnd = parent
+            hwnd = self._resolve_hwnd(target)
+            print(f'[DEBUG FLASH] target={target} hwnd={hwnd}')
+            if not hwnd:
+                return
 
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
                 hwnd=hwnd,
-                dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+                dwFlags=FLASHW_ALL | FLASHW_TIMER,
                 uCount=0,
                 dwTimeout=0,
             )
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
-            # Registra janela no tracking de flashes ativos (root fica de fora — tem semantica propria)
+            res = user32.FlashWindowEx(ctypes.byref(finfo))
+            print(f'[DEBUG FLASH] FlashWindowEx retornou {res}')
             if widget is not None and widget is not self.root:
                 self._flashing_widgets[id(widget)] = widget
-        except Exception:
+        except Exception as e:
+            print(f'[DEBUG FLASH] Erro no FlashWindowEx: {e}')
             pass
 
     # Para de piscar a barra de tarefas.
@@ -15763,6 +16094,7 @@ class LanMessengerApp:
         try:
             import ctypes
             from ctypes import wintypes
+            user32 = ctypes.windll.user32
 
             class FLASHWINFO(ctypes.Structure):
                 _fields_ = [
@@ -15773,13 +16105,13 @@ class LanMessengerApp:
                     ('dwTimeout', wintypes.DWORD),
                 ]
 
+            user32.FlashWindowEx.argtypes = [ctypes.c_void_p]
+
             FLASHW_STOP = 0  # flag para parar o piscamento
             target = widget or self.root
-            hwnd = target.winfo_id()
-            if target != self.root:
-                parent = ctypes.windll.user32.GetParent(hwnd)
-                if parent:
-                    hwnd = parent
+            hwnd = self._resolve_hwnd(target)
+            if not hwnd:
+                return
 
             finfo = FLASHWINFO(
                 cbSize=ctypes.sizeof(FLASHWINFO),
@@ -15788,7 +16120,7 @@ class LanMessengerApp:
                 uCount=0,
                 dwTimeout=0,
             )
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(finfo))
+            user32.FlashWindowEx(ctypes.byref(finfo))
             # Remove APENAS a janela especifica do tracking — nao afeta outras
             if widget is not None and widget is not self.root:
                 self._flashing_widgets.pop(id(widget), None)

@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.6.1.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.6.9.
 
 ## Arquitetura (4 camadas)
 
@@ -284,3 +284,18 @@ Para detalhes alem deste resumo, consultar:
 - `docs/CODESTYLE.md` - Padroes de codigo, nomenclatura, temas, threading
 - `docs/DECISIONS.md` - Decisoes tecnicas, troubleshooting, discovery robusto
 - `docs/FEATURES.md` - Lista completa de funcionalidades com detalhes de implementacao
+
+## Estabilização de Identidade e Notificações (v1.6.8 / v1.6.9)
+
+1. **Notificações Independentes (v1.6.8)**: 
+   - Substituição de focus_displayof() por _window_is_foreground (Win32 API GetForegroundWindow).
+   - Garante que cada janela de chat pisque independentemente na barra de tarefas, parando apenas quando aquela janela específica ganha foco real no Windows.
+
+2. **User ID Persistente (v1.6.9)**: 
+   - O user_id agora é salvo na tabela local_user do banco de dados SQLite.
+   - Em vez de gerar um novo ID a cada troca de interface de rede (Wi-Fi vs Ethernet), o app reutiliza o ID persistente. Isso evita a fragmentação do histórico e o surgimento de usuários fantasmas.
+
+3. **Histórico de Grupos (v1.6.9)**: 
+   - Adicionado seletor Contatos / Grupos na janela de histórico global.
+   - Carregamento de histórico para grupos fixos com resolução de nomes dos remetentes (armazenados no campo file_path de mensagens de grupo).
+   - Correção do bug de mensagens sumidas: Janelas individuais agora carregam o histórico completo ao abrir, garantindo visibilidade total de respostas enviadas anteriormente.

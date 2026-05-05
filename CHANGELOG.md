@@ -5,6 +5,39 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-05
+
+### Added
+- Nova aba **"Utilitários"** nas Preferências, centralizando o botão para **"Testar piscar barra de tarefas"**.
+- Link clicável para mensagens de arquivos recebidos/enviados na janela de Histórico de Mensagens (`Ferramentas > Histórico de mensagens`), permitindo abrir a pasta correspondente no Windows Explorer com o clique esquerdo.
+
+### Changed
+- Configurações de Conexão VPN / Conectar fora da LAN movidas para a aba **"Rede"** nas Preferências.
+- Remoção de itens redundantes (VPN e teste de piscamento) do menu superior "Ferramentas" para uma interface mais limpa.
+- Alteração do texto do botão de seleção de pasta de transferência de "Procurar..." para "Selecionar".
+
+### Fixed
+- Correção no botão "Selecionar" da pasta de downloads nas Preferências para que o diálogo do sistema sempre abra na pasta atual configurada (`initialdir`), evitando a abertura genérica na pasta "Downloads".
+- Correção de erro ao agendar o piscamento de tela (`after`) em classes que não herdam de Tkinter widgets (`LanMessengerApp`), corrigido para `self.root.after`.
+- Ajuste e correção de tipos e ponteiros `ctypes` de 64 bits para resolução confiável de HWNDs no Windows 11.
+
+## [1.6.9] - 2026-05-05
+
+### Added
+- Suporte a histórico de grupos na janela de histórico global, permitindo alternar entre mensagens privadas e de grupos fixos.
+- Persistência estável de ID de usuário: o `user_id` agora é salvo localmente no banco de dados para evitar duplicidade ao alternar interfaces de rede (Wi-Fi/Cabo).
+
+### Fixed
+- Bug onde mensagens enviadas "sumiam" ao fechar e reabrir a janela de chat individual. Agora o histórico completo é carregado ao abrir qualquer conversa.
+- Resolução de nomes de remetentes no histórico de grupos para usuários que não estão na lista de contatos principal.
+
+
+## [1.6.8] - 2026-05-05
+
+### Fixed
+- Janelas de chat não piscavam na barra de tarefas quando o aplicativo tinha outra janela (como a lista principal) em foco.
+- Implementado helper `_window_is_foreground` para verificação real de janela ativa no sistema operacional via Win32 API.
+
 ## [1.4.20] - 2026-04-09
 
 ### Fixed

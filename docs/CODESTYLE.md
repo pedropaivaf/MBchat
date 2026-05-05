@@ -1,5 +1,16 @@
 # MB Chat - Padrao de Codigo
 
+## REGRA CRÍTICA: ESTABILIDADE E NÃO-REGRESSÃO
+
+> [!IMPORTANT]
+> **GARANTIA DE NÃO-QUEBRA**: Ao implementar qualquer nova funcionalidade, correção de bug ou refatoração, a prioridade máxima é **garantir que nada que já funcione seja quebrado**. 
+> Cada alteração deve ser cirúrgica, localizada e de baixo impacto para evitar o efeito cascata de introduzir novos problemas (regressões).
+> 
+> **Diretrizes**:
+> 1. **Análise de Impacto**: Antes de modificar qualquer linha, entenda como ela afeta o ciclo de vida das janelas, manipulação do banco de dados e fluxos de rede.
+> 2. **Preservar Histórico**: Nunca desative ou modifique comportamentos consolidados a menos que expressamente solicitado.
+> 3. **Testes de Regressão**: Valide se os fluxos anteriores continuam funcionando idênticos após a modificação (ex: comportamento de som, piscamento, minimização e histórico).
+
 ## Linguagem e Versao
 
 - Python 3.10+

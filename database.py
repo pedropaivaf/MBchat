@@ -622,6 +622,27 @@ class Database:
             "SELECT * FROM contacts WHERE user_id=?", (user_id,)).fetchone()
         return dict(row) if row else None
 
+    # Tenta descobrir o nome de um usuario buscando em todas as tabelas (contacts, group_members)
+    # Útil para resolver nomes no histórico de usuários que não estão na lista de contatos principal.
+    def find_user_name(self, uid):
+        try:
+            # 1. Tabela de contatos principal
+            row = self.conn.execute(
+                "SELECT display_name FROM contacts WHERE user_id=?", (uid,)
+            ).fetchone()
+            if row and row['display_name']:
+                return row['display_name']
+            
+            # 2. Tabela de membros de grupos (caso seja alguém que só falou em grupos)
+            row = self.conn.execute(
+                "SELECT display_name FROM group_members WHERE uid=? LIMIT 1", (uid,)
+            ).fetchone()
+            if row and row['display_name']:
+                return row['display_name']
+        except Exception:
+            pass
+        return None
+
     # ========================================
     # MESSAGES — Histórico de mensagens
     # ========================================

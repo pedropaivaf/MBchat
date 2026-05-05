@@ -1,5 +1,13 @@
 # MB Chat - Decisoes Tecnicas e Troubleshooting
 
+## PRINCÍPIO FUNDAMENTAL: ESTABILIDADE E NÃO-REGRESSÃO
+
+Toda e qualquer alteração no código deve seguir a **REGRA DE NÃO-QUEBRA**: o objetivo é implementar melhorias sem nunca introduzir regressões em funcionalidades que já estão estáveis. 
+
+> [!CAUTION]
+> Se uma nova funcionalidade ou correção causa efeitos colaterais (bugs em outras áreas), a alteração deve ser reavaliada e isolada imediatamente.
+
+---
 ## Descoberta de peers (por que MBChat e mais confiavel que LAN Messenger)
 
 LAN Messenger tem bug onde peers somem em redes com VPN, Hyper-V, switches gerenciados ou filtros de multicast. MBChat resolveu com 5 decisoes que trabalham juntas — NAO afrouxar nenhuma sem entender o impacto:

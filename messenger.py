@@ -93,7 +93,17 @@ class Messenger:
         self._groups = {}
 
         # === Setup do usuario local ===
-        self.user_id = generate_user_id()  # ID = MAC+hostname+winuser
+        local = self.db.get_local_user()   # Tenta carregar do banco
+
+        if local and local.get('user_id'):
+            # Se ja temos um ID persistido no banco, USAMOS ELE.
+            # Isso evita que o ID mude caso o Windows alterne entre Wi-Fi e Ethernet
+            # (o uuid.getnode() pode retornar MACs diferentes).
+            self.user_id = local['user_id']
+        else:
+            # Primeira execucao: gera um ID novo (MAC+hostname+winuser)
+            self.user_id = generate_user_id()
+
         # Migracao: usuarios pre-1.4.60 tem user_id no formato mac_host
         # (sem winuser). Renomeia tudo para o formato novo para que historico,
         # contatos e grupos continuem funcionando pos-update.
@@ -102,7 +112,6 @@ class Messenger:
             self.db.migrate_user_ids_add_winuser_suffix(self.user_id)
         except Exception:
             pass
-        local = self.db.get_local_user()   # Tenta carregar do banco
 
         # Prioridade do nome: argumento > banco > login do OS
         if display_name:
@@ -110,7 +119,10 @@ class Messenger:
         elif local:
             self.display_name = local['display_name']
         else:
-            self.display_name = os.getlogin() if hasattr(os, 'getlogin') else 'User'
+            try:
+                self.display_name = os.getlogin()
+            except Exception:
+                self.display_name = 'User'
 
         self.status = 'online'  # Status inicial
         self.note = self.db.get_local_note()  # Nota pessoal do banco
