@@ -309,6 +309,46 @@ class Database:
         """)
         c.commit()
 
+        # Tabelas de reserva de salas (Agendar > Reunião). Totalmente aditivo.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                id   INTEGER PRIMARY KEY,
+                name TEXT    NOT NULL
+            );
+            INSERT OR IGNORE INTO rooms VALUES
+                (1,'Sala de Vidro'),(2,'Sala MB'),(3,'Certificado');
+
+            CREATE TABLE IF NOT EXISTS bookings (
+                booking_id   TEXT PRIMARY KEY,
+                room_id      INTEGER NOT NULL,
+                title        TEXT    NOT NULL,
+                creator_uid  TEXT    NOT NULL,
+                creator_name TEXT    NOT NULL,
+                start_ts     REAL    NOT NULL,
+                end_ts       REAL    NOT NULL,
+                created_at   REAL    NOT NULL,
+                updated_at   REAL    NOT NULL,
+                is_deleted   INTEGER DEFAULT 0,
+                status       TEXT    DEFAULT 'pending',
+                FOREIGN KEY(room_id) REFERENCES rooms(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS booking_participants (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_id   TEXT NOT NULL,
+                uid          TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                response     TEXT DEFAULT 'pending',
+                FOREIGN KEY(booking_id) REFERENCES bookings(booking_id)
+                    ON DELETE CASCADE,
+                UNIQUE(booking_id, uid)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bookings_room_time
+                ON bookings(room_id, start_ts, end_ts);
+        """)
+        c.commit()
+
     # ========================================
     # LOCAL USER — Dados do usuário local
     # ========================================
@@ -1283,6 +1323,121 @@ class Database:
             return [dict(r) for r in rows]
         except Exception:
             return []
+
+    # ========================================
+    # MEETING ROOMS — Reserva de Salas
+    # ========================================
+
+    def get_rooms(self):
+        rows = self.conn.execute(
+            "SELECT * FROM rooms ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    def save_booking(self, booking_id, room_id, title, creator_uid,
+                     creator_name, start_ts, end_ts, status='pending'):
+        now = time.time()
+        existing = self.conn.execute(
+            "SELECT created_at FROM bookings WHERE booking_id=?",
+            (booking_id,)).fetchone()
+        created_at = existing['created_at'] if existing else now
+        self.conn.execute("""
+            INSERT OR REPLACE INTO bookings
+                (booking_id, room_id, title, creator_uid, creator_name,
+                 start_ts, end_ts, created_at, updated_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (booking_id, room_id, title, creator_uid, creator_name,
+              start_ts, end_ts, created_at, now, status))
+        self.conn.commit()
+
+    def update_booking_status(self, booking_id, status):
+        self.conn.execute(
+            "UPDATE bookings SET status=?, updated_at=? WHERE booking_id=?",
+            (status, time.time(), booking_id))
+        self.conn.commit()
+
+    def soft_delete_booking(self, booking_id):
+        self.conn.execute(
+            "UPDATE bookings SET is_deleted=1, status='cancelled', updated_at=? WHERE booking_id=?",
+            (time.time(), booking_id))
+        self.conn.commit()
+
+    def get_bookings(self, date_from=None, date_to=None):
+        sql = "SELECT * FROM bookings WHERE is_deleted=0"
+        params = []
+        if date_from is not None:
+            sql += " AND end_ts >= ?"
+            params.append(date_from)
+        if date_to is not None:
+            sql += " AND start_ts <= ?"
+            params.append(date_to)
+        sql += " ORDER BY start_ts ASC"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_booking(self, booking_id):
+        row = self.conn.execute(
+            "SELECT * FROM bookings WHERE booking_id=?",
+            (booking_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_all_bookings_for_sync(self):
+        rows = self.conn.execute(
+            "SELECT * FROM bookings ORDER BY updated_at ASC").fetchall()
+        return [dict(r) for r in rows]
+
+    def save_booking_participant(self, booking_id, uid, display_name,
+                                 response='pending'):
+        self.conn.execute("""
+            INSERT OR REPLACE INTO booking_participants
+                (booking_id, uid, display_name, response)
+            VALUES (?, ?, ?, ?)
+        """, (booking_id, uid, display_name, response))
+        self.conn.commit()
+
+    def update_booking_participant_response(self, booking_id, uid, response):
+        self.conn.execute(
+            "UPDATE booking_participants SET response=? WHERE booking_id=? AND uid=?",
+            (response, booking_id, uid))
+        self.conn.commit()
+
+    def get_booking_participants(self, booking_id):
+        rows = self.conn.execute(
+            "SELECT * FROM booking_participants WHERE booking_id=? ORDER BY id",
+            (booking_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_booking_conflict(self, room_id, start_ts, end_ts,
+                             exclude_booking_id=None):
+        sql = """
+            SELECT 1 FROM bookings
+            WHERE room_id=? AND is_deleted=0
+              AND status NOT IN ('cancelled')
+              AND start_ts < ? AND end_ts > ?
+        """
+        params = [room_id, end_ts, start_ts]
+        if exclude_booking_id:
+            sql += " AND booking_id != ?"
+            params.append(exclude_booking_id)
+        row = self.conn.execute(sql, params).fetchone()
+        return row is not None
+
+    def update_booking_fields(self, booking_id, title, room_id, start_ts, end_ts):
+        self.conn.execute(
+            "UPDATE bookings SET title=?, room_id=?, start_ts=?, end_ts=?, updated_at=? WHERE booking_id=?",
+            (title, room_id, start_ts, end_ts, time.time(), booking_id))
+        self.conn.commit()
+
+    def get_booking_confirmed_count(self, booking_id):
+        row = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM booking_participants WHERE booking_id=? AND response='accepted'",
+            (booking_id,)).fetchone()
+        return row['cnt'] if row else 0
+
+    def remove_booking_participant(self, booking_id, uid):
+        self.conn.execute(
+            "DELETE FROM booking_participants WHERE booking_id=? AND uid=?",
+            (booking_id, uid))
+        self.conn.commit()
 
     # Fecha conexão da thread atual
     def close(self):

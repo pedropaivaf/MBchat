@@ -9279,6 +9279,10 @@ class LanMessengerApp:
             on_status=self._safe(self._on_peer_status),
             on_reminder_invite=self._safe(self._on_reminder_invite),
             on_reminder_response=self._safe(self._on_reminder_response),
+            on_meeting_invite=self._safe(self._on_meeting_invite),
+            on_meeting_response=self._safe(self._on_meeting_response),
+            on_meeting_cancel=self._safe(self._on_meeting_cancel),
+            on_meeting_sync=self._safe(self._on_meeting_sync),
         )
         self.messenger.start()
         # Conecta SoundPlayer ao db e migra settings antigas de alertas
@@ -9343,6 +9347,10 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
+
+        m_agenda = tk.Menu(menubar, tearoff=0, font=FONT)
+        m_agenda.add_command(label='Reunião', command=self._open_meeting_window)
+        menubar.add_cascade(label='Agendar', menu=m_agenda)
 
         # "Sobre" e um botao direto no menubar (sem submenu). Clicar abre o dialog.
         menubar.add_command(label=_t('menu_help'), command=self._show_about)
@@ -9585,6 +9593,10 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
 
+        m_agenda = tk.Menu(menubar, tearoff=0, font=FONT)
+        m_agenda.add_command(label='Reunião', command=self._open_meeting_window)
+        menubar.add_cascade(label='Agendar', menu=m_agenda)
+
         menubar.add_command(label=_t('menu_help'), command=self._show_about)
 
         self.root.config(menu=menubar)
@@ -9644,6 +9656,18 @@ class LanMessengerApp:
         self.status_combo.pack(side='left')
         self.status_combo.bind('<<ComboboxSelected>>',
                                self._on_status_change)
+
+        # Sino de convites de reunião
+        self._bell_pending_invites = []
+        self._bell_frame = tk.Frame(user_inner, bg=NAVY, cursor='hand2')
+        self._bell_frame.pack(side='right', padx=(0, 4))
+        self._bell_lbl = tk.Label(self._bell_frame, text='\U0001f514',
+            font=('Segoe UI Symbol', 12), bg=NAVY, fg='#7cb8f0', cursor='hand2')
+        self._bell_lbl.pack()
+        self._bell_badge = tk.Label(self._bell_frame, text='',
+            font=('Segoe UI', 7, 'bold'), bg='#ef4444', fg='white', width=2)
+        self._bell_lbl.bind('<Button-1>', lambda e: self._open_bell_dropdown())
+        self._bell_frame.bind('<Button-1>', lambda e: self._open_bell_dropdown())
 
         # Ramal (4 digitos numericos) — substitui badge de Departamento no TreeView
         tk.Label(status_row, text='Ramal:', font=('Segoe UI', 8),
@@ -13961,11 +13985,34 @@ class LanMessengerApp:
         info = tk.Frame(row, bg=bg)
         info.pack(side='left', fill='x', expand=True, padx=4, pady=6)
         text = rem.get('text', '')
-        lbl_text = tk.Label(info, text=text, font=('Segoe UI', 10),
-                            bg=bg, fg=fg_text, anchor='w', wraplength=250)
-        if completed:
-            lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
-        lbl_text.pack(anchor='w')
+        # Detectar card de reunião (JSON com type=='meeting')
+        _meeting_card = False
+        try:
+            import json as _json_rm
+            _d = _json_rm.loads(text)
+            if isinstance(_d, dict) and _d.get('type') == 'meeting':
+                import datetime as _dt_rm
+                _title = _d.get('title', 'Reunião')
+                _room  = _d.get('room_name', '')
+                _st    = _d.get('start_ts', 0)
+                _et    = _d.get('end_ts', 0)
+                _dt_s  = _dt_rm.datetime.fromtimestamp(_st).strftime('%d/%m  %H:%M') if _st else ''
+                _dt_e  = _dt_rm.datetime.fromtimestamp(_et).strftime('%H:%M') if _et else ''
+                tk.Label(info, text=f'\U0001f4c5 {_title}',
+                         font=('Segoe UI', 10, 'bold'), bg=bg, fg=fg_text,
+                         anchor='w').pack(anchor='w')
+                tk.Label(info, text=f'\U0001f4cd {_room}   {_dt_s} – {_dt_e}',
+                         font=('Segoe UI', 8), bg=bg, fg='#64748b',
+                         anchor='w').pack(anchor='w')
+                _meeting_card = True
+        except Exception:
+            pass
+        if not _meeting_card:
+            lbl_text = tk.Label(info, text=text, font=('Segoe UI', 10),
+                                bg=bg, fg=fg_text, anchor='w', wraplength=250)
+            if completed:
+                lbl_text.configure(font=('Segoe UI', 10, 'overstrike'))
+            lbl_text.pack(anchor='w')
         if is_recurring:
             status_str = 'Ativo' if is_active else 'Pausado'
             rule_json = rem.get('recurrence_rule', '') or ''
@@ -15912,6 +15959,202 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # ── Módulo Agendar > Reunião ──────────────────────────────────────────────
+
+    def _open_meeting_window(self):
+        if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+            self._meeting_window.lift()
+            return
+        from meeting_gui import MeetingWindow
+        self._meeting_window = MeetingWindow(self)
+
+    def _update_bell_badge(self, count):
+        if count > 0:
+            self._bell_badge.config(text=str(count) if count < 10 else '9+')
+            self._bell_badge.place(relx=1.0, rely=0.0, anchor='ne', x=2, y=-2)
+        else:
+            self._bell_badge.place_forget()
+
+    def _open_bell_dropdown(self):
+        try:
+            if hasattr(self, '_bell_dropdown') and self._bell_dropdown.winfo_exists():
+                self._bell_dropdown.destroy()
+                return
+        except Exception:
+            pass
+
+        popup = tk.Toplevel(self.root)
+        popup.overrideredirect(True)
+        popup.configure(bg='#ffffff')
+        self._bell_dropdown = popup
+
+        NAVY = '#0f2a5c'
+
+        # Posiciona abaixo do sino
+        bx = self._bell_frame.winfo_rootx()
+        by = self._bell_frame.winfo_rooty() + self._bell_frame.winfo_height() + 4
+        popup.geometry(f'+{bx - 240}+{by}')
+
+        outer = tk.Frame(popup, bg='#e2e8f0', bd=1, relief='solid')
+        outer.pack(fill='both', expand=True)
+
+        inner = tk.Frame(outer, bg='#ffffff')
+        inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        pending = [b for b in self._bell_pending_invites if b]
+
+        if not pending:
+            tk.Label(inner, text='Nenhum convite pendente',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#6b7280',
+                     padx=16, pady=12).pack()
+        else:
+            import datetime as _dt
+            for booking_info in pending:
+                bid = booking_info.get('booking_id', '')
+                title = booking_info.get('title', 'Reunião')
+                creator = booking_info.get('creator_name', '')
+                room = booking_info.get('room_name', '')
+                start_ts = booking_info.get('start_ts', 0)
+                end_ts = booking_info.get('end_ts', 0)
+                try:
+                    dt_s = _dt.datetime.fromtimestamp(start_ts).strftime('%d/%m  %H:%M')
+                    dt_e = _dt.datetime.fromtimestamp(end_ts).strftime('%H:%M')
+                    dt_str = f'{dt_s} – {dt_e}'
+                except Exception:
+                    dt_str = ''
+
+                card = tk.Frame(inner, bg='#f8fafc',
+                                highlightthickness=1, highlightbackground='#e2e8f0')
+                card.pack(fill='x', padx=8, pady=(8, 0))
+
+                tk.Label(card, text=f'\U0001f4c5 {title}',
+                         font=('Segoe UI', 9, 'bold'), bg='#f8fafc',
+                         fg='#1e293b', anchor='w').pack(anchor='w', padx=8, pady=(6, 0))
+                tk.Label(card, text=f'\U0001f464 {creator}  •  \U0001f4cd {room}',
+                         font=('Segoe UI', 8), bg='#f8fafc',
+                         fg='#64748b', anchor='w').pack(anchor='w', padx=8)
+                tk.Label(card, text=f'\U0001f5d3 {dt_str}',
+                         font=('Segoe UI', 8), bg='#f8fafc',
+                         fg='#64748b', anchor='w').pack(anchor='w', padx=8, pady=(0, 4))
+
+                btn_row = tk.Frame(card, bg='#f8fafc')
+                btn_row.pack(fill='x', padx=8, pady=(0, 6))
+
+                def _accept(b=bid, info=booking_info):
+                    try:
+                        self.messenger.accept_meeting(b)
+                        if info in self._bell_pending_invites:
+                            self._bell_pending_invites.remove(info)
+                        self._update_bell_badge(len(self._bell_pending_invites))
+                        popup.destroy()
+                        if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+                            self._meeting_window.refresh_timegrid()
+                    except Exception:
+                        pass
+
+                def _decline(b=bid, info=booking_info):
+                    try:
+                        self.messenger.decline_meeting(b)
+                        if info in self._bell_pending_invites:
+                            self._bell_pending_invites.remove(info)
+                        self._update_bell_badge(len(self._bell_pending_invites))
+                        popup.destroy()
+                    except Exception:
+                        pass
+
+                tk.Button(btn_row, text='✓ Aceitar', font=('Segoe UI', 8),
+                          bg='#16a34a', fg='white', relief='flat', bd=0, padx=8, pady=3,
+                          cursor='hand2', command=_accept).pack(side='left', padx=(0, 4))
+                tk.Button(btn_row, text='✕ Recusar', font=('Segoe UI', 8),
+                          bg='#ef4444', fg='white', relief='flat', bd=0, padx=8, pady=3,
+                          cursor='hand2', command=_decline).pack(side='left')
+
+        tk.Frame(inner, bg='#ffffff', height=4).pack()
+
+        def _close_on_outside(e):
+            try:
+                if not (popup.winfo_rootx() <= e.x_root <= popup.winfo_rootx() + popup.winfo_width() and
+                        popup.winfo_rooty() <= e.y_root <= popup.winfo_rooty() + popup.winfo_height()):
+                    popup.destroy()
+            except Exception:
+                pass
+
+        popup.bind('<FocusOut>', lambda e: popup.destroy())
+        self.root.bind('<Button-1>', _close_on_outside, add='+')
+        popup.focus_set()
+
+    def _on_meeting_invite(self, booking_info):
+        self._bell_pending_invites.append(booking_info)
+        self._update_bell_badge(len(self._bell_pending_invites))
+        try:
+            if HAS_WINOTIFY:
+                import datetime as _dt
+                from winotify import Notification, audio as wn_audio
+                title = booking_info.get('title', 'Reunião')
+                creator = booking_info.get('creator_name', '')
+                room = booking_info.get('room_name', '')
+                start_ts = booking_info.get('start_ts', 0)
+                dt_str = _dt.datetime.fromtimestamp(start_ts).strftime('%d/%m %H:%M')
+                toast = Notification(app_id=APP_AUMID,
+                                     title=f'\U0001f4c5 Convite: {title}',
+                                     msg=f'{creator}  •  {room}  •  {dt_str}',
+                                     duration='short',
+                                     launch='mbchat://open/__meetings__')
+                try:
+                    toast.add_actions(label='Abrir',
+                                      launch='mbchat://open/__meetings__')
+                except Exception:
+                    pass
+                toast.set_audio(wn_audio.Default, loop=False)
+                toast.show()
+        except Exception:
+            pass
+        # Flash na janela de reuniões (se aberta) ou na root
+        self._pending_flash_target = '__meetings__'
+        try:
+            mw = getattr(self, '_meeting_window', None)
+            if mw is not None and mw.winfo_exists():
+                self._flash_window(mw, gate_key='flash_taskbar_meeting')
+            else:
+                self._flash_window(self.root, gate_key='flash_taskbar_meeting')
+        except Exception:
+            pass
+
+    def _on_meeting_response(self, booking_info):
+        if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+            try:
+                self._meeting_window.refresh_timegrid()
+            except Exception:
+                pass
+
+    def _on_meeting_cancel(self, booking_info):
+        bid = booking_info.get('booking_id', '') if booking_info else ''
+        self._bell_pending_invites = [
+            b for b in self._bell_pending_invites
+            if b.get('booking_id', '') != bid
+        ]
+        self._update_bell_badge(len(self._bell_pending_invites))
+        if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+            try:
+                self._meeting_window.refresh_timegrid()
+            except Exception:
+                pass
+        try:
+            title = booking_info.get('title', 'Reunião') if booking_info else 'Reunião'
+            import tkinter.messagebox as _mb
+            _mb.showinfo('Reunião cancelada', f'A reunião "{title}" foi cancelada.')
+        except Exception:
+            pass
+
+    def _on_meeting_sync(self, _info=None):
+        if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+            try:
+                self._meeting_window.refresh_timegrid()
+            except Exception:
+                pass
+
+    # ── fim Módulo Agendar > Reunião ─────────────────────────────────────────
+
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #
     # Repassa para a ChatWindow do remetente que exibe/oculta 'digitando...'.
@@ -16572,6 +16815,8 @@ class LanMessengerApp:
         if peer and hasattr(self, 'messenger'):  # tem peer para abrir e messenger inicializado?
             if peer == '__reminders__':             # comando especial para abrir lembretes
                 self.root.after(100, self._show_reminders)
+            elif peer == '__meetings__':            # comando especial para abrir reuniões
+                self.root.after(100, self._open_meeting_window)
             elif peer.startswith('group:'):          # e um grupo? (prefixo group:)
                 gid = peer[6:]                     # extrai o group_id sem o prefixo
                 if gid in self.messenger._groups:  # grupo existe?
@@ -16593,6 +16838,9 @@ class LanMessengerApp:
             return
         if peer == '__reminders__':
             # Dialog de lembretes e transient(root); precisa do root visivel.
+            self._restore_and_open(peer)
+            return
+        if peer == '__meetings__':
             self._restore_and_open(peer)
             return
         if peer.startswith('group:'):

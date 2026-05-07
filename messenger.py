@@ -27,6 +27,8 @@ from network import (
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE,
+    MT_MEETING_INVITE, MT_MEETING_ACCEPT, MT_MEETING_DECLINE,
+    MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES,
     TCP_PORT
 )
 from database import Database  # Banco de dados local
@@ -62,7 +64,9 @@ class Messenger:
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
                  on_group_join=None, on_image=None, on_poll=None,
-                 on_reminder_invite=None, on_reminder_response=None):
+                 on_reminder_invite=None, on_reminder_response=None,
+                 on_meeting_invite=None, on_meeting_response=None,
+                 on_meeting_cancel=None, on_meeting_sync=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -87,6 +91,10 @@ class Messenger:
         self.on_poll = on_poll                  # Enquete recebida/voto
         self.on_reminder_invite = on_reminder_invite      # Convite lembrete recebido
         self.on_reminder_response = on_reminder_response  # Resposta de convite (accept/decline)
+        self.on_meeting_invite = on_meeting_invite        # Convite de reunião recebido
+        self.on_meeting_response = on_meeting_response    # Resposta de convite de reunião
+        self.on_meeting_cancel = on_meeting_cancel        # Reunião cancelada
+        self.on_meeting_sync = on_meeting_sync            # Sync de reservas (timegrid atualizar)
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -187,6 +195,8 @@ class Messenger:
             self._reload_manual_peers()
         except Exception:
             pass
+        # Loop de auto-cancelamento de reuniões sem quórum
+        self._start_meeting_auto_cancel_loop()
 
     # Para todos os servicos e limpa estado
     def stop(self):
@@ -238,6 +248,12 @@ class Messenger:
         self.db.set_contact_ramal(uid, ramal)
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
+        # Sync de reuniões ao reconectar peer
+        peer_ip = info.get('ip', '')
+        if peer_ip:
+            threading.Thread(
+                target=lambda ip=peer_ip: self.sync_meetings_with_peer(ip),
+                daemon=True).start()
 
     # Callback chamado quando um peer e perdido (timeout ou depart)
     # Marca como offline no banco e notifica a GUI
@@ -586,6 +602,103 @@ class Messenger:
                     'responder_name': responder_name,
                     'accepted': msg_type == MT_REMINDER_ACCEPT,
                 })
+
+        # --- Convite de reunião de sala ---
+        elif msg_type == MT_MEETING_INVITE:
+            self._handle_meeting_invite(msg)
+
+        # --- Convidado aceitou reunião ---
+        elif msg_type == MT_MEETING_ACCEPT:
+            booking_id = msg.get('booking_id', '')
+            responder_uid = msg.get('from_user', '')
+            responder_name = msg.get('display_name', '')
+            if booking_id and responder_uid:
+                self.db.update_booking_participant_response(
+                    booking_id, responder_uid, 'accepted')
+                if self.db.get_booking_confirmed_count(booking_id) >= 2:
+                    self.db.update_booking_status(booking_id, 'confirmed')
+                if self.on_meeting_response:
+                    self.on_meeting_response({
+                        'booking_id': booking_id,
+                        'responder_uid': responder_uid,
+                        'responder_name': responder_name,
+                        'accepted': True,
+                    })
+
+        # --- Convidado recusou reunião ---
+        elif msg_type == MT_MEETING_DECLINE:
+            booking_id = msg.get('booking_id', '')
+            responder_uid = msg.get('from_user', '')
+            responder_name = msg.get('display_name', '')
+            if booking_id and responder_uid:
+                self.db.update_booking_participant_response(
+                    booking_id, responder_uid, 'declined')
+                if self.on_meeting_response:
+                    self.on_meeting_response({
+                        'booking_id': booking_id,
+                        'responder_uid': responder_uid,
+                        'responder_name': responder_name,
+                        'accepted': False,
+                    })
+
+        # --- Criador cancelou reunião ---
+        elif msg_type == MT_MEETING_CANCEL:
+            booking_id = msg.get('booking_id', '')
+            if booking_id:
+                self.db.soft_delete_booking(booking_id)
+                # Remove lembrete associado à reunião
+                try:
+                    rem = self.db.get_reminder_by_external_id(booking_id)
+                    if rem:
+                        self.db.delete_reminder(rem['id'])
+                except Exception:
+                    pass
+                if self.on_meeting_cancel:
+                    self.on_meeting_cancel({'booking_id': booking_id})
+
+        # --- Pedido de sync de reservas ---
+        elif msg_type == MT_MEETING_SYNC_REQ:
+            try:
+                bookings = self.db.get_all_bookings_for_sync()
+                participants = {}
+                for b in bookings:
+                    participants[b['booking_id']] = \
+                        self.db.get_booking_participants(b['booking_id'])
+                contact = self.db.get_contact(from_user)
+                if contact:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_MEETING_SYNC_RES,
+                        'from_user': self.user_id,
+                        'bookings': bookings,
+                        'participants': participants,
+                    })
+            except Exception:
+                pass
+
+        # --- Resposta de sync — Last Write Wins merge ---
+        elif msg_type == MT_MEETING_SYNC_RES:
+            try:
+                for b in (msg.get('bookings') or []):
+                    bid = b.get('booking_id')
+                    if not bid:
+                        continue
+                    local = self.db.get_booking(bid)
+                    if not local or float(b.get('updated_at', 0)) > float(local.get('updated_at', 0)):
+                        self.db.save_booking(
+                            bid, b['room_id'], b['title'],
+                            b['creator_uid'], b['creator_name'],
+                            b['start_ts'], b['end_ts'], b.get('status', 'pending'))
+                        if b.get('is_deleted'):
+                            self.db.soft_delete_booking(bid)
+                parts = msg.get('participants') or {}
+                for bid, plist in parts.items():
+                    for p in plist:
+                        self.db.save_booking_participant(
+                            bid, p['uid'], p['display_name'], p['response'])
+                if self.on_meeting_sync:
+                    self.on_meeting_sync()
+            except Exception:
+                pass
 
     # ========================================
     # SEND — Acoes de envio
@@ -1244,3 +1357,266 @@ class Messenger:
             self.discovery.set_manual_peers(ips)
         except Exception:
             pass
+
+    # ========================================
+    # MEETING ROOMS — Reserva de Salas
+    # ========================================
+
+    def _handle_meeting_invite(self, msg):
+        booking_id = msg.get('booking_id', '')
+        if not booking_id:
+            return
+        # Idempotente: se já recebi este convite, ignora
+        if self.db.get_booking(booking_id):
+            return
+        self.db.save_booking(
+            booking_id, msg['room_id'], msg['title'],
+            msg['creator_uid'], msg['creator_name'],
+            msg['start_ts'], msg['end_ts'], 'pending')
+        for p in (msg.get('participants') or []):
+            self.db.save_booking_participant(
+                booking_id, p['uid'], p['display_name'], p['response'])
+        if self.on_meeting_invite:
+            self.on_meeting_invite(msg)
+
+    def create_meeting(self, room_id, title, start_ts, end_ts, participant_uids):
+        import json as _json
+        if self.db.has_booking_conflict(room_id, start_ts, end_ts):
+            return {'error': 'conflict'}
+        booking_id = str(uuid.uuid4())
+        self.db.save_booking(booking_id, room_id, title,
+                             self.user_id, self.display_name,
+                             start_ts, end_ts, 'pending')
+        self.db.save_booking_participant(
+            booking_id, self.user_id, self.display_name, 'accepted')
+        participants = [{'uid': self.user_id,
+                         'display_name': self.display_name,
+                         'response': 'accepted'}]
+        for uid in (participant_uids or []):
+            contact = self.db.get_contact(uid)
+            if not contact:
+                continue
+            name = contact['display_name']
+            self.db.save_booking_participant(booking_id, uid, name, 'pending')
+            participants.append({'uid': uid, 'display_name': name,
+                                 'response': 'pending'})
+        room_map = {r['id']: r['name'] for r in self.db.get_rooms()}
+        payload = {
+            'type': MT_MEETING_INVITE,
+            'from_user': self.user_id,
+            'display_name': self.display_name,
+            'booking_id': booking_id,
+            'room_id': room_id,
+            'room_name': room_map.get(room_id, 'Sala'),
+            'title': title,
+            'creator_uid': self.user_id,
+            'creator_name': self.display_name,
+            'start_ts': start_ts,
+            'end_ts': end_ts,
+            'participants': participants,
+        }
+        sent_any = False
+        for uid in (participant_uids or []):
+            contact = self.db.get_contact(uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+                    sent_any = True
+                except Exception:
+                    pass
+        if not sent_any and participant_uids:
+            self.db.update_booking_status(booking_id, 'local_only')
+        return {'booking_id': booking_id}
+
+    def accept_meeting(self, booking_id):
+        import json as _json
+        self.db.update_booking_participant_response(
+            booking_id, self.user_id, 'accepted')
+        booking = self.db.get_booking(booking_id)
+        if not booking:
+            return
+        if self.db.get_booking_confirmed_count(booking_id) >= 2:
+            self.db.update_booking_status(booking_id, 'confirmed')
+        # Notifica o criador
+        creator_uid = booking.get('creator_uid', '')
+        if creator_uid and creator_uid != self.user_id:
+            contact = self.db.get_contact(creator_uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_MEETING_ACCEPT,
+                        'from_user': self.user_id,
+                        'display_name': self.display_name,
+                        'booking_id': booking_id,
+                    })
+                except Exception:
+                    pass
+        # Cria lembrete 15min antes
+        try:
+            rooms = {r['id']: r['name'] for r in self.db.get_rooms()}
+            room_name = rooms.get(booking.get('room_id'), 'Sala')
+            parts = self.db.get_booking_participants(booking_id)
+            remind_text = _json.dumps({
+                'type': 'meeting',
+                'title': booking['title'],
+                'room_name': room_name,
+                'start_ts': booking['start_ts'],
+                'end_ts': booking['end_ts'],
+                'participants': [p['display_name'] for p in parts],
+                'creator': booking['creator_name'],
+            }, ensure_ascii=False)
+            self.db.add_shared_reminder(
+                text=remind_text,
+                remind_at=booking['start_ts'] - 900,
+                creator_uid=self.user_id,
+                external_id=booking_id,
+                share_status='active')
+        except Exception:
+            pass
+
+    def decline_meeting(self, booking_id):
+        self.db.update_booking_participant_response(
+            booking_id, self.user_id, 'declined')
+        booking = self.db.get_booking(booking_id)
+        if not booking:
+            return
+        creator_uid = booking.get('creator_uid', '')
+        if creator_uid and creator_uid != self.user_id:
+            contact = self.db.get_contact(creator_uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_MEETING_DECLINE,
+                        'from_user': self.user_id,
+                        'display_name': self.display_name,
+                        'booking_id': booking_id,
+                    })
+                except Exception:
+                    pass
+
+    def cancel_meeting(self, booking_id):
+        booking = self.db.get_booking(booking_id)
+        if not booking or booking.get('creator_uid') != self.user_id:
+            return
+        self.db.soft_delete_booking(booking_id)
+        # Remove lembrete associado
+        try:
+            rem = self.db.get_reminder_by_external_id(booking_id)
+            if rem:
+                self.db.delete_reminder(rem['id'])
+        except Exception:
+            pass
+        parts = self.db.get_booking_participants(booking_id)
+        for p in parts:
+            if p['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(p['uid'])
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_MEETING_CANCEL,
+                        'from_user': self.user_id,
+                        'display_name': self.display_name,
+                        'booking_id': booking_id,
+                    })
+                except Exception:
+                    pass
+
+    def edit_meeting(self, booking_id, title, room_id, start_ts, end_ts):
+        if self.db.has_booking_conflict(room_id, start_ts, end_ts,
+                                        exclude_booking_id=booking_id):
+            return {'error': 'conflict'}
+        self.db.update_booking_fields(booking_id, title, room_id, start_ts, end_ts)
+        booking = self.db.get_booking(booking_id)
+        if not booking:
+            return {}
+        parts = self.db.get_booking_participants(booking_id)
+        room_map = {r['id']: r['name'] for r in self.db.get_rooms()}
+        payload = {
+            'type': MT_MEETING_SYNC_RES,
+            'from_user': self.user_id,
+            'bookings': [dict(booking)],
+        }
+        for p in parts:
+            if p['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(p['uid'])
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+                except Exception:
+                    pass
+        return {}
+
+    def remove_participant(self, booking_id, uid):
+        self.db.remove_booking_participant(booking_id, uid)
+        contact = self.db.get_contact(uid)
+        if contact:
+            try:
+                TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                    'type': MT_MEETING_CANCEL,
+                    'from_user': self.user_id,
+                    'display_name': self.display_name,
+                    'booking_id': booking_id,
+                })
+            except Exception:
+                pass
+
+    def add_participants(self, booking_id, uids):
+        booking = self.db.get_booking(booking_id)
+        if not booking:
+            return
+        parts = self.db.get_booking_participants(booking_id)
+        participants = [{'uid': p['uid'], 'display_name': p['display_name'],
+                         'response': p['response']} for p in parts]
+        room_map = {r['id']: r['name'] for r in self.db.get_rooms()}
+        for uid in (uids or []):
+            contact = self.db.get_contact(uid)
+            if not contact:
+                continue
+            name = contact['display_name']
+            self.db.save_booking_participant(booking_id, uid, name, 'pending')
+            participants.append({'uid': uid, 'display_name': name, 'response': 'pending'})
+            try:
+                TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                    'type': MT_MEETING_INVITE,
+                    'from_user': self.user_id,
+                    'display_name': self.display_name,
+                    'booking_id': booking_id,
+                    'room_id': booking['room_id'],
+                    'room_name': room_map.get(booking['room_id'], 'Sala'),
+                    'title': booking['title'],
+                    'creator_uid': booking['creator_uid'],
+                    'creator_name': booking['creator_name'],
+                    'start_ts': booking['start_ts'],
+                    'end_ts': booking['end_ts'],
+                    'participants': participants,
+                })
+            except Exception:
+                pass
+
+    def sync_meetings_with_peer(self, peer_ip):
+        try:
+            TCPClient.send_message(peer_ip, TCP_PORT, {
+                'type': MT_MEETING_SYNC_REQ,
+                'from_user': self.user_id,
+            })
+        except Exception:
+            pass
+
+    def _start_meeting_auto_cancel_loop(self):
+        CANCEL_TOLERANCE = 120  # 2 min de tolerância
+        def _loop():
+            while True:
+                try:
+                    now = time.time()
+                    bookings = self.db.get_bookings(date_from=0, date_to=now)
+                    for b in bookings:
+                        if (b.get('status') == 'pending' and
+                                b['start_ts'] + CANCEL_TOLERANCE <= now):
+                            if self.db.get_booking_confirmed_count(b['booking_id']) < 2:
+                                self.cancel_meeting(b['booking_id'])
+                except Exception:
+                    pass
+                time.sleep(60)
+        threading.Thread(target=_loop, daemon=True).start()

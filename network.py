@@ -204,6 +204,12 @@ MT_PEER_LIST = 'peer_list'      # UDP: lista de peers conhecidos (resposta a ann
 MT_REMINDER_INVITE = 'reminder_invite'    # TCP: convite de lembrete compartilhado
 MT_REMINDER_ACCEPT = 'reminder_accept'    # TCP: aceitacao do convite (volta pro criador)
 MT_REMINDER_DECLINE = 'reminder_decline'  # TCP: recusa do convite (volta pro criador)
+MT_MEETING_INVITE   = 'meeting_invite'    # TCP: convite de reunião de sala
+MT_MEETING_ACCEPT   = 'meeting_accept'    # TCP: convidado aceitou reunião
+MT_MEETING_DECLINE  = 'meeting_decline'   # TCP: convidado recusou reunião
+MT_MEETING_CANCEL   = 'meeting_cancel'    # TCP: criador cancelou reunião
+MT_MEETING_SYNC_REQ = 'meeting_sync_req'  # TCP: pedido de sync de reservas ao reconectar
+MT_MEETING_SYNC_RES = 'meeting_sync_res'  # TCP: dump de bookings como resposta ao sync
 
 
 # Detecta IP local da maquina na rede.
