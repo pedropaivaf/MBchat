@@ -1226,6 +1226,21 @@ class SoundPlayer:
     # Contador de aliases MCI para nao colidir entre execucoes simultaneas
     _mci_counter = 0
     _mci_lock = threading.Lock()
+    _volume = 80       # volume geral (fallback)
+    _volumes = {}      # tone -> volume individual (msg, group, broadcast, reminder)
+
+    @staticmethod
+    def _apply_volume(vol=None):
+        # Define o volume de wave output via waveOutSetVolume (winmm).
+        # Opera no audio session do processo — nao afeta outros apps no Vista+.
+        try:
+            import ctypes
+            v = max(0, min(100, int(vol if vol is not None else SoundPlayer._volume)))
+            vol_word = int(v / 100 * 0xFFFF)
+            ctypes.windll.winmm.waveOutSetVolume(
+                None, ctypes.c_uint32(vol_word | (vol_word << 16)))
+        except Exception:
+            pass
 
     # Mapeia tom -> lista de nomes de arquivo aceitos (primeiro existente vence,
     # extensoes .wav/.mp3 testadas em ordem). Convencao escolhida apos analise
@@ -1333,10 +1348,6 @@ class SoundPlayer:
             if platform.system() == 'Windows':
                 f = SoundPlayer._find_sound_file(tone)
                 if f:
-                    ext = os.path.splitext(f)[1].lower()
-                    if ext == '.wav':
-                        if SoundPlayer._play_wav_winsound(f):
-                            return
                     if SoundPlayer._play_file_mci(f):
                         return
                 # 2) Fallback removido a pedido do usuario: sons agora sao apenas os arquivos em sounds/
@@ -1351,7 +1362,9 @@ class SoundPlayer:
 
     @staticmethod
     def _beep(tone='info'):
-        # API legacy mantida — toca em thread para nao bloquear UI
+        # Aplica volume especifico do tom (ou geral como fallback)
+        vol = SoundPlayer._volumes.get(tone, SoundPlayer._volume)
+        SoundPlayer._apply_volume(vol)
         threading.Thread(target=SoundPlayer._play_tone,
                          args=(tone,), daemon=True).start()
 
@@ -1533,6 +1546,16 @@ class PreferencesWindow(tk.Toplevel):
             value=db.get_setting('flash_taskbar_broadcast', '1') == '1')
         self.var_flash_reminder = tk.BooleanVar(
             value=db.get_setting('flash_reminder', '1') == '1')
+        self.var_vol_msg = tk.IntVar(value=int(db.get_setting('sound_volume_msg', '80')))
+        self.var_vol_group = tk.IntVar(value=int(db.get_setting('sound_volume_group', '80')))
+        self.var_vol_broadcast = tk.IntVar(value=int(db.get_setting('sound_volume_broadcast', '80')))
+        self.var_vol_reminder = tk.IntVar(value=int(db.get_setting('sound_volume_reminder', '80')))
+        SoundPlayer._volumes = {
+            'msg': self.var_vol_msg.get(),
+            'group': self.var_vol_group.get(),
+            'broadcast': self.var_vol_broadcast.get(),
+            'reminder': self.var_vol_reminder.get(),
+        }
         self.var_save_history = tk.BooleanVar(value=True)
         self.var_history_path = tk.StringVar(
             value=db.get_setting('history_path',
@@ -1898,78 +1921,138 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(parent, text='Alertas', font=FONT_SECTION,
                  bg=BG_WINDOW).pack(anchor='w', padx=10, pady=(5, 10))
 
-        # Master de sons (uma unica chave global) — fora da tabela
         lf_master = tk.Frame(parent, bg=BG_WINDOW)
         lf_master.pack(fill='x', padx=10, pady=(0, 6))
         tk.Checkbutton(lf_master, text='Ativar sons',
                        variable=self.var_sound_master, font=FONT,
                        bg=BG_WINDOW).pack(anchor='w')
 
-        # --- Tabela unificada: 4 eventos x 3 acoes (Toast / Som / Pisca) + Testar
-        # Mantem so o essencial. Eventos secundarios (arquivo recebido/concluido)
-        # ficam ligados por padrao sem UI dedicada.
+        # (label, var_notif, var_sound, var_flash, vol_var, tone_key, play_fn)
+        items = [
+            ('Mensagem privada',
+             self.var_notif_msg_private, self.var_sound_msg_private,
+             self.var_flash_taskbar_msg,
+             self.var_vol_msg, 'msg', SoundPlayer.play_msg_private),
+            ('Mensagem de grupo',
+             self.var_notif_msg_group, self.var_sound_msg_group,
+             self.var_flash_taskbar_group,
+             self.var_vol_group, 'group', SoundPlayer.play_msg_group),
+            ('Transmissão',
+             self.var_notif_msg_broadcast, self.var_sound_msg_broadcast,
+             self.var_flash_taskbar_broadcast,
+             self.var_vol_broadcast, 'broadcast', SoundPlayer.play_msg_broadcast),
+            ('Lembrete',
+             self.var_notif_reminder, self.var_sound_reminder,
+             self.var_flash_reminder,
+             self.var_vol_reminder, 'reminder', SoundPlayer.play_reminder),
+        ]
+
+        hdr_font = ('Segoe UI', 8, 'bold')
+
+        # --- Bloco: checkboxes Aviso / Som / Piscar ---
         lf = tk.LabelFrame(parent, text='Notificações', font=FONT,
                            bg=BG_WINDOW, padx=10, pady=8)
         lf.pack(fill='x', padx=10, pady=(0, 8))
 
-        # Cabecalho
-        hdr_font = ('Segoe UI', 8, 'bold')
         tk.Label(lf, text='', bg=BG_WINDOW).grid(row=0, column=0)
         tk.Label(lf, text='Aviso', font=hdr_font,
-                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=1, padx=8)
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=1, padx=12)
         tk.Label(lf, text='Som', font=hdr_font,
-                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=2, padx=8)
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=2, padx=12)
         tk.Label(lf, text='Piscar', font=hdr_font,
-                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=3, padx=8)
-        tk.Label(lf, text='', bg=BG_WINDOW).grid(row=0, column=4)
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=3, padx=12)
 
-        # Linha de separacao do cabecalho
         tk.Frame(lf, bg='#e2e8f0', height=1).grid(
-            row=1, column=0, columnspan=5, sticky='ew', pady=(2, 4))
+            row=1, column=0, columnspan=4, sticky='ew', pady=(2, 4))
 
-        # 4 eventos essenciais. Cada item: (label, var_notif, var_sound,
-        # var_flash, play_fn).
-        items = [
-            ('Mensagem privada',
-             self.var_notif_msg_private, self.var_sound_msg_private,
-             self.var_flash_taskbar_msg, SoundPlayer.play_msg_private),
-            ('Mensagem de grupo',
-             self.var_notif_msg_group, self.var_sound_msg_group,
-             self.var_flash_taskbar_group, SoundPlayer.play_msg_group),
-            ('Transmissão',
-             self.var_notif_msg_broadcast, self.var_sound_msg_broadcast,
-             self.var_flash_taskbar_broadcast, SoundPlayer.play_msg_broadcast),
-            ('Lembrete',
-             self.var_notif_reminder, self.var_sound_reminder,
-             self.var_flash_reminder, SoundPlayer.play_reminder),
-        ]
-        for i, (label, vn, vs, vf, play_fn) in enumerate(items):
+        for i, (label, vn, vs, vf, _vv, _tk, _pf) in enumerate(items):
             r = i + 2
             tk.Label(lf, text=label, font=FONT, bg=BG_WINDOW,
                      anchor='w').grid(row=r, column=0, sticky='w',
-                                      padx=(0, 6), pady=2)
+                                      padx=(0, 8), pady=3)
             tk.Checkbutton(lf, variable=vn, bg=BG_WINDOW
-                           ).grid(row=r, column=1, padx=8)
+                           ).grid(row=r, column=1, padx=12)
             tk.Checkbutton(lf, variable=vs, bg=BG_WINDOW
-                           ).grid(row=r, column=2, padx=8)
+                           ).grid(row=r, column=2, padx=12)
             tk.Checkbutton(lf, variable=vf, bg=BG_WINDOW
-                           ).grid(row=r, column=3, padx=8)
+                           ).grid(row=r, column=3, padx=12)
 
-            # Botao Testar — toca o som ignorando gate master/individual
-            def _test_play(fn=play_fn):
+        lf.grid_columnconfigure(0, weight=1, minsize=130)
+
+        # --- Bloco: Volume por tipo ---
+        lf_vol = tk.LabelFrame(parent, text='Volume', font=FONT,
+                               bg=BG_WINDOW, padx=10, pady=8)
+        lf_vol.pack(fill='x', padx=10, pady=(0, 8))
+
+        tk.Label(lf_vol, text='', bg=BG_WINDOW).grid(row=0, column=0)
+        tk.Label(lf_vol, text='Nível', font=hdr_font,
+                 bg=BG_WINDOW, fg='#4a5568').grid(row=0, column=1, padx=(10, 2))
+        tk.Label(lf_vol, text='', bg=BG_WINDOW).grid(row=0, column=2)
+
+        tk.Frame(lf_vol, bg='#e2e8f0', height=1).grid(
+            row=1, column=0, columnspan=3, sticky='ew', pady=(2, 4))
+
+        _TW, _TP, _TR, _CH = 160, 5, 5, 16
+
+        def _make_vol_slider(parent_grid, row, vol_var, tone_key, play_fn):
+            cv = tk.Canvas(parent_grid, width=_TW + _TP * 2, height=_CH,
+                           bg=BG_WINDOW, highlightthickness=0, bd=0, cursor='hand2')
+            cv.grid(row=row, column=1, padx=(10, 2), sticky='w')
+            pct = tk.Label(parent_grid, text=f'{vol_var.get()}%',
+                           font=('Segoe UI', 8), bg=BG_WINDOW, fg='#4a5568',
+                           width=4, anchor='w')
+            pct.grid(row=row, column=2, sticky='w')
+
+            def _draw():
+                cv.delete('all')
+                v = vol_var.get()
+                x = _TP + int(v / 100 * _TW)
+                mid = _CH // 2
+                cv.create_rectangle(_TP, mid - 2, _TP + _TW, mid + 2,
+                                    fill='#e2e8f0', outline='')
+                if x > _TP:
+                    cv.create_rectangle(_TP, mid - 2, x, mid + 2,
+                                        fill='#0f2a5c', outline='')
+                cv.create_oval(x - _TR, mid - _TR, x + _TR, mid + _TR,
+                               fill='#0f2a5c', outline='')
+
+            _st = {'drag': False}
+
+            def _set(x_raw):
+                x = max(_TP, min(_TP + _TW, x_raw))
+                v = int((x - _TP) / _TW * 100)
+                vol_var.set(v)
+                SoundPlayer._volumes[tone_key] = v
+                pct.config(text=f'{v}%')
+                _draw()
+
+            def _press(e):  _st['drag'] = True;  _set(e.x)
+            def _motion(e):
+                if _st['drag']:  _set(e.x)
+            def _release(e):
+                _st['drag'] = False
+                _set(e.x)
+                SoundPlayer._apply_volume(vol_var.get())
                 try:
                     saved_db = SoundPlayer.db
-                    SoundPlayer.db = None  # _gate retorna True quando db=None
-                    fn()
+                    SoundPlayer.db = None
+                    play_fn()
                 finally:
                     SoundPlayer.db = saved_db
-            tk.Button(lf, text='▶ Testar', font=('Segoe UI', 8),
-                      bg='#e2e8f0', fg='#1a202c', relief='flat', bd=0,
-                      padx=8, pady=1, cursor='hand2',
-                      command=_test_play).grid(row=r, column=4,
-                                               sticky='w', padx=(8, 0))
-        lf.grid_columnconfigure(0, weight=1)
-        lf.grid_columnconfigure(1, weight=1)
+
+            cv.bind('<Button-1>', _press)
+            cv.bind('<B1-Motion>', _motion)
+            cv.bind('<ButtonRelease-1>', _release)
+            cv.after(50, _draw)
+
+        for i, (label, _vn, _vs, _vf, vol_var, tone_key, play_fn) in enumerate(items):
+            r = i + 2
+            tk.Label(lf_vol, text=label, font=FONT, bg=BG_WINDOW,
+                     anchor='w').grid(row=r, column=0, sticky='w',
+                                      padx=(0, 8), pady=3)
+            _make_vol_slider(lf_vol, r, vol_var, tone_key, play_fn)
+
+        lf_vol.grid_columnconfigure(0, weight=1, minsize=130)
 
     # ----- REDE -----
     def _build_rede(self, parent):
@@ -2219,6 +2302,10 @@ class PreferencesWindow(tk.Toplevel):
                        '1' if self.var_notif_reminder.get() else '0')
         db.set_setting('flash_reminder',
                        '1' if self.var_flash_reminder.get() else '0')
+        db.set_setting('sound_volume_msg', str(self.var_vol_msg.get()))
+        db.set_setting('sound_volume_group', str(self.var_vol_group.get()))
+        db.set_setting('sound_volume_broadcast', str(self.var_vol_broadcast.get()))
+        db.set_setting('sound_volume_reminder', str(self.var_vol_reminder.get()))
         db.set_setting('save_history',
                        '1' if self.var_save_history.get() else '0')
         db.set_setting('history_path', self.var_history_path.get())
@@ -6692,10 +6779,10 @@ class GroupChatWindow(tk.Toplevel):
         self.bind('<FocusIn>', self._on_focus_in)
         # Carrega historico persistido do grupo (mensagens + imagens) em ordem
         # cronologica. Roda apos o build_ui para que chat_text exista.
-        # try:
-        #     self._load_history()
-        # except Exception:
-        #     log.exception('Erro ao carregar historico do grupo')
+        try:
+            self._load_history()
+        except Exception:
+            log.exception('Erro ao carregar historico do grupo')
 
     def _build_ui(self, t):
         NAVY = '#0f2a5c'
@@ -7321,20 +7408,145 @@ class GroupChatWindow(tk.Toplevel):
         tk.Label(header, text='Adicionar ao Grupo', font=('Segoe UI', 10, 'bold'),
                  bg=NAVY, fg='#ffffff').pack(padx=10, pady=8)
 
-        content = tk.Frame(win, bg='#f5f7fa')
-        content.pack(fill='both', expand=True, padx=8, pady=8)
+        # btn_frame empacotado com side='bottom' antes da lista — garante visibilidade
+        btn_frame = tk.Frame(win, bg='#f5f7fa')
+        btn_frame.pack(side='bottom', fill='x', padx=8, pady=8)
 
+        # Indicador "mais abaixo" — aparece entre lista e botões quando há overflow
+        more_row = tk.Frame(win, bg='#f0f2f5', height=18)
+        tk.Label(more_row, text='▼', font=('Segoe UI', 7),
+                 bg='#f0f2f5', fg='#94a3b8').pack()
+
+        # Container externo da lista
+        list_area = tk.Frame(win, bg='#f5f7fa')
+        list_area.pack(fill='both', expand=True, padx=8, pady=(8, 0))
+
+        # Canvas + frame interno rolável
+        canvas = tk.Canvas(list_area, bg='#f5f7fa', highlightthickness=0, bd=0)
+        list_frame = tk.Frame(canvas, bg='#f5f7fa')
+        inner_id = canvas.create_window((0, 0), window=list_frame,
+                                         anchor='nw', tags='frame')
+
+        # Scrollbar minimalista auto-hide (padrão do app)
+        sb_canvas = tk.Canvas(list_area, width=6, highlightthickness=0, bd=0,
+                              bg='#f5f7fa')
+        sb_state = {'lo': 0.0, 'hi': 1.0, 'dragging': False, 'drag_y': 0,
+                    'wide': False, 'thin': 6, 'wide_w': 10}
+
+        def _sb_redraw():
+            sb_canvas.delete('all')
+            h = sb_canvas.winfo_height()
+            w = sb_canvas.winfo_width()
+            if h < 2 or w < 2:
+                return
+            y1 = max(int(sb_state['lo'] * h), 0)
+            y2 = min(int(sb_state['hi'] * h), h)
+            if y2 - y1 < 24:
+                mid = (y1 + y2) // 2
+                y1, y2 = max(mid - 12, 0), min(mid + 12, h)
+            pad = 1
+            color = '#94a3b8' if sb_state['wide'] else '#cbd5e1'
+            r = (w - pad * 2) // 2
+            sb_canvas.create_oval(pad, y1, w - pad, y1 + 2 * r,
+                                  fill=color, outline='')
+            sb_canvas.create_oval(pad, y2 - 2 * r, w - pad, y2,
+                                  fill=color, outline='')
+            if y2 - 2 * r > y1 + r:
+                sb_canvas.create_rectangle(pad, y1 + r, w - pad, y2 - r,
+                                           fill=color, outline='')
+
+        def _sb_set(lo, hi):
+            lo, hi = float(lo), float(hi)
+            sb_state['lo'], sb_state['hi'] = lo, hi
+            if lo <= 0.0 and hi >= 1.0:
+                sb_canvas.pack_forget()
+                more_row.pack_forget()
+            else:
+                if not sb_canvas.winfo_ismapped():
+                    sb_canvas.pack(side='right', fill='y')
+                _sb_redraw()
+                if hi < 1.0:
+                    if not more_row.winfo_ismapped():
+                        more_row.pack(fill='x', before=btn_frame)
+                else:
+                    more_row.pack_forget()
+
+        def _sb_enter(e):
+            sb_state['wide'] = True
+            sb_canvas.configure(width=sb_state['wide_w'])
+            _sb_redraw()
+
+        def _sb_leave(e):
+            if not sb_state['dragging']:
+                sb_state['wide'] = False
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+
+        def _sb_press(e):
+            sb_state['dragging'] = True
+            sb_state['drag_y'] = e.y
+            h = sb_canvas.winfo_height()
+            if h > 0:
+                click_frac = e.y / h
+                if click_frac < sb_state['lo'] or click_frac > sb_state['hi']:
+                    span = sb_state['hi'] - sb_state['lo']
+                    canvas.yview_moveto(max(0.0, click_frac - span / 2))
+
+        def _sb_drag(e):
+            if not sb_state['dragging']:
+                return
+            h = sb_canvas.winfo_height()
+            if h < 1:
+                return
+            dy = (e.y - sb_state['drag_y']) / h
+            sb_state['drag_y'] = e.y
+            canvas.yview_moveto(max(0.0, min(1.0, sb_state['lo'] + dy)))
+
+        def _sb_release(e):
+            sb_state['dragging'] = False
+            if not sb_state['wide']:
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+
+        sb_canvas.bind('<Enter>', _sb_enter)
+        sb_canvas.bind('<Leave>', _sb_leave)
+        sb_canvas.bind('<Button-1>', _sb_press)
+        sb_canvas.bind('<B1-Motion>', _sb_drag)
+        sb_canvas.bind('<ButtonRelease-1>', _sb_release)
+        sb_canvas.bind('<Configure>', lambda e: _sb_redraw())
+
+        canvas.configure(yscrollcommand=_sb_set)
+        canvas.pack(side='left', fill='both', expand=True)
+
+        list_frame.bind('<Configure>',
+            lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',
+            lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        def _on_mousewheel(e):
+            if sb_state['lo'] <= 0.0 and sb_state['hi'] >= 1.0:
+                return
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), 'units')
+        canvas.bind_all('<MouseWheel>', _on_mousewheel)
+
+        def _cleanup(e):
+            if e.widget == win:
+                canvas.unbind_all('<MouseWheel>')
+        win.bind('<Destroy>', _cleanup)
+
+        # Peers ordenados A-Z, excluindo membros existentes e offline
         peer_vars = {}
-        # Filtrar peers que ja estao no grupo
         existing_uids = set(self._members.keys())
-        for uid, info in self.app.peer_info.items():
-            if uid in existing_uids:
-                continue
-            if info.get('status', 'offline') == 'offline':
-                continue
+        sorted_peers = sorted(
+            ((uid, info) for uid, info in self.app.peer_info.items()
+             if uid not in existing_uids
+             and info.get('status', 'offline') != 'offline'),
+            key=lambda kv: kv[1].get('display_name', kv[0]).lower()
+        )
+        for uid, info in sorted_peers:
             var = tk.BooleanVar(value=False)
             peer_vars[uid] = var
-            row = tk.Frame(content, bg='#ffffff')
+            row = tk.Frame(list_frame, bg='#ffffff')
             row.pack(fill='x', pady=1)
             cb = tk.Checkbutton(row, text=f"  {info.get('display_name', uid)}",
                                 variable=var, font=('Segoe UI', 9),
@@ -7344,7 +7556,7 @@ class GroupChatWindow(tk.Toplevel):
             cb.pack(fill='x', padx=4, pady=2)
 
         if not peer_vars:
-            tk.Label(content, text='Nenhum contato disponivel',
+            tk.Label(list_frame, text='Nenhum contato disponivel',
                      font=('Segoe UI', 9, 'italic'),
                      bg='#f5f7fa', fg='#718096').pack(pady=20)
 
@@ -7354,23 +7566,18 @@ class GroupChatWindow(tk.Toplevel):
                 win.destroy()
                 return
             group = self.app.messenger._groups.get(self.group_id)
-            # Adicionar novos membros
             for uid in new_ids:
                 info = self.app.peer_info.get(uid, {})
                 name = info.get('display_name', uid)
                 self.add_member(uid, name, info)
                 self.system_message(f'{name} entrou no grupo.')
-                # Atualizar lista no messenger
                 if group:
                     group['members'].append({
                         'uid': uid,
                         'display_name': name,
                         'ip': info.get('ip', '')
                     })
-                # Notificar membros existentes sobre novo membro
-                self.app.messenger.notify_group_join(
-                    self.group_id, uid, name)
-            # Enviar convite para novos membros com lista completa
+                self.app.messenger.notify_group_join(self.group_id, uid, name)
             if group:
                 for uid in new_ids:
                     info = self.app.peer_info.get(uid, {})
@@ -7388,8 +7595,6 @@ class GroupChatWindow(tk.Toplevel):
                         })
             win.destroy()
 
-        btn_frame = tk.Frame(win, bg='#f5f7fa')
-        btn_frame.pack(fill='x', padx=8, pady=8)
         btn_add = tk.Button(btn_frame, text='Adicionar',
                             font=('Segoe UI', 9, 'bold'),
                             bg=NAVY, fg='#ffffff', relief='flat',
@@ -8463,6 +8668,9 @@ class GroupChatWindow(tk.Toplevel):
 
     # Exibe enquete no chat como card estilo WhatsApp/Google Forms
     def _display_poll(self, question, options, creator, poll_id):
+        # Evita duplicata caso a enquete ja esteja exibida (ex: historico + live)
+        if hasattr(self, '_poll_widgets') and poll_id in self._poll_widgets:
+            return
         # Busca votos atuais do banco
         votes = self.app.messenger.db.get_poll_votes(poll_id)
         vote_counts = {}
@@ -8735,6 +8943,18 @@ class GroupChatWindow(tk.Toplevel):
             else:
                 self._append_message(sender, content, is_mine,
                                      timestamp=ts, msg_id=mid, reply_to=rto)
+        # Carrega enquetes persistidas do grupo
+        try:
+            polls = self.app.messenger.db.get_polls_for_group(self.group_id)
+            for p in polls:
+                creator_uid = p.get('creator_uid', '')
+                creator_info = self.app.peer_info.get(creator_uid, {})
+                creator_name = creator_info.get('display_name', creator_uid)
+                if creator_uid == self.app.messenger.user_id:
+                    creator_name = self.app.messenger.display_name
+                self._display_poll(p['question'], p['options'], creator_name, p['poll_id'])
+        except Exception:
+            log.exception('Erro ao carregar enquetes do grupo')
 
     # Renderiza imagem no chat do grupo (thumbnail clicavel)
     def _append_image(self, sender, image_path, is_mine, timestamp=None):
@@ -16440,16 +16660,18 @@ def _format_size(size):
 # Linux: cria arquivo .desktop em ~/.config/autostart/.
 # macOS: cria arquivo .plist em ~/Library/LaunchAgents/.
 def _setup_autostart():
-    script = os.path.abspath(sys.argv[0])  # caminho absoluto do script/exe atual
-    python = sys.executable                # caminho do interpretador Python
     if platform.system() == 'Windows':     # plataforma Windows?
         try:
             import winreg
+            if getattr(sys, 'frozen', False):
+                cmd = f'"{sys.executable}" --silent'
+            else:
+                script = os.path.abspath(sys.argv[0])
+                cmd = f'"{sys.executable}" "{script}" --silent'
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                r'Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+                r'Software\Microsoft\Windows\CurrentVersion\Run',
                 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, 'MBChat', 0, winreg.REG_SZ,
-                              f'"{python}" "{script}" --silent')
+            winreg.SetValueEx(key, 'MBChat', 0, winreg.REG_SZ, cmd)
             winreg.CloseKey(key)
         except Exception:
             pass
@@ -16485,7 +16707,7 @@ def _remove_autostart():
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                r'Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+                r'Software\Microsoft\Windows\CurrentVersion\Run',
                 0, winreg.KEY_SET_VALUE)
             winreg.DeleteValue(key, 'MBChat')
             winreg.CloseKey(key)

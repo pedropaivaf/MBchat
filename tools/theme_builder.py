@@ -644,69 +644,131 @@ class ThemeBuilderWindow(tk.Toplevel):
         for w in self.preview_frame.winfo_children():
             w.destroy()
         t = self.tokens
+        ui = self.ui
 
-        box = tk.Frame(self.preview_frame, bg=t["bg_window"],
+        # ── Seção superior: tela principal (lista de contatos) ──────────────
+        top = tk.Frame(self.preview_frame, bg=t["bg_window"],
                        highlightbackground=t["border"], highlightthickness=1)
-        box.pack(fill="both", expand=True)
+        top.pack(fill="both", expand=True)
 
-        # Header
-        hdr = tk.Frame(box, bg=t["chat_header_bg"], pady=8, padx=12)
+        # Header navy com avatar + nome do usuário + dot online
+        main_hdr = tk.Frame(top, bg=t["bg_header"], padx=8, pady=6)
+        main_hdr.pack(fill="x")
+        av_main = tk.Frame(main_hdr, bg=t["accent"], width=26, height=26)
+        av_main.pack_propagate(False)
+        av_main.pack(side="left")
+        tk.Label(av_main, text="P", bg=t["accent"], fg=t["chat_header_fg"],
+                 font=("Segoe UI", 8, "bold")).pack(expand=True)
+        user_meta = tk.Frame(main_hdr, bg=t["bg_header"])
+        user_meta.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        tk.Label(user_meta, text=self.current_name.get() or "Seu nome",
+                 bg=t["bg_header"], fg=t["chat_header_fg"],
+                 font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+        dot_row = tk.Frame(user_meta, bg=t["bg_header"])
+        dot_row.pack(anchor="w")
+        d = tk.Frame(dot_row, bg=t["online"], width=7, height=7)
+        d.pack_propagate(False)
+        d.pack(side="left", padx=(0, 4))
+        tk.Label(dot_row, text="online", bg=t["bg_header"],
+                 fg=t["chat_header_sub"], font=("Segoe UI", 7)).pack(side="left")
+
+        # Lista de contatos fake
+        contacts_bg = tk.Frame(top, bg=t["bg_white"])
+        contacts_bg.pack(fill="both", expand=True)
+
+        contacts = [
+            ("Ana Lima",    "Disponível",          t["online"],        "AL"),
+            ("Carlos M.",   "Almoçando",           t["away"],          "CM"),
+            ("Julia S.",    "Em reunião",          t["busy"],          "JS"),
+            ("Marcos V.",   "Offline",             t["offline_color"], "MV"),
+        ]
+        for i, (name, note, dot_color, initials) in enumerate(contacts):
+            row_bg = t["hover"] if i == 0 else t["bg_white"]
+            row = tk.Frame(contacts_bg, bg=row_bg, padx=8, pady=5, cursor="hand2")
+            row.pack(fill="x")
+            if i > 0:
+                tk.Frame(contacts_bg, height=1, bg=t["border"]).pack(
+                    fill="x", before=row)
+            av_c = tk.Frame(row, bg=t["accent"], width=26, height=26)
+            av_c.pack_propagate(False)
+            av_c.pack(side="left")
+            tk.Label(av_c, text=initials, bg=t["accent"], fg=t["chat_header_fg"],
+                     font=("Segoe UI", 7, "bold")).pack(expand=True)
+            info_f = tk.Frame(row, bg=row_bg)
+            info_f.pack(side="left", padx=(8, 0), fill="x", expand=True)
+            tk.Label(info_f, text=name, bg=row_bg, fg=t["fg_black"],
+                     font=("Segoe UI", 8, "bold"), anchor="w").pack(fill="x")
+            note_row = tk.Frame(info_f, bg=row_bg)
+            note_row.pack(anchor="w")
+            dot_c = tk.Frame(note_row, bg=dot_color, width=6, height=6)
+            dot_c.pack_propagate(False)
+            dot_c.pack(side="left", padx=(0, 3))
+            tk.Label(note_row, text=note, bg=row_bg, fg=t["fg_gray"],
+                     font=("Segoe UI", 7)).pack(side="left")
+
+        # Statusbar da tela principal
+        tk.Frame(top, height=1, bg=t["border"]).pack(fill="x")
+        sb_main = tk.Frame(top, bg=t["statusbar_bg"], padx=8, pady=2)
+        sb_main.pack(fill="x")
+        tk.Label(sb_main, text="4 contatos online",
+                 bg=t["statusbar_bg"], fg=t["statusbar_fg"],
+                 font=("Segoe UI", 7)).pack(side="left")
+
+        # ── Divisor entre os dois mocks ──────────────────────────────────────
+        div = tk.Frame(self.preview_frame, bg=ui["window"], height=20)
+        div.pack(fill="x")
+        tk.Label(div, text="─── chat ───", bg=ui["window"],
+                 fg=ui["muted"], font=("Segoe UI", 7)).pack()
+
+        # ── Seção inferior: janela de chat ───────────────────────────────────
+        bot = tk.Frame(self.preview_frame, bg=t["bg_window"],
+                       highlightbackground=t["border"], highlightthickness=1)
+        bot.pack(fill="both", expand=True)
+
+        # Header do chat
+        hdr = tk.Frame(bot, bg=t["chat_header_bg"], pady=6, padx=10)
         hdr.pack(fill="x")
-        av = tk.Frame(hdr, bg=t["accent"], width=28, height=28,
-                      highlightbackground=t["chat_header_fg"], highlightthickness=2)
+        av = tk.Frame(hdr, bg=t["accent"], width=24, height=24,
+                      highlightbackground=t["chat_header_fg"], highlightthickness=1)
         av.pack_propagate(False)
         av.pack(side="left")
         tk.Label(av, text="MA", bg=t["accent"], fg=t["chat_header_fg"],
-                 font=("Segoe UI", 9, "bold")).pack(expand=True)
+                 font=("Segoe UI", 8, "bold")).pack(expand=True)
         meta = tk.Frame(hdr, bg=t["chat_header_bg"])
-        meta.pack(side="left", padx=10, fill="x", expand=True)
+        meta.pack(side="left", padx=8, fill="x", expand=True)
         tk.Label(meta, text="Marina Alves", bg=t["chat_header_bg"],
-                 fg=t["chat_header_fg"], font=("Segoe UI", 10, "bold"),
+                 fg=t["chat_header_fg"], font=("Segoe UI", 9, "bold"),
                  anchor="w").pack(fill="x")
         tk.Label(meta, text="digitando…", bg=t["chat_header_bg"],
-                 fg=t["chat_header_sub"], font=("Segoe UI", 8),
+                 fg=t["chat_header_sub"], font=("Segoe UI", 7),
                  anchor="w").pack(fill="x")
 
-        # Messages
-        msgs = tk.Frame(box, bg=t["bg_chat"], padx=10, pady=10)
+        # Mensagens
+        msgs = tk.Frame(bot, bg=t["bg_chat"], padx=8, pady=6)
         msgs.pack(fill="both", expand=True)
 
-        peer = tk.Frame(msgs, bg=t["msg_peer_bg"], padx=10, pady=5)
+        peer = tk.Frame(msgs, bg=t["msg_peer_bg"], padx=8, pady=4)
         peer.pack(anchor="w", pady=2)
         tk.Label(peer, text="Bom dia!", bg=t["msg_peer_bg"],
                  fg=t["fg_msg"], font=("Segoe UI", 9)).pack(anchor="w")
 
-        me = tk.Frame(msgs, bg=t["msg_my_bg"], padx=10, pady=5)
+        me = tk.Frame(msgs, bg=t["msg_my_bg"], padx=8, pady=4)
         me.pack(anchor="e", pady=2)
         tk.Label(me, text="Oi, como vai?", bg=t["msg_my_bg"],
                  fg=t["fg_msg"], font=("Segoe UI", 9)).pack(anchor="e")
 
-        # Input row
-        inp = tk.Frame(box, bg=t["bg_white"], padx=8, pady=8,
-                       highlightbackground=t["border"], highlightthickness=0)
+        # Input
+        tk.Frame(bot, height=1, bg=t["border"]).pack(fill="x")
+        inp = tk.Frame(bot, bg=t["bg_white"], padx=6, pady=6)
         inp.pack(fill="x")
-        tk.Frame(box, height=1, bg=t["border"]).pack(fill="x", before=inp)
-
         fake = tk.Frame(inp, bg=t["bg_input"],
                         highlightbackground=t["input_border"], highlightthickness=1)
-        fake.pack(side="left", fill="x", expand=True, ipady=4, ipadx=6)
-        tk.Label(fake, text="Digite uma mensagem…", bg=t["bg_input"],
-                 fg=t["fg_gray"], font=("Segoe UI", 9)).pack(side="left")
-
+        fake.pack(side="left", fill="x", expand=True, ipady=3, ipadx=4)
+        tk.Label(fake, text="Digite…", bg=t["bg_input"],
+                 fg=t["fg_gray"], font=("Segoe UI", 8)).pack(side="left")
         tk.Button(inp, text="Enviar", bg=t["btn_send_bg"], fg=t["btn_send_fg"],
-                  relief="flat", font=("Segoe UI", 9, "bold"), padx=14,
-                  activebackground=t["btn_active"]).pack(side="right", padx=(6, 0))
-
-        # Status bar
-        sb = tk.Frame(box, bg=t["statusbar_bg"], padx=10, pady=3)
-        sb.pack(fill="x")
-        tk.Frame(box, height=1, bg=t["border"]).pack(fill="x", before=sb)
-        dot = tk.Frame(sb, bg=t["online"], width=7, height=7)
-        dot.pack_propagate(False)
-        dot.pack(side="left", pady=3)
-        tk.Label(sb, text=f"  {self.current_name.get() or 'Sem nome'}",
-                 bg=t["statusbar_bg"], fg=t["statusbar_fg"],
-                 font=("Segoe UI", 8)).pack(side="left")
+                  relief="flat", font=("Segoe UI", 8, "bold"), padx=10,
+                  activebackground=t["btn_active"]).pack(side="right", padx=(4, 0))
 
 
 # ----------------------------------------------------------------------------- 

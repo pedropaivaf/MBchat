@@ -1015,6 +1015,21 @@ class Database:
             (poll_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def get_polls_for_group(self, group_id):
+        import json
+        rows = self.conn.execute(
+            "SELECT * FROM polls WHERE group_id=? ORDER BY created_at ASC",
+            (group_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d['options'] = json.loads(d['options'])
+            except Exception:
+                d['options'] = []
+            result.append(d)
+        return result
+
     # ========================================
     # REMINDERS — Lembretes
     # ========================================
