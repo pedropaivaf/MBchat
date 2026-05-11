@@ -1204,6 +1204,14 @@ class Database:
             "DELETE FROM reminders WHERE id=?", (reminder_id,))
         self.conn.commit()
 
+    def get_reminder_by_external_id(self, external_id):
+        if not external_id:
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM reminders WHERE external_id=?",
+            (external_id,)).fetchone()
+        return dict(row) if row else None
+
     # ========================================
     # SHARED REMINDERS — Lembretes compartilhados
     # ========================================

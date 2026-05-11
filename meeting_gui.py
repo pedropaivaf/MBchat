@@ -1196,6 +1196,17 @@ class MeetingWindow(tk.Toplevel):
                 tk.Label(prow, text=resp_txt, font=('Segoe UI', 7),
                          bg=bgc, fg=fgc).pack(side='right', padx=(4, 8))
 
+                # Botão re-convidar (só criador, só quem recusou)
+                if editable and not is_creator_p and resp == 'declined':
+                    uid_p = p['uid']
+                    def _reinvite(u=uid_p):
+                        self.messenger.add_participants(booking_id, [u])
+                        _render_part_list()
+                    tk.Button(prow, text='↺ Re-convidar', font=('Segoe UI', 7),
+                              bg='#eff6ff', fg=NAVY, relief='flat', bd=0,
+                              padx=6, pady=1, cursor='hand2',
+                              command=_reinvite).pack(side='right', padx=(0, 4))
+
                 # Botão remover (só criador, não pode remover a si mesmo)
                 if editable and not is_creator_p:
                     uid_p = p['uid']

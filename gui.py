@@ -9279,6 +9279,7 @@ class LanMessengerApp:
             on_status=self._safe(self._on_peer_status),
             on_reminder_invite=self._safe(self._on_reminder_invite),
             on_reminder_response=self._safe(self._on_reminder_response),
+            on_reminder_cancel=self._safe(self._on_reminder_cancel),
             on_meeting_invite=self._safe(self._on_meeting_invite),
             on_meeting_response=self._safe(self._on_meeting_response),
             on_meeting_cancel=self._safe(self._on_meeting_cancel),
@@ -13889,11 +13890,15 @@ class LanMessengerApp:
 
         def _accept():
             self.messenger.accept_reminder_invite(external_id)
+            self._bell_pending_reminder_count = max(0, getattr(self, '_bell_pending_reminder_count', 0) - 1)
+            self._update_bell_badge(len(self._bell_pending_invites) + self._bell_pending_reminder_count)
             if self._reminders_list_frame:
                 self._refresh_reminders_list(self._reminders_list_frame)
 
         def _decline():
             self.messenger.decline_reminder_invite(external_id)
+            self._bell_pending_reminder_count = max(0, getattr(self, '_bell_pending_reminder_count', 0) - 1)
+            self._update_bell_badge(len(self._bell_pending_invites) + self._bell_pending_reminder_count)
             try:
                 self.messenger.db.delete_reminder(rem['id'])
             except Exception:
@@ -14088,15 +14093,48 @@ class LanMessengerApp:
                          justify='left').pack(anchor='w', pady=(2, 0))
             except Exception:
                 pass
-        # Botao X (deletar)
+        # Botao X (deletar) \u2014 com confirmacao e propagacao se compartilhado
         del_btn = tk.Button(row, text='\u2715', font=('Segoe UI', 9),
                             bg=bg, fg='#ef4444', relief='flat', bd=0,
                             cursor='hand2', width=2,
-                            command=lambda rid=rem['id'], p=parent: (
-                                self.messenger.db.delete_reminder(rid),
-                                self._refresh_reminders_list(p)))
+                            command=lambda r=rem, p=parent: self._delete_reminder_with_confirm(r, p))
         del_btn.pack(side='right', padx=(0, 4))
         _add_hover(del_btn, bg, '#fef2f2')
+
+    def _delete_reminder_with_confirm(self, rem, list_frame):
+        import json as _json
+        my_uid = self.messenger.user_id
+        creator_uid = rem.get('creator_uid', '')
+        ext_id = rem.get('external_id', '')
+        is_shared = bool(ext_id and creator_uid)
+        is_creator = creator_uid == my_uid
+        top = list_frame.winfo_toplevel()
+        preview = f'"{rem.get("text", "")[:80]}"'
+
+        if is_shared and is_creator:
+            try:
+                invited = _json.loads(rem.get('invited_uids', '[]'))
+            except Exception:
+                invited = []
+            names = self._format_invited_names(invited) if invited else 'nenhum'
+            if not messagebox.askyesno('Cancelar lembrete',
+                    f'Cancelar para todos os participantes?\n\n{preview}\n\nMarcados: {names}',
+                    parent=top):
+                return
+            self.messenger.cancel_shared_reminder(ext_id)
+        elif is_shared and not is_creator:
+            if not messagebox.askyesno('Remover lembrete',
+                    f'Remover da sua lista?\nO criador não será notificado.\n\n{preview}',
+                    parent=top):
+                return
+            self.messenger.db.delete_reminder(rem['id'])
+        else:
+            if not messagebox.askyesno('Excluir lembrete',
+                    f'Excluir este lembrete?\n\n{preview}', parent=top):
+                return
+            self.messenger.db.delete_reminder(rem['id'])
+
+        self._refresh_reminders_list(list_frame)
 
     # Dialogo simples para lembrete normal (sem data, so texto)
     # invited_uids=None -> Pessoal (db.add_reminder). Lista -> Compartilhado.
@@ -15899,6 +15937,8 @@ class LanMessengerApp:
 
     # Convite de lembrete compartilhado recebido. Mostra notificacao + flash.
     def _on_reminder_invite(self, info):
+        self._bell_pending_reminder_count = getattr(self, '_bell_pending_reminder_count', 0) + 1
+        self._update_bell_badge(len(self._bell_pending_invites) + self._bell_pending_reminder_count)
         creator = info.get('creator_name', '') or 'Alguém'
         text = info.get('text', '') or ''
         try:
@@ -15959,6 +15999,14 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Criador cancelou lembrete compartilhado: refresca lista se aberta.
+    def _on_reminder_cancel(self, external_id):
+        try:
+            if self._reminders_list_frame:
+                self._refresh_reminders_list(self._reminders_list_frame)
+        except Exception:
+            pass
+
     # ── Módulo Agendar > Reunião ──────────────────────────────────────────────
 
     def _open_meeting_window(self):
@@ -16002,11 +16050,21 @@ class LanMessengerApp:
         inner.pack(fill='both', expand=True, padx=1, pady=1)
 
         pending = [b for b in self._bell_pending_invites if b]
+        reminder_count = getattr(self, '_bell_pending_reminder_count', 0)
 
-        if not pending:
+        if not pending and not reminder_count:
             tk.Label(inner, text='Nenhum convite pendente',
                      font=('Segoe UI', 9), bg='#ffffff', fg='#6b7280',
                      padx=16, pady=12).pack()
+        elif not pending and reminder_count:
+            # Só lembretes pendentes — link para abrir a janela
+            tk.Label(inner, text=f'💌 {reminder_count} convite(s) de lembrete',
+                     font=('Segoe UI', 9), bg='#ffffff', fg='#78350f',
+                     padx=16, pady=8).pack()
+            tk.Button(inner, text='Ver Lembretes →',
+                      font=('Segoe UI', 9, 'bold'), bg='#fef9c3', fg='#78350f',
+                      relief='flat', bd=0, padx=12, pady=4, cursor='hand2',
+                      command=lambda: (popup.destroy(), self._show_reminders())).pack(pady=(0, 8))
         else:
             import datetime as _dt
             for booking_info in pending:

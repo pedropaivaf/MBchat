@@ -26,7 +26,7 @@ from network import (
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
-    MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE,
+    MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
     MT_MEETING_INVITE, MT_MEETING_ACCEPT, MT_MEETING_DECLINE,
     MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES,
     TCP_PORT
@@ -65,6 +65,7 @@ class Messenger:
                  on_group_message=None, on_group_leave=None,
                  on_group_join=None, on_image=None, on_poll=None,
                  on_reminder_invite=None, on_reminder_response=None,
+                 on_reminder_cancel=None,
                  on_meeting_invite=None, on_meeting_response=None,
                  on_meeting_cancel=None, on_meeting_sync=None):
         self.db = Database()  # Conexao com banco de dados local
@@ -91,6 +92,7 @@ class Messenger:
         self.on_poll = on_poll                  # Enquete recebida/voto
         self.on_reminder_invite = on_reminder_invite      # Convite lembrete recebido
         self.on_reminder_response = on_reminder_response  # Resposta de convite (accept/decline)
+        self.on_reminder_cancel = on_reminder_cancel      # Criador cancelou lembrete compartilhado
         self.on_meeting_invite = on_meeting_invite        # Convite de reunião recebido
         self.on_meeting_response = on_meeting_response    # Resposta de convite de reunião
         self.on_meeting_cancel = on_meeting_cancel        # Reunião cancelada
@@ -602,6 +604,16 @@ class Messenger:
                     'responder_name': responder_name,
                     'accepted': msg_type == MT_REMINDER_ACCEPT,
                 })
+
+        # --- Criador cancelou lembrete compartilhado ---
+        elif msg_type == MT_REMINDER_CANCEL:
+            ext_id = msg.get('external_id', '')
+            if ext_id:
+                rem = self.db.get_reminder_by_external_id(ext_id)
+                if rem:
+                    self.db.delete_reminder(rem['id'])
+            if self.on_reminder_cancel:
+                self.on_reminder_cancel(ext_id)
 
         # --- Convite de reunião de sala ---
         elif msg_type == MT_MEETING_INVITE:
@@ -1341,6 +1353,29 @@ class Messenger:
                 except Exception:
                     pass
         return True
+
+    def cancel_shared_reminder(self, external_id):
+        rem = self.db.get_reminder_by_external_id(external_id)
+        if not rem or rem.get('creator_uid') != self.user_id:
+            return
+        try:
+            invited = json.loads(rem.get('invited_uids', '[]'))
+        except Exception:
+            invited = []
+        payload = {
+            'type': MT_REMINDER_CANCEL,
+            'from_user': self.user_id,
+            'display_name': self.display_name,
+            'external_id': external_id,
+        }
+        for uid in invited:
+            contact = self.db.get_contact(uid)
+            if contact:
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+                except Exception:
+                    pass
+        self.db.delete_reminder(rem['id'])
 
     def _reload_manual_peers(self):
         # Se VPN desligada, envia lista vazia para o discovery (zero overhead,
