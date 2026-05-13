@@ -13313,6 +13313,17 @@ class LanMessengerApp:
             if has_update:
                 self.root.after(0, lambda: self._show_update_bar(ver, notes))
         updater.check_update_async(_on_result)
+        self._schedule_periodic_update_check()
+
+    def _schedule_periodic_update_check(self, interval_ms=30 * 60 * 1000):
+        # Verifica novamente em background; só notifica se ainda não há update pendente
+        def _on_result(has_update, ver, notes=''):
+            if has_update and not self._pending_update:
+                self.root.after(0, lambda: self._show_update_bar(ver, notes))
+        def _run():
+            updater.check_update_async(_on_result)
+            self.root.after(interval_ms, _run)
+        self.root.after(interval_ms, _run)
 
     # ========================================
     # LEMBRETES
@@ -16080,6 +16091,16 @@ class LanMessengerApp:
         self._update_bell_badge(n)
 
     def _open_bell_dropdown(self):
+        # Re-check em background ao abrir o sino (se não há update pendente)
+        if not self._pending_update:
+            def _on_bg(has_update, ver, notes=''):
+                if has_update and not self._pending_update:
+                    self.root.after(0, lambda: self._show_update_bar(ver, notes))
+            try:
+                import updater as _upd
+                _upd.check_update_async(_on_bg)
+            except Exception:
+                pass
         try:
             if hasattr(self, '_bell_dropdown') and self._bell_dropdown.winfo_exists():
                 self._bell_dropdown.destroy()
