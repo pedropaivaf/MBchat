@@ -11794,7 +11794,10 @@ class LanMessengerApp:
                 except Exception:
                     pass
             return cw
-        name = self.peer_info.get(peer_id, {}).get('display_name', 'Unknown')  # nome do peer
+        name = self.peer_info.get(peer_id, {}).get('display_name', '')
+        if not name:
+            _c = self.messenger.db.get_contact(peer_id)
+            name = (_c.get('display_name') if _c else '') or peer_id
         cw = ChatWindow(self, peer_id, name, start_hidden=surface_only)
         self.chat_windows[peer_id] = cw       # registra no dicionario
         if hasattr(self, '_theme'):            # tema configurado?

@@ -301,6 +301,10 @@ class Messenger:
         msg_type = msg.get('type')
         from_user = msg.get('from_user')
 
+        # Filtro de eco: ignora mensagens onde o remetente sou eu mesmo
+        if from_user and from_user == self.user_id:
+            return
+
         # --- Mensagem de texto individual ---
         if msg_type == MT_MESSAGE:
             msg_id = msg.get('msg_id', str(uuid.uuid4()))
