@@ -23,6 +23,7 @@ import threading   # Threads para servidor e discovery
 import time        # Timestamps e intervalos
 import uuid        # Geracao de IDs unicos
 import os          # Caminhos de arquivos
+from version import APP_VERSION
 import sys         # sys.executable para caminho do exe (UAC firewall fix)
 import platform    # Deteccao de OS
 import subprocess  # Execucao de netsh para firewall
@@ -338,6 +339,7 @@ class UDPDiscovery:
         self.avatar_data = ''    # Thumbnail base64 JPEG do avatar custom
         self.on_peer_found = on_peer_found  # Callback: peer descoberto
         self.on_peer_lost = on_peer_lost    # Callback: peer perdido
+        self.on_newer_version = None        # Callback(version) quando acha versão mais recente na rede
         self.peers = {}          # user_id -> {info + last_seen}
         self.running = False     # Flag de controle do loop
         self._sock_recv = None   # Socket de recebimento (Unicast/Broadcast)
@@ -572,6 +574,7 @@ class UDPDiscovery:
             'hostname': socket.gethostname(),   # Nome da maquina
             'winuser': get_windows_user(),  # Conta Windows logada (multi-user)
             'os': f"{platform.system()} {platform.release()}",  # OS info
+            'version': APP_VERSION,     # Versao do app para aviso de update
             'tcp_port': getattr(self, 'tcp_port', TCP_PORT),       # Porta TCP para mensagens
             'time': time.time()         # Timestamp do pacote
         }
@@ -762,6 +765,28 @@ class UDPDiscovery:
                 # Responde ao novo peer para que ele nos descubra tambem
                 self._send_announce()
 
+            # --- VPN HANDSHAKE (Unicast Reply) ---
+            # Se recebemos um announce unicast da VPN, e ele nao e ja uma resposta:
+            if pkt.get('via_manual') and not pkt.get('is_reply'):
+                # Responde diretamente pro IP de origem (ts_ip ou addr[0]) com is_reply=True
+                reply_ip = pkt.get('ts_ip') or addr[0]
+                try:
+                    self.announce_to_ip(reply_ip, port=addr[1], request_peer_list=False, is_reply=True)
+                except Exception as e:
+                    _log().warning('unicast reply to %s:%d failed: %s', reply_ip, addr[1], e)
+
+            # --- REALTIME UPDATE NOTIFICATION ---
+            # Se esse peer estiver rodando uma versao maior que a nossa, avisa a GUI!
+            peer_version = pkt.get('version', '0.0.0')
+            try:
+                def _parse_v(v):
+                    return tuple(int(x) for x in v.split('.'))
+                if _parse_v(peer_version) > _parse_v(APP_VERSION):
+                    if self.on_newer_version:
+                        self.on_newer_version(peer_version)
+            except Exception:
+                pass
+
             # Se anuncio veio via unicast (VPN/manual) e pediu lista de peers,
             # responde com peer_list. Habilita peer exchange no cenario VPN.
             if pkt.get('via_manual') and pkt.get('request_peer_list'):
@@ -820,8 +845,9 @@ class UDPDiscovery:
     # Envia announce UDP unicast para um IP especifico.
     # Reusa o mesmo formato de pacote do multicast/broadcast.
     # Adiciona flag 'via_manual' para o receptor saber que veio por unicast,
-    # e opcionalmente 'request_peer_list' pedindo lista de peers em resposta.
-    def announce_to_ip(self, ip, port=None, request_peer_list=False):
+    # opcionalmente 'request_peer_list' pedindo lista de peers em resposta,
+    # e 'is_reply' para evitar loop de respostas VPN.
+    def announce_to_ip(self, ip, port=None, request_peer_list=False, is_reply=False):
         if not self._sock_send or not self.running:
             return False
         if port is None:
@@ -829,6 +855,8 @@ class UDPDiscovery:
         extra = {'via_manual': True}
         if request_peer_list:
             extra['request_peer_list'] = True
+        if is_reply:
+            extra['is_reply'] = True
         pkt = self._make_packet(MT_ANNOUNCE, extra=extra)
         try:
             self._sock_send.sendto(pkt, (ip, port))

@@ -9287,6 +9287,8 @@ class LanMessengerApp:
             on_meeting_sync=self._safe(self._on_meeting_sync),
         )
         self.messenger.start()
+        if hasattr(self.messenger, 'discovery'):
+            self.messenger.discovery.on_newer_version = self._safe(self._on_newer_version)
         # Conecta SoundPlayer ao db e migra settings antigas de alertas
         SoundPlayer.db = self.messenger.db
         self._migrate_alert_settings()
@@ -9669,8 +9671,8 @@ class LanMessengerApp:
         self._bell_lbl.pack()
         self._bell_badge = tk.Label(self._bell_frame, text='',
             font=('Segoe UI', 7, 'bold'), bg='#ef4444', fg='white', width=2)
-        self._bell_lbl.bind('<Button-1>', lambda e: self._open_bell_dropdown())
-        self._bell_frame.bind('<Button-1>', lambda e: self._open_bell_dropdown())
+        self._bell_lbl.bind('<Button-1>', lambda e: self._open_bell_dropdown() or 'break')
+        self._bell_frame.bind('<Button-1>', lambda e: self._open_bell_dropdown() or 'break')
 
         # Ramal (4 digitos numericos) — substitui badge de Departamento no TreeView
         tk.Label(status_row, text='Ramal:', font=('Segoe UI', 8),
@@ -16093,6 +16095,12 @@ class LanMessengerApp:
              + (1 if self._pending_update else 0))
         self._update_bell_badge(n)
 
+    def _on_newer_version(self, peer_version):
+        if not self._pending_update or self._pending_update.get('version') != peer_version:
+            self._pending_update = {'version': peer_version, 'notes': 'Nova atualização disponível na rede!'}
+            self._refresh_bell_badge()
+            self._show_toast_generic('Atualização Disponível', f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
+
     def _open_bell_dropdown(self):
         # Re-check em background ao abrir o sino (se não há update pendente)
         if not self._pending_update:
@@ -16121,7 +16129,8 @@ class LanMessengerApp:
         # Posiciona abaixo do sino
         bx = self._bell_frame.winfo_rootx()
         by = self._bell_frame.winfo_rooty() + self._bell_frame.winfo_height() + 4
-        popup.geometry(f'+{bx - 240}+{by}')
+        popup_x = max(0, bx - 240)
+        popup.geometry(f'+{popup_x}+{by}')
 
         outer = tk.Frame(popup, bg='#e2e8f0', bd=1, relief='solid')
         outer.pack(fill='both', expand=True)
@@ -16249,14 +16258,21 @@ class LanMessengerApp:
 
         def _close_on_outside(e):
             try:
+                if not popup.winfo_exists():
+                    self.root.unbind('<Button-1>', bind_id)
+                    return
+                # Ignora cliques no proprio sino (evita conflito)
+                if e.widget in (self._bell_lbl, self._bell_frame):
+                    return
                 if not (popup.winfo_rootx() <= e.x_root <= popup.winfo_rootx() + popup.winfo_width() and
                         popup.winfo_rooty() <= e.y_root <= popup.winfo_rooty() + popup.winfo_height()):
                     popup.destroy()
+                    self.root.unbind('<Button-1>', bind_id)
             except Exception:
                 pass
 
         popup.bind('<FocusOut>', lambda e: popup.destroy())
-        self.root.bind('<Button-1>', _close_on_outside, add='+')
+        bind_id = self.root.bind('<Button-1>', _close_on_outside, add='+')
         popup.focus_set()
 
     def _on_meeting_invite(self, booking_info):

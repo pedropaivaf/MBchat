@@ -5,6 +5,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.8] - 2026-05-13
+
+### Added
+- Notificações de atualização "Realtime": O app agora avisa instantaneamente via rede P2P quando há uma versão nova disponível, sem precisar aguardar checagem automática.
+
+### Fixed
+- Handshake Bidirecional VPN: Correção na lógica de descoberta VPN onde respostas Unicast agora garantem status bidirecional 100% preciso.
+- Resolvido um problema silencioso onde clicar no sino de notificações não abria o pop-up (conflitos de coordenadas negativas e bubbling de eventos GUI).
+
 ## [1.8.7] - 2026-05-13
 
 ### Fixed
