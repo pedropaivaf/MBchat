@@ -5,6 +5,14 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.9] - 2026-05-13
+
+### Added
+- Proxy de Descoberta VPN: O Âncora (Escritório) agora retransmite (relay) os anúncios recebidos via Tailscale para a rede local, permitindo que a rede inteira descubra conexões de fora de forma transparente.
+
+### Fixed
+- Correção de interface na janela "Manual Peers" garantindo que os botões do rodapé não sumam em telas pequenas.
+
 ## [1.8.8] - 2026-05-13
 
 ### Added

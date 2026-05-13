@@ -15596,7 +15596,7 @@ class LanMessengerApp:
         ent_ip.bind('<Return>', lambda e: _do_add())
 
         btns = tk.Frame(dlg, bg='#f8fafc')
-        btns.pack(fill='x', padx=14, pady=(0, 12))
+        btns.pack(side='bottom', fill='x', padx=14, pady=(0, 12))
         tk.Button(btns, text='Remover selecionado', font=('Segoe UI', 9),
                   bg='#fee2e2', fg='#991b1b', bd=0, padx=12, pady=6,
                   cursor='hand2', command=_do_remove).pack(side='left')

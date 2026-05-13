@@ -775,6 +775,23 @@ class UDPDiscovery:
                 except Exception as e:
                     _log().warning('unicast reply to %s:%d failed: %s', reply_ip, addr[1], e)
 
+                # --- ANNOUNCE RELAY (PROXY) ---
+                # Retransmite o anuncio da VPN para a rede local (multicast/broadcast),
+                # para que os 28 colegas no escritorio descubram a maquina de casa sem configuracao.
+                try:
+                    relay_pkt = dict(pkt)
+                    relay_pkt['via_manual'] = False  # Engana a rede local
+                    # Forca o IP da rede local a ser o IP da VPN, assim a rede inteira 
+                    # conecta de volta pela VPN.
+                    if relay_pkt.get('ts_ip'):
+                        relay_pkt['ip'] = relay_pkt['ts_ip']
+                    relay_data = json.dumps(relay_pkt).encode('utf-8')
+                    if self._sock_send:
+                        self._sock_send.sendto(relay_data, (MCAST_GRP, UDP_PORT))
+                        self._sock_send.sendto(relay_data, ('<broadcast>', UDP_PORT))
+                except Exception as e:
+                    _log().warning('announce relay failed: %s', e)
+
             # --- REALTIME UPDATE NOTIFICATION ---
             # Se esse peer estiver rodando uma versao maior que a nossa, avisa a GUI!
             peer_version = pkt.get('version', '0.0.0')
