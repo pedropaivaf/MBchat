@@ -14892,9 +14892,7 @@ class LanMessengerApp:
         self._update_bar = bar
 
         def _dismiss_bar():
-            self._pending_update = None
-            self._refresh_bell_badge()
-            bar.destroy()
+            bar.destroy()  # Fecha só a barra; badge no sino permanece até atualizar
 
         tk.Label(bar, text=_t('update_available').format(ver=version),
                  font=('Segoe UI', 9), bg='#fff3cd', fg='#856404'
