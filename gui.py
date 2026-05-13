@@ -12525,8 +12525,8 @@ class LanMessengerApp:
         peer_rows = {}    # uid -> p_row frame (pra filtrar via busca)
         peer_names = {}   # uid -> display_name (cache pra filtro case-insensitive)
 
-        # Linha "Todos" (seleciona todos)
-        all_var = tk.BooleanVar(value=True)
+        # Linha "Todos" (seleciona todos online por padrão)
+        all_var = tk.BooleanVar(value=False)
 
         def toggle_all():
             v = all_var.get()
@@ -12565,12 +12565,12 @@ class LanMessengerApp:
         _peers_ordered = sorted(_dedup.values(),
                                  key=lambda t: t[1].get('display_name', '').lower())
 
-        # Cada contato
+        # Cada contato — pre-selecionado apenas se online
         for uid, info in _peers_ordered:
-            var = tk.BooleanVar(value=True)
+            status = info.get('status', 'offline')
+            var = tk.BooleanVar(value=(status != 'offline'))
             peer_vars[uid] = var
             name = info.get('display_name', uid)
-            status = info.get('status', 'offline')
 
             p_row = tk.Frame(inner_r, bg='#ffffff')
             p_row.pack(fill='x')
