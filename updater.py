@@ -107,7 +107,7 @@ def download_update(progress_cb=None):
 
 def _download_from_github(dst, progress_cb=None):
     try:
-        has_update, ver, url = check_update_github()
+        has_update, ver, url, _notes = check_update_github()
         if not url:
             return None
         log.info(f'Baixando update v{ver} do GitHub...')
