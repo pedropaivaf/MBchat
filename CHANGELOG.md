@@ -5,6 +5,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.7] - 2026-05-13
+
+### Fixed
+- Melhoria na conexão via VPN (Tailscale): priorização de IPs na faixa `100.x.x.x` para resolução de conflitos de sub-rede idêntica sem afetar descoberta em LAN local via Multicast.
+
 ## [1.8.6] - 2026-05-13
 
 ### Fixed

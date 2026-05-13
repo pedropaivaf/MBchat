@@ -244,6 +244,19 @@ def get_local_ip():
     return '127.0.0.1'
 
 
+# Detecta IP especifico do Tailscale (virtual), comeca com 100.
+# Usado para priorizar comunicacao na VPN quando ha conflito de sub-redes fisicas
+def get_tailscale_ip():
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if ip.startswith('100.'):
+                return ip
+    except Exception:
+        pass
+    return None
+
+
 # Calcula endereco de broadcast da subnet local
 def _get_subnet_broadcast():
     ip = get_local_ip()
@@ -555,6 +568,7 @@ class UDPDiscovery:
             'department': getattr(self, 'department', ''),  # Departamento do usuario
             'ramal': getattr(self, 'ramal', ''),  # Ramal (4 digitos)
             'ip': get_local_ip(),       # IP local atual
+            'ts_ip': get_tailscale_ip(),# IP Tailscale (VPN), se houver
             'hostname': socket.gethostname(),   # Nome da maquina
             'winuser': get_windows_user(),  # Conta Windows logada (multi-user)
             'os': f"{platform.system()} {platform.release()}",  # OS info
@@ -690,7 +704,9 @@ class UDPDiscovery:
                 local_ip = ''
             with self._unicast_lock:
                 for p in peers_data:
-                    pip = (p.get('ip') or '').strip()
+                    # Usa o IP da VPN se houver e estivermos na VPN, senao usa IP LAN
+                    pip = p.get('ts_ip') or p.get('ip') or ''
+                    pip = pip.strip()
                     if not pip or pip == local_ip:
                         continue
                     if pip not in self._unicast_targets:
@@ -709,10 +725,18 @@ class UDPDiscovery:
 
         if msg_type == MT_ANNOUNCE:
             # Peer esta se anunciando (novo ou atualizacao)
+            
+            # Resolucao de IP prioritario para VPN/Tailscale (conflito de LAN)
+            # REGRA: se pacote veio por VPN E o peer enviou ts_ip, usa ele como primario
+            peer_ip = pkt.get('ip', addr[0])
+            if pkt.get('via_manual') and pkt.get('ts_ip'):
+                peer_ip = pkt.get('ts_ip')
+                
             peer_info = {
                 'user_id': uid,
                 'display_name': pkt.get('display_name', 'Unknown'),
-                'ip': pkt.get('ip', addr[0]),  # IP do pacote ou do socket
+                'ip': peer_ip,
+                'ts_ip': pkt.get('ts_ip', None),
                 'hostname': pkt.get('hostname', ''),
                 'winuser': pkt.get('winuser', ''),  # Conta Windows do peer
                 'os': pkt.get('os', ''),
@@ -833,6 +857,7 @@ class UDPDiscovery:
                     'user_id': uid,
                     'display_name': info.get('display_name', ''),
                     'ip': pip,
+                    'ts_ip': info.get('ts_ip', None),
                     'tcp_port': info.get('tcp_port', TCP_PORT),
                 })
         data = {
