@@ -16110,32 +16110,41 @@ class LanMessengerApp:
         upd = self._pending_update
 
         if upd:
-            tk.Label(inner, text=f'\U0001f504  Nova versão {upd["version"]} disponível',
-                     font=('Segoe UI', 9, 'bold'), bg='white', fg='#1e40af',
-                     anchor='w').pack(fill='x', padx=12, pady=(10, 2))
+            # Fundo azul suave para destacar a seção de update
+            upd_frame = tk.Frame(inner, bg='#eff6ff')
+            upd_frame.pack(fill='x')
+            # Barra azul lateral
+            tk.Frame(upd_frame, bg='#1e40af', width=4).pack(side='left', fill='y')
+            upd_body = tk.Frame(upd_frame, bg='#eff6ff')
+            upd_body.pack(side='left', fill='x', expand=True, padx=(8, 10), pady=10)
+            tk.Label(upd_body, text=f'🔄  Nova versão {upd["version"]} disponível',
+                     font=('Segoe UI', 9, 'bold'), bg='#eff6ff', fg='#1e40af',
+                     anchor='w').pack(fill='x')
             if upd.get('notes'):
-                tk.Label(inner, text=upd['notes'], font=('Segoe UI', 8),
-                         bg='white', fg='#475569', anchor='w', justify='left',
-                         wraplength=260).pack(fill='x', padx=12, pady=(0, 6))
-            btn_row_upd = tk.Frame(inner, bg='white')
-            btn_row_upd.pack(fill='x', padx=12, pady=(0, 8))
+                tk.Label(upd_body, text=upd['notes'], font=('Segoe UI', 8),
+                         bg='#eff6ff', fg='#334155', anchor='w', justify='left',
+                         wraplength=250).pack(fill='x', pady=(3, 0))
             def _do_update_from_bell(v=upd['version']):
                 self._pending_update = None
                 self._refresh_bell_badge()
-                if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
-                    self._update_bar.destroy()
+                try:
+                    if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
+                        self._update_bar.destroy()
+                except Exception:
+                    pass
                 popup.destroy()
                 self._do_update(v)
-            tk.Button(btn_row_upd, text='Atualizar agora',
+            tk.Button(upd_body, text='⬇  Atualizar agora',
                       font=('Segoe UI', 9, 'bold'), bg='#1e40af', fg='white',
-                      relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
-                      command=_do_update_from_bell).pack(side='left', padx=(0, 6))
-            tk.Button(btn_row_upd, text='Mais tarde',
-                      font=('Segoe UI', 9), bg='#f1f5f9', fg='#475569',
-                      relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
-                      command=popup.destroy).pack(side='left')
+                      relief='flat', bd=0, padx=12, pady=5, cursor='hand2',
+                      command=_do_update_from_bell).pack(anchor='w', pady=(8, 0))
+            _later_lbl = tk.Label(upd_body, text='Mais tarde',
+                                  font=('Segoe UI', 8), bg='#eff6ff', fg='#94a3b8',
+                                  cursor='hand2')
+            _later_lbl.pack(anchor='w', pady=(3, 0))
+            _later_lbl.bind('<Button-1>', lambda e: popup.destroy())
             if pending or reminder_count:
-                tk.Frame(inner, bg='#e2e8f0', height=1).pack(fill='x', pady=(0, 4))
+                tk.Frame(inner, bg='#e2e8f0', height=1).pack(fill='x')
 
         if not pending and not reminder_count and not upd:
             tk.Label(inner, text='Nenhum convite pendente',
