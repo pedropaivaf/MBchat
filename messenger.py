@@ -27,6 +27,7 @@ from network import (
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
+    MT_REMINDER_COMPLETED,
     MT_MEETING_INVITE, MT_MEETING_ACCEPT, MT_MEETING_DECLINE,
     MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES,
     TCP_PORT
@@ -65,7 +66,7 @@ class Messenger:
                  on_group_message=None, on_group_leave=None,
                  on_group_join=None, on_image=None, on_poll=None,
                  on_reminder_invite=None, on_reminder_response=None,
-                 on_reminder_cancel=None,
+                 on_reminder_cancel=None, on_reminder_completed=None,
                  on_meeting_invite=None, on_meeting_response=None,
                  on_meeting_cancel=None, on_meeting_sync=None):
         self.db = Database()  # Conexao com banco de dados local
@@ -90,9 +91,10 @@ class Messenger:
         self.on_group_join = on_group_join      # Membro entrou no grupo
         self.on_image = on_image                # Imagem recebida
         self.on_poll = on_poll                  # Enquete recebida/voto
-        self.on_reminder_invite = on_reminder_invite      # Convite lembrete recebido
-        self.on_reminder_response = on_reminder_response  # Resposta de convite (accept/decline)
-        self.on_reminder_cancel = on_reminder_cancel      # Criador cancelou lembrete compartilhado
+        self.on_reminder_invite = on_reminder_invite              # Convite lembrete recebido
+        self.on_reminder_response = on_reminder_response          # Resposta de convite (accept/decline)
+        self.on_reminder_cancel = on_reminder_cancel              # Criador cancelou lembrete compartilhado
+        self.on_reminder_completed = on_reminder_completed        # Participante concluiu lembrete compartilhado
         self.on_meeting_invite = on_meeting_invite        # Convite de reunião recebido
         self.on_meeting_response = on_meeting_response    # Resposta de convite de reunião
         self.on_meeting_cancel = on_meeting_cancel        # Reunião cancelada
@@ -638,6 +640,19 @@ class Messenger:
             if self.on_reminder_cancel:
                 self.on_reminder_cancel(ext_id)
 
+        # --- Participante concluiu lembrete compartilhado ---
+        elif msg_type == MT_REMINDER_COMPLETED:
+            ext_id = msg.get('external_id', '')
+            if ext_id:
+                self.db.update_reminder_completed_by(ext_id, msg.get('from_user', ''))
+            if self.on_reminder_completed:
+                self.on_reminder_completed({
+                    'external_id': ext_id,
+                    'from_user': msg.get('from_user', ''),
+                    'display_name': msg.get('display_name', ''),
+                    'reminder_text': msg.get('reminder_text', ''),
+                })
+
         # --- Convite de reunião de sala ---
         elif msg_type == MT_MEETING_INVITE:
             self._handle_meeting_invite(msg)
@@ -689,7 +704,12 @@ class Messenger:
                 except Exception:
                     pass
                 if self.on_meeting_cancel:
-                    self.on_meeting_cancel({'booking_id': booking_id})
+                    self.on_meeting_cancel({
+                        'booking_id': booking_id,
+                        'title': msg.get('title', ''),
+                        'reason': msg.get('reason', 'creator'),
+                        'cancelled_by': msg.get('display_name', ''),
+                    })
 
         # --- Pedido de sync de reservas ---
         elif msg_type == MT_MEETING_SYNC_REQ:
@@ -1400,6 +1420,31 @@ class Messenger:
                     pass
         self.db.delete_reminder(rem['id'])
 
+    def mark_reminder_completed_shared(self, reminder_id):
+        # Marca como concluído localmente e notifica o criador (se for lembrete compartilhado)
+        rem = self.db.conn.execute(
+            "SELECT * FROM reminders WHERE id=?", (reminder_id,)).fetchone()
+        if not rem:
+            return
+        rem = dict(rem)
+        self.db.mark_reminder_completed(reminder_id)
+        ext_id = rem.get('external_id', '')
+        creator_uid = rem.get('creator_uid', '')
+        if not ext_id or not creator_uid or creator_uid == self.user_id:
+            return
+        creator_contact = self.db.get_contact(creator_uid)
+        if creator_contact:
+            try:
+                TCPClient.send_message(creator_contact['ip_address'], TCP_PORT, {
+                    'type': MT_REMINDER_COMPLETED,
+                    'from_user': self.user_id,
+                    'display_name': self.display_name,
+                    'external_id': ext_id,
+                    'reminder_text': rem.get('text', ''),
+                })
+            except Exception:
+                pass
+
     def _reload_manual_peers(self):
         # Se VPN desligada, envia lista vazia para o discovery (zero overhead,
         # os IPs ficam salvos no DB mas nao sao anunciados).
@@ -1552,10 +1597,11 @@ class Messenger:
                 except Exception:
                     pass
 
-    def cancel_meeting(self, booking_id):
+    def cancel_meeting(self, booking_id, reason='creator'):
         booking = self.db.get_booking(booking_id)
         if not booking or booking.get('creator_uid') != self.user_id:
             return
+        title = booking.get('title', '')
         self.db.soft_delete_booking(booking_id)
         # Remove lembrete associado
         try:
@@ -1576,6 +1622,8 @@ class Messenger:
                         'from_user': self.user_id,
                         'display_name': self.display_name,
                         'booking_id': booking_id,
+                        'title': title,
+                        'reason': reason,
                     })
                 except Exception:
                     pass
@@ -1673,7 +1721,7 @@ class Messenger:
                         if (b.get('status') == 'pending' and
                                 b['start_ts'] + CANCEL_TOLERANCE <= now):
                             if self.db.get_booking_confirmed_count(b['booking_id']) < 2:
-                                self.cancel_meeting(b['booking_id'])
+                                self.cancel_meeting(b['booking_id'], reason='auto')
                 except Exception:
                     pass
                 time.sleep(60)

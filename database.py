@@ -291,6 +291,7 @@ class Database:
             ('accepted_uids', "''"),     # JSON array de uids que aceitaram
             ('share_status', "'active'"),  # 'active' (pessoal/aceito) | 'pending_accept' (convite recebido) | 'declined'
             ('creator_name', "''"),      # nome cacheado do criador (para exibir convite mesmo se peer offline)
+            ('completed_by_uids', "'[]'"),  # JSON array de uids que marcaram como concluído (lembretes compartilhados)
         ]:
             try:
                 c.execute(f"ALTER TABLE reminders ADD COLUMN {_col} TEXT DEFAULT {_default}")
@@ -1211,6 +1212,40 @@ class Database:
             "SELECT * FROM reminders WHERE external_id=?",
             (external_id,)).fetchone()
         return dict(row) if row else None
+
+    def update_reminder_completed_by(self, external_id, uid):
+        import json as _json
+        if not external_id or not uid:
+            return
+        row = self.conn.execute(
+            "SELECT completed_by_uids FROM reminders WHERE external_id=?",
+            (external_id,)).fetchone()
+        if not row:
+            return
+        try:
+            uids = _json.loads(row[0] or '[]')
+        except Exception:
+            uids = []
+        if uid not in uids:
+            uids.append(uid)
+        self.conn.execute(
+            "UPDATE reminders SET completed_by_uids=? WHERE external_id=?",
+            (_json.dumps(uids), external_id))
+        self.conn.commit()
+
+    def get_reminder_completed_uids(self, external_id):
+        import json as _json
+        if not external_id:
+            return []
+        row = self.conn.execute(
+            "SELECT completed_by_uids FROM reminders WHERE external_id=?",
+            (external_id,)).fetchone()
+        if not row:
+            return []
+        try:
+            return _json.loads(row[0] or '[]')
+        except Exception:
+            return []
 
     # ========================================
     # SHARED REMINDERS — Lembretes compartilhados

@@ -9280,6 +9280,7 @@ class LanMessengerApp:
             on_reminder_invite=self._safe(self._on_reminder_invite),
             on_reminder_response=self._safe(self._on_reminder_response),
             on_reminder_cancel=self._safe(self._on_reminder_cancel),
+            on_reminder_completed=self._safe(self._on_reminder_completed),
             on_meeting_invite=self._safe(self._on_meeting_invite),
             on_meeting_response=self._safe(self._on_meeting_response),
             on_meeting_cancel=self._safe(self._on_meeting_cancel),
@@ -13337,6 +13338,25 @@ class LanMessengerApp:
                 remind_at = datetime.fromtimestamp(rem['remind_at'])
                 time_str = remind_at.strftime('%H:%M')
                 title = f'\u23f0 Lembrete ({time_str})'
+                # Para lembretes compartilhados onde sou o criador, mostrar status de conclus\u00e3o
+                ext_id = rem.get('external_id', '')
+                creator_uid = rem.get('creator_uid', '')
+                if ext_id and creator_uid == self.messenger.user_id:
+                    try:
+                        import json as _j
+                        completed_uids = self.messenger.db.get_reminder_completed_uids(ext_id)
+                        invited = _j.loads(rem.get('invited_uids', '[]') or '[]')
+                        n_invited = len(invited)
+                        n_done = len(completed_uids)
+                        if n_invited > 0:
+                            if n_done == 0:
+                                text = text + ' \u2014 ningu\u00e9m concluiu ainda'
+                            elif n_done < n_invited:
+                                text = text + f' \u2014 {n_done}/{n_invited} conclu\u00edram'
+                            else:
+                                text = text + ' \u2014 todos conclu\u00edram \u2713'
+                    except Exception:
+                        pass
                 notified = False
                 # Notificacao Windows via winotify
                 if want_notif and HAS_WINOTIFY:
@@ -13980,7 +14000,7 @@ class LanMessengerApp:
                                   bg=bg, fg='#22c55e', relief='flat', bd=0,
                                   cursor='hand2', width=2,
                                   command=lambda rid=rem['id'], p=parent: (
-                                      self.messenger.db.mark_reminder_completed(rid),
+                                      self.messenger.mark_reminder_completed_shared(rid),
                                       self._refresh_reminders_list(p)))
             check_btn.pack(side='left', padx=(4, 0))
             _add_hover(check_btn, bg, '#dcfce7')
@@ -16009,6 +16029,34 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Participante concluiu lembrete compartilhado: notifica o criador.
+    def _on_reminder_completed(self, info):
+        try:
+            name = info.get('display_name', 'Alguém')
+            text = info.get('reminder_text', '')
+            body = f'{name} concluiu: {text}' if text else f'{name} concluiu a tarefa.'
+            notif_title = '✓ Tarefa concluída'
+            want_notif = self.messenger.db.get_setting('notif_reminder', '1') == '1'
+            notified = False
+            if want_notif and HAS_WINOTIFY:
+                try:
+                    n = WinNotification(app_id=APP_AUMID, title=notif_title,
+                                        msg=body, icon=self._icon_path or '')
+                    n.show()
+                    notified = True
+                except Exception:
+                    pass
+            if want_notif and not notified:
+                self._balloon_notify(body, notif_title)
+            self._flash_window(self.root, gate_key='flash_reminder_completed')
+            if self._reminders_list_frame:
+                try:
+                    self._refresh_reminders_list(self._reminders_list_frame)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     # ── Módulo Agendar > Reunião ──────────────────────────────────────────────
 
     def _open_meeting_window(self):
@@ -16221,6 +16269,35 @@ class LanMessengerApp:
                 self._meeting_window.refresh_timegrid()
             except Exception:
                 pass
+        try:
+            bid = booking_info.get('booking_id', '')
+            booking = self.messenger.db.get_booking(bid) if bid else None
+            if booking and booking.get('creator_uid') == self.messenger.user_id:
+                name = booking_info.get('responder_name', 'Alguém')
+                title = booking.get('title', 'Reunião')
+                accepted = booking_info.get('accepted', True)
+                if accepted:
+                    msg_body = f'{name} aceitou a reunião "{title}"'
+                    notif_title = '✓ Convite aceito'
+                else:
+                    msg_body = f'{name} recusou a reunião "{title}"'
+                    notif_title = '✗ Convite recusado'
+                want_notif = self.messenger.db.get_setting('notif_reminder', '1') == '1'
+                notified = False
+                if want_notif and HAS_WINOTIFY:
+                    try:
+                        n = WinNotification(app_id=APP_AUMID, title=notif_title,
+                                            msg=msg_body, icon=self._icon_path or '')
+                        n.show()
+                        notified = True
+                    except Exception:
+                        pass
+                if want_notif and not notified:
+                    self._balloon_notify(msg_body, notif_title)
+                if not accepted:
+                    self._flash_window(self.root, gate_key='flash_meeting_response')
+        except Exception:
+            pass
 
     def _on_meeting_cancel(self, booking_info):
         bid = booking_info.get('booking_id', '') if booking_info else ''
@@ -16235,9 +16312,17 @@ class LanMessengerApp:
             except Exception:
                 pass
         try:
-            title = booking_info.get('title', 'Reunião') if booking_info else 'Reunião'
+            title = (booking_info.get('title') or 'Reunião') if booking_info else 'Reunião'
+            reason = (booking_info.get('reason') or 'creator') if booking_info else 'creator'
+            cancelled_by = (booking_info.get('cancelled_by') or '') if booking_info else ''
+            if reason == 'auto':
+                detail = 'cancelada automaticamente (sem confirmações no prazo).'
+            elif cancelled_by:
+                detail = f'cancelada por {cancelled_by}.'
+            else:
+                detail = 'cancelada pelo organizador.'
             import tkinter.messagebox as _mb
-            _mb.showinfo('Reunião cancelada', f'A reunião "{title}" foi cancelada.')
+            _mb.showinfo('Reunião cancelada', f'A reunião "{title}" foi {detail}')
         except Exception:
             pass
 
