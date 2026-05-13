@@ -199,6 +199,23 @@ class Messenger:
             pass
         # Loop de auto-cancelamento de reuniões sem quórum
         self._start_meeting_auto_cancel_loop()
+        # Boot recovery: se rede não estava pronta ao subir, reinicia sockets após 30s
+        self._schedule_boot_recovery()
+
+    # Se após 30s ainda não há peers, recria sockets (rede pode não ter estado pronta no boot)
+    def _schedule_boot_recovery(self):
+        def _check():
+            time.sleep(30)
+            if not self.discovery or not self.discovery.running:
+                return
+            with self.discovery._lock:
+                n = len(self.discovery.peers)
+            if n == 0:
+                try:
+                    self.discovery.restart()
+                except Exception:
+                    pass
+        threading.Thread(target=_check, daemon=True).start()
 
     # Para todos os servicos e limpa estado
     def stop(self):
@@ -348,7 +365,10 @@ class Messenger:
 
             if group_id:
                 # Imagem de grupo — notifica via on_group_message com marcador especial
-                display_name = msg.get('display_name', from_user)
+                display_name = msg.get('display_name', '')
+                if not display_name or display_name == from_user:
+                    _c = self.db.get_contact(from_user)
+                    display_name = (_c.get('display_name') if _c else '') or from_user
                 # Persiste imagem no historico do grupo (idempotente por msg_id)
                 try:
                     if msg_id and not self.db.has_group_message(msg_id):
@@ -406,7 +426,10 @@ class Messenger:
             group_id = msg.get('group_id')
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', time.time())
-            display_name = msg.get('display_name', from_user)
+            display_name = msg.get('display_name', '')
+            if not display_name or display_name == from_user:
+                _c = self.db.get_contact(from_user)
+                display_name = (_c.get('display_name') if _c else '') or from_user
             reply_to = msg.get('reply_to', '')
             mentions = msg.get('mentions', [])
             msg_id = msg.get('msg_id', '')

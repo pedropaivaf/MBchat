@@ -9658,8 +9658,9 @@ class LanMessengerApp:
         self.status_combo.bind('<<ComboboxSelected>>',
                                self._on_status_change)
 
-        # Sino de convites de reunião
+        # Sino de convites de reunião e notificação de update
         self._bell_pending_invites = []
+        self._pending_update = None  # {'version': str, 'notes': str} quando há update disponível
         self._bell_frame = tk.Frame(user_inner, bg=NAVY, cursor='hand2')
         self._bell_frame.pack(side='right', padx=(0, 4))
         self._bell_lbl = tk.Label(self._bell_frame, text='\U0001f514',
@@ -13307,9 +13308,9 @@ class LanMessengerApp:
 
     # Verifica update no startup (chamado no _deferred_init em background).
     def _check_update_startup(self):
-        def _on_result(has_update, ver):
+        def _on_result(has_update, ver, notes=''):
             if has_update:
-                self.root.after(0, lambda: self._show_update_bar(ver))
+                self.root.after(0, lambda: self._show_update_bar(ver, notes))
         updater.check_update_async(_on_result)
 
     # ========================================
@@ -14112,13 +14113,8 @@ class LanMessengerApp:
         preview = f'"{rem.get("text", "")[:80]}"'
 
         if is_shared and is_creator:
-            try:
-                invited = _json.loads(rem.get('invited_uids', '[]'))
-            except Exception:
-                invited = []
-            names = self._format_invited_names(invited) if invited else 'nenhum'
-            if not messagebox.askyesno('Cancelar lembrete',
-                    f'Cancelar para todos os participantes?\n\n{preview}\n\nMarcados: {names}',
+            if not messagebox.askyesno('Excluir lembrete',
+                    f'Tem certeza que deseja excluir este lembrete?\n\n{preview}\n\nEle será removido para você e todos os participantes marcados.',
                     parent=top):
                 return
             self.messenger.cancel_shared_reminder(ext_id)
@@ -14877,21 +14873,29 @@ class LanMessengerApp:
 
     # Verificacao manual via menu Ferramentas.
     def _manual_check_update(self):
-        def _on_result(has_update, ver):
+        def _on_result(has_update, ver, notes=''):
             if has_update:
-                self.root.after(0, lambda: self._show_update_bar(ver))
+                self.root.after(0, lambda: self._show_update_bar(ver, notes))
             else:
                 self.root.after(0, lambda: messagebox.showinfo(
                     APP_NAME, _t('update_none')))
         updater.check_update_async(_on_result)
 
     # Mostra barra amarela no topo da lista de contatos com botao Atualizar.
-    def _show_update_bar(self, version):
+    def _show_update_bar(self, version, notes=''):
         if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
             return  # ja esta visivel
+        self._pending_update = {'version': version, 'notes': notes}
+        self._refresh_bell_badge()
         bar = tk.Frame(self.root, bg='#fff3cd', bd=0)
         bar.pack(fill='x', before=self.root.winfo_children()[1] if len(self.root.winfo_children()) > 1 else None)
         self._update_bar = bar
+
+        def _dismiss_bar():
+            self._pending_update = None
+            self._refresh_bell_badge()
+            bar.destroy()
+
         tk.Label(bar, text=_t('update_available').format(ver=version),
                  font=('Segoe UI', 9), bg='#fff3cd', fg='#856404'
                  ).pack(side='left', padx=(10, 5), pady=4)
@@ -14901,7 +14905,7 @@ class LanMessengerApp:
         btn.pack(side='right', padx=(0, 10), pady=4)
         tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg='#fff3cd',
                   fg='#856404', bd=0, cursor='hand2',
-                  command=bar.destroy).pack(side='right', padx=(0, 4), pady=4)
+                  command=_dismiss_bar).pack(side='right', padx=(0, 4), pady=4)
 
     # ============ AUTO-FIX DE FIREWALL (primeira execucao pos-update) ============
     # Dispara UAC e cria regras de firewall via netsh se ainda nao existem.
@@ -16023,6 +16027,12 @@ class LanMessengerApp:
         else:
             self._bell_badge.place_forget()
 
+    def _refresh_bell_badge(self):
+        n = (len(self._bell_pending_invites)
+             + getattr(self, '_bell_pending_reminder_count', 0)
+             + (1 if self._pending_update else 0))
+        self._update_bell_badge(n)
+
     def _open_bell_dropdown(self):
         try:
             if hasattr(self, '_bell_dropdown') and self._bell_dropdown.winfo_exists():
@@ -16051,8 +16061,37 @@ class LanMessengerApp:
 
         pending = [b for b in self._bell_pending_invites if b]
         reminder_count = getattr(self, '_bell_pending_reminder_count', 0)
+        upd = self._pending_update
 
-        if not pending and not reminder_count:
+        if upd:
+            tk.Label(inner, text=f'\U0001f504  Nova versão {upd["version"]} disponível',
+                     font=('Segoe UI', 9, 'bold'), bg='white', fg='#1e40af',
+                     anchor='w').pack(fill='x', padx=12, pady=(10, 2))
+            if upd.get('notes'):
+                tk.Label(inner, text=upd['notes'], font=('Segoe UI', 8),
+                         bg='white', fg='#475569', anchor='w', justify='left',
+                         wraplength=260).pack(fill='x', padx=12, pady=(0, 6))
+            btn_row_upd = tk.Frame(inner, bg='white')
+            btn_row_upd.pack(fill='x', padx=12, pady=(0, 8))
+            def _do_update_from_bell(v=upd['version']):
+                self._pending_update = None
+                self._refresh_bell_badge()
+                if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
+                    self._update_bar.destroy()
+                popup.destroy()
+                self._do_update(v)
+            tk.Button(btn_row_upd, text='Atualizar agora',
+                      font=('Segoe UI', 9, 'bold'), bg='#1e40af', fg='white',
+                      relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
+                      command=_do_update_from_bell).pack(side='left', padx=(0, 6))
+            tk.Button(btn_row_upd, text='Mais tarde',
+                      font=('Segoe UI', 9), bg='#f1f5f9', fg='#475569',
+                      relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
+                      command=popup.destroy).pack(side='left')
+            if pending or reminder_count:
+                tk.Frame(inner, bg='#e2e8f0', height=1).pack(fill='x', pady=(0, 4))
+
+        if not pending and not reminder_count and not upd:
             tk.Label(inner, text='Nenhum convite pendente',
                      font=('Segoe UI', 9), bg='#ffffff', fg='#6b7280',
                      padx=16, pady=12).pack()
@@ -16103,7 +16142,7 @@ class LanMessengerApp:
                         self.messenger.accept_meeting(b)
                         if info in self._bell_pending_invites:
                             self._bell_pending_invites.remove(info)
-                        self._update_bell_badge(len(self._bell_pending_invites))
+                        self._refresh_bell_badge()
                         popup.destroy()
                         if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
                             self._meeting_window.refresh_timegrid()
@@ -16115,7 +16154,7 @@ class LanMessengerApp:
                         self.messenger.decline_meeting(b)
                         if info in self._bell_pending_invites:
                             self._bell_pending_invites.remove(info)
-                        self._update_bell_badge(len(self._bell_pending_invites))
+                        self._refresh_bell_badge()
                         popup.destroy()
                     except Exception:
                         pass

@@ -47,8 +47,8 @@ def _parse_version(v):
 
 
 def check_update_github():
-    # Retorna (has_update, version_str, download_url).
-    # Procura MBChat_update.zip nos assets.
+    # Retorna (has_update, version_str, download_url, notes).
+    # Procura MBChat_update.zip nos assets. notes = primeiras linhas do body.
     try:
         req = request.Request(GITHUB_API_URL, headers={
             'Accept': 'application/vnd.github.v3+json',
@@ -64,16 +64,21 @@ def check_update_github():
                 if asset['name'] == 'MBChat_update.zip':
                     download_url = asset['browser_download_url']
                     break
-            return True, remote_ver, download_url
-        return False, remote_ver, ''
+            body = data.get('body', '') or ''
+            lines = [l.strip().lstrip('#').lstrip('*').lstrip('-').strip()
+                     for l in body.splitlines()
+                     if l.strip() and not l.strip().startswith('http')]
+            notes = '\n'.join(('• ' + l) for l in lines[:5])
+            return True, remote_ver, download_url, notes
+        return False, remote_ver, '', ''
     except Exception as e:
         log.warning(f'GitHub update check falhou: {e}')
-        return False, '', ''
+        return False, '', '', ''
 
 
 def check_update():
-    has_update, ver, url = check_update_github()
-    return has_update, ver
+    has_update, ver, url, notes = check_update_github()
+    return has_update, ver, notes
 
 
 def download_update(progress_cb=None):
@@ -148,7 +153,7 @@ Log "Staging dir: {staging_dir}"
 
 # Mata o processo
 Stop-Process -Name "MBChat" -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 5
 
 # Remove _internal/ antiga com retry
 $ok = $false
@@ -183,6 +188,15 @@ try {{
 
 Start-Sleep -Seconds 1
 
+# Sanity check: _internal deve existir com pelo menos 50 arquivos
+$internalNew = Join-Path "{target_dir}" "_internal"
+$fileCount = (Get-ChildItem -Path $internalNew -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+if ($fileCount -lt 50) {{
+    Log "ERRO: _internal incompleto ($fileCount arquivos). Abortando lancamento."
+    exit 1
+}}
+Log "Sanity OK: $fileCount arquivos em _internal"
+
 # Limpa staging
 Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
@@ -216,7 +230,7 @@ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyConti
 
 def check_update_async(callback):
     def _run():
-        has_update, ver = check_update()
-        callback(has_update, ver)
+        has_update, ver, notes = check_update()
+        callback(has_update, ver, notes)
     t = threading.Thread(target=_run, daemon=True)
     t.start()

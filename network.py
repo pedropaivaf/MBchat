@@ -604,6 +604,8 @@ class UDPDiscovery:
             except OSError:
                 if self.running:
                     time.sleep(0.5)  # Erro de socket, espera antes de tentar
+            except Exception as e:
+                _log().warning('_receive_loop erro inesperado: %s', e)
 
     # Processa um pacote UDP recebido
     # Ignora pacotes de outros apps (app != 'mbchat') e os proprios
@@ -623,7 +625,9 @@ class UDPDiscovery:
         self.health['packets_received'] += 1
         self.health['last_peer_seen_at'] = time.time()
 
-        uid = pkt['user_id']
+        uid = pkt.get('user_id', '')
+        if not uid:
+            return
         msg_type = pkt.get('type')
 
         if msg_type == MT_DEPART:
@@ -847,6 +851,53 @@ class UDPDiscovery:
             for uid, info in lost:
                 if self.on_peer_lost:
                     self.on_peer_lost(uid, info)
+
+    # Recria sockets UDP sem reiniciar threads (boot recovery)
+    # Útil quando os sockets foram criados antes da rede estar pronta
+    def restart(self):
+        _log().info('UDPDiscovery.restart() — recriando sockets')
+        old_recv = self._sock_recv
+        old_send = self._sock_send
+        try:
+            new_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            new_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, 'SO_REUSEPORT'):
+                try:
+                    new_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except (AttributeError, OSError):
+                    pass
+            new_recv.bind(('', UDP_PORT))
+            new_recv.settimeout(0.3)
+            for iface_ip in [get_local_ip(), '0.0.0.0']:
+                try:
+                    mreq = struct.pack('4s4s',
+                                      socket.inet_aton(MULTICAST_GROUP),
+                                      socket.inet_aton(iface_ip))
+                    new_recv.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                    self.health['multicast_joined'] = True
+                    _log().info('restart IGMP join OK iface=%s', iface_ip)
+                    break
+                except Exception:
+                    continue
+            new_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            new_send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            try:
+                new_send.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            except Exception:
+                pass
+            self._sock_recv = new_recv
+            self._sock_send = new_send
+        except Exception as e:
+            _log().warning('restart() falhou ao criar novos sockets: %s', e)
+            return
+        for s in (old_recv, old_send):
+            try:
+                if s:
+                    s.close()
+            except Exception:
+                pass
+        self._send_announce()
+        _log().info('UDPDiscovery.restart() concluído')
 
 
 # ========================================
