@@ -5,6 +5,17 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-05-13
+
+### Added
+- Criador de reunião recebe toast quando convidado aceita ou recusa o convite.
+- Cancelamento de reunião informa o motivo: nome do organizador ou automático (sem confirmações no prazo).
+- Lembrete compartilhado: botão ✓ envia notificação ao criador quando participante conclui a tarefa.
+- Prazo de lembrete compartilhado exibe status de conclusão no toast do criador (X/Y concluíram).
+- Seção de atualização no sino com fundo azul destacado, botão "Atualizar agora" proeminente e "Mais tarde" discreto.
+- Novo campo `completed_by_uids` no banco para rastrear conclusões por participante.
+- Novo tipo de mensagem TCP `MT_REMINDER_COMPLETED` para propagação de conclusão entre peers.
+
 ## [1.7.0] - 2026-05-05
 
 ### Added
