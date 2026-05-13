@@ -18,12 +18,12 @@ VSVersionInfo(
           [
             StringStruct(u'CompanyName', u'MB Contabilidade'),
             StringStruct(u'FileDescription', u'MB Chat - Mensageiro de Rede Local'),
-            StringStruct(u'FileVersion', u'1.8.5.0'),
+            StringStruct(u'FileVersion', u'1.8.6.0'),
             StringStruct(u'InternalName', u'MBChat'),
             StringStruct(u'LegalCopyright', u'\u00a9 2025-2026 MB Contabilidade'),
             StringStruct(u'OriginalFilename', u'MBChat.exe'),
             StringStruct(u'ProductName', u'MB Chat'),
-            StringStruct(u'ProductVersion', u'1.8.5.0'),
+            StringStruct(u'ProductVersion', u'1.8.6.0'),
           ]
         )
       ]

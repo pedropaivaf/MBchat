@@ -5,6 +5,12 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.6] - 2026-05-13
+
+### Fixed
+- Corrigido problema de recepção de pacotes via VPN/Tailscale em Windows (isolamento de interface).
+- Unificado diretório padrão de arquivos para `MB_Chat_Files` com migração automática dos arquivos antigos de `LanMessenger_Files`.
+
 ## [1.8.5] - 2026-05-13
 
 ### Fixed

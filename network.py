@@ -16,6 +16,7 @@
 # IMPORTANTE: Portas escolhidas para NAO conflitar com LAN Messenger (50000-50002)
 
 import socket      # Sockets UDP e TCP
+import select      # Multiplexacao de sockets
 import struct      # Pack/unpack de headers binarios (4 bytes length)
 import json        # Serializacao de mensagens
 import threading   # Threads para servidor e discovery
@@ -326,7 +327,8 @@ class UDPDiscovery:
         self.on_peer_lost = on_peer_lost    # Callback: peer perdido
         self.peers = {}          # user_id -> {info + last_seen}
         self.running = False     # Flag de controle do loop
-        self._sock_recv = None   # Socket de recebimento
+        self._sock_recv = None   # Socket de recebimento (Unicast/Broadcast)
+        self._sock_mcast = None  # Socket de recebimento (Multicast LAN)
         self._sock_send = None   # Socket de envio
         self._lock = threading.Lock()  # Lock para acesso thread-safe a self.peers
 
@@ -356,7 +358,8 @@ class UDPDiscovery:
         _log().info('UDPDiscovery.start() user_id=%s name=%s',
                     self.user_id, self.display_name)
 
-        # --- Socket de recebimento (bind na porta UDP) ---
+        # --- Socket de recebimento (Unicast/Broadcast - Global) ---
+        # Faz bind em 0.0.0.0 e NUNCA faz IGMP join para nao ser isolado pelo Windows.
         self._sock_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
                                         socket.IPPROTO_UDP)
         self._sock_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -376,59 +379,75 @@ class UDPDiscovery:
                 self._sock_recv.bind(('', port))  # '' = todas as interfaces
                 bound = True
                 self.health['bound_port'] = port
-                _log().info('bind OK port=%d', port)
+                _log().info('Unicast bind OK port=%d', port)
                 break
-            except PermissionError as e:
-                self.health['bind_errors'].append((port, f'Perm:{e}'))
-                _log().error('bind failed port=%d PermissionError: %s', port, e)
-                continue
-            except OSError as e:
-                self.health['bind_errors'].append((port, f'OS:{e}'))
-                _log().error('bind failed port=%d OSError: %s', port, e)
+            except Exception as e:
+                self.health['bind_errors'].append((port, f'Err:{e}'))
+                _log().error('Unicast bind failed port=%d: %s', port, e)
                 continue
         if not bound:
             # Ultimo recurso: porta aleatoria. Discovery esta EFETIVAMENTE quebrado
-            # porque outros PCs mandam para UDP_PORT, nao para a aleatoria.
             self._sock_recv.bind(('', 0))
             rand_port = self._sock_recv.getsockname()[1]
             self.health['bound_port'] = rand_port
             self.health['bind_fallback'] = True
-            _log().critical(
-                'bind FALLBACK to random port=%d — DISCOVERY BROKEN '
-                '(nenhuma das portas %d/%d/%d disponiveis). '
-                'Outros PCs nao conseguirao entregar announces a este host.',
-                rand_port, UDP_PORT, UDP_PORT + 10, UDP_PORT + 20)
+            _log().critical('Unicast bind FALLBACK to random port=%d', rand_port)
 
-        # Junta ao grupo multicast para receber announcements
-        # Tenta com IP local especifico primeiro, depois INADDR_ANY como fallback
-        multicast_joined = False
-        for iface_ip in [get_local_ip(), '0.0.0.0']:
+        # --- Socket de recebimento (Multicast - Local) ---
+        # Faz bind explicitamente no IP do Multicast. Isso evita conflito com o socket Unicast no Windows.
+        self._sock_mcast = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
+                                         socket.IPPROTO_UDP)
+        self._sock_mcast.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, 'SO_REUSEPORT'):
             try:
-                mreq = struct.pack('4s4s',
-                                   socket.inet_aton(MULTICAST_GROUP),
-                                   socket.inet_aton(iface_ip))
-                self._sock_recv.setsockopt(socket.IPPROTO_IP,
-                                           socket.IP_ADD_MEMBERSHIP, mreq)
-                multicast_joined = True
-                self.health['multicast_joined'] = True
-                _log().info('IGMP join OK iface=%s group=%s',
-                            iface_ip, MULTICAST_GROUP)
-                break
-            except Exception as e:
-                _log().warning('IGMP join failed iface=%s err=%s', iface_ip, e)
-                continue
+                self._sock_mcast.setsockopt(socket.SOL_SOCKET,
+                                            socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+
+        multicast_joined = False
+        try:
+            try:
+                # Tenta bind direto no IP do multicast (Ideal para Windows)
+                self._sock_mcast.bind((MULTICAST_GROUP, self.health['bound_port']))
+            except OSError:
+                # Fallback para SOs/redes que exigem bind em ''
+                self._sock_mcast.bind(('', self.health['bound_port']))
+
+            # Tenta com IP local especifico primeiro, depois INADDR_ANY como fallback
+            for iface_ip in [get_local_ip(), '0.0.0.0']:
+                try:
+                    mreq = struct.pack('4s4s',
+                                       socket.inet_aton(MULTICAST_GROUP),
+                                       socket.inet_aton(iface_ip))
+                    self._sock_mcast.setsockopt(socket.IPPROTO_IP,
+                                                socket.IP_ADD_MEMBERSHIP, mreq)
+                    multicast_joined = True
+                    self.health['multicast_joined'] = True
+                    _log().info('IGMP join OK iface=%s group=%s',
+                                iface_ip, MULTICAST_GROUP)
+                    break
+                except Exception as e:
+                    _log().warning('IGMP join failed iface=%s err=%s', iface_ip, e)
+                    continue
+        except Exception as e:
+            _log().warning('Multicast socket setup failed: %s', e)
+
         if not multicast_joined:
-            _log().warning(
-                'IGMP join FAILED em todas as interfaces — dependente de broadcast')
-        # Se nao juntou ao multicast, broadcast sera o unico meio de discovery
+            _log().warning('IGMP join FAILED em todas as interfaces — dependente de broadcast')
+            try:
+                self._sock_mcast.close()
+            except Exception:
+                pass
+            self._sock_mcast = None
 
         # Aumenta buffer UDP para suportar 30+ peers simultaneos
         try:
-            self._sock_recv.setsockopt(socket.SOL_SOCKET,
-                                       socket.SO_RCVBUF, 262144)  # 256KB
+            self._sock_recv.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # 256KB
+            if self._sock_mcast:
+                self._sock_mcast.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
         except Exception:
             pass
-        self._sock_recv.settimeout(0.3)  # Timeout curto para loop responsivo
 
         # --- Socket de envio (multicast + broadcast) ---
         self._sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
@@ -470,9 +489,20 @@ class UDPDiscovery:
         self._send_depart()  # Notifica peers que estamos saindo
         time.sleep(0.2)  # Aguarda envio do depart
         if self._sock_recv:
-            self._sock_recv.close()
+            try:
+                self._sock_recv.close()
+            except Exception:
+                pass
+        if self._sock_mcast:
+            try:
+                self._sock_mcast.close()
+            except Exception:
+                pass
         if self._sock_send:
-            self._sock_send.close()
+            try:
+                self._sock_send.close()
+            except Exception:
+                pass
 
     # Atualiza status e envia announce imediato para propagar
     def update_status(self, status):
@@ -597,11 +627,17 @@ class UDPDiscovery:
     # Loop de recebimento de pacotes UDP (roda em thread daemon)
     def _receive_loop(self):
         while self.running:
+            sockets_to_read = [s for s in [self._sock_recv, self._sock_mcast] if s is not None]
+            if not sockets_to_read:
+                time.sleep(0.5)
+                continue
+            
             try:
-                data, addr = self._sock_recv.recvfrom(BUFFER_SIZE)
-                self._handle_packet(data, addr)
-            except socket.timeout:
-                continue  # Timeout normal, volta ao loop
+                # select aguarda ate 0.3s por dados em qualquer um dos sockets
+                readable, _, _ = select.select(sockets_to_read, [], [], 0.3)
+                for s in readable:
+                    data, addr = s.recvfrom(BUFFER_SIZE)
+                    self._handle_packet(data, addr)
             except OSError:
                 if self.running:
                     time.sleep(0.5)  # Erro de socket, espera antes de tentar

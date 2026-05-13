@@ -96,6 +96,7 @@ class Database:
         self.db_path = db_path or get_db_path()  # Usa caminho padrão se não especificado
         self._local = threading.local()  # Storage thread-local para conexões
         self._init_db()  # Cria tabelas se não existirem
+        self.migrate_lanmessenger_files()  # Migra arquivos da pasta antiga para a nova
 
     @property
     def conn(self):
@@ -349,6 +350,56 @@ class Database:
                 ON bookings(room_id, start_ts, end_ts);
         """)
         c.commit()
+
+    # Migra os arquivos recebidos da antiga pasta LanMessenger_Files para a nova MB_Chat_Files.
+    # Evita que os arquivos se percam caso o usuario tente abrir pelo historico.
+    def migrate_lanmessenger_files(self):
+        try:
+            import os
+            import shutil
+            
+            old_dir = os.path.join(os.path.expanduser('~'), 'LanMessenger_Files')
+            new_dir = os.path.join(os.path.expanduser('~'), 'MB_Chat_Files')
+            
+            # Move fisicamente os arquivos, se a pasta antiga existir
+            if os.path.exists(old_dir):
+                os.makedirs(new_dir, exist_ok=True)
+                for filename in os.listdir(old_dir):
+                    old_path = os.path.join(old_dir, filename)
+                    new_path = os.path.join(new_dir, filename)
+                    if os.path.isfile(old_path):
+                        try:
+                            # Se nao existir na nova, move. Senao so ignora.
+                            if not os.path.exists(new_path):
+                                shutil.move(old_path, new_path)
+                        except Exception:
+                            pass
+
+            # Atualiza no banco de dados (historico de mensagens e transferencias)
+            c = self.conn
+            
+            c.execute("""
+                UPDATE messages 
+                SET file_path = REPLACE(file_path, 'LanMessenger_Files', 'MB_Chat_Files')
+                WHERE file_path LIKE '%LanMessenger_Files%'
+            """)
+            
+            c.execute("""
+                UPDATE file_transfers 
+                SET filepath = REPLACE(filepath, 'LanMessenger_Files', 'MB_Chat_Files')
+                WHERE filepath LIKE '%LanMessenger_Files%'
+            """)
+            
+            # Atualiza o diretorio padrao nas configuracoes
+            download_setting = self.get_setting('download_dir')
+            if download_setting and 'LanMessenger_Files' in download_setting:
+                new_setting = download_setting.replace('LanMessenger_Files', 'MB_Chat_Files')
+                self.set_setting('download_dir', new_setting)
+                
+            c.commit()
+            
+        except Exception as e:
+            print(f'[Migracao de Arquivos] Erro: {e}')
 
     # ========================================
     # LOCAL USER — Dados do usuário local
