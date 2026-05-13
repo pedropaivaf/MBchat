@@ -5,6 +5,20 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-05-13
+
+### Fixed
+- Filtro de eco no recebimento de mensagens TCP (`_on_tcp_message`), ignorando mensagens vindas do próprio ID para evitar duplicidade causada por loopback (ex: Peer fantasma com mesmo IP).
+- Fallback robusto para o nome de exibição do contato (`display_name`) ao abrir uma janela de chat individual (`_open_chat`). Se não estiver em cache (`peer_info`), consulta no banco de dados (`get_contact`) antes de usar o UID como fallback.
+
+## [1.8.4] - 2026-05-13
+
+### Added
+- Verificação periódica automática de novas versões (a cada 30 minutos) e verificação em background ao clicar no ícone de notificações (sino).
+
+### Fixed
+- Ajuste na janela de Transmitir Mensagem para que apenas contatos atualmente online sejam pré-selecionados, evitando disparos acidentais para usuários offline ou do histórico.
+
 ## [1.8.3] - 2026-05-13
 
 ### Added
