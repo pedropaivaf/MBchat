@@ -5,6 +5,17 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.12] - 2026-05-15
+
+### Fixed
+- Relay VPN nunca funcionava: constante `MCAST_GRP` inexistente substituída por `MULTICAST_GROUP` — o NameError era silenciado pelo try/except, impedindo que a âncora retransmitisse a presença do notebook remoto para a LAN.
+- Notebook em VPN ficava com "Peers conhecidos: 0": respostas dos PCs da LAN iam para a porta efêmera do socket de envio (não escutada), em vez de UDP_PORT=50100 onde `_sock_recv` escuta. Corrigido `port=addr[1]` → `port=UDP_PORT` no VPN handshake reply.
+- Botão "Remover selecionado" invisível na janela VPN: `btns.pack(side='bottom')` era chamado depois de `body.pack(expand=True)`, deixando o frame com 0px. Corrigido reordenando o pack.
+
+### Added
+- Ao remover o último peer cadastrado na janela VPN, a conexão VPN é desativada automaticamente.
+- `test_vpn_fixes.py`: 11 testes automatizados (análise de código + sockets reais no localhost) que validam os 3 fixes sem precisar de dois PCs em redes diferentes.
+
 ## [1.8.11] - 2026-05-15
 
 ### Fixed

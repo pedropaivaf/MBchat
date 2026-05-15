@@ -300,6 +300,31 @@ Para detalhes alem deste resumo, consultar:
    - Carregamento de histórico para grupos fixos com resolução de nomes dos remetentes (armazenados no campo file_path de mensagens de grupo).
    - Correção do bug de mensagens sumidas: Janelas individuais agora carregam o histórico completo ao abrir, garantindo visibilidade total de respostas enviadas anteriormente.
 
+## Fix VPN PPTP + Botão Remover (v1.8.12)
+
+Três bugs de código impediam que o notebook em home-office (PPTP VPN) visse colegas da LAN (`Peers conhecidos: 0`):
+
+1. **Relay quebrado — MCAST_GRP (network.py:790)**
+   - Constante `MCAST_GRP` não existe; o nome correto é `MULTICAST_GROUP`.
+   - O `NameError` era silenciado pelo `try/except`, então o relay da âncora para a LAN **nunca funcionava**.
+   - Fix: substituir por `MULTICAST_GROUP`.
+
+2. **Respostas VPN iam para porta efêmera (network.py:774)**
+   - `_sock_send` (socket de envio) não tem bind explícito → OS atribui porta aleatória (ex.: 54321).
+   - A âncora respondia com `port=addr[1]` = 54321, mas `_sock_recv` escuta **apenas em 50100**.
+   - Resultado: todas as respostas dos 27 PCs da LAN eram perdidas → `Peers conhecidos: 0`.
+   - Fix: `port=addr[1]` → `port=UDP_PORT` no VPN handshake reply.
+
+3. **Botão "Remover" invisível na janela VPN (gui.py `_open_vpn_peers`)**
+   - `btns.pack(side='bottom')` era chamado **depois** de `body.pack(fill='both', expand=True)`.
+   - O `body` com `expand=True` consumia todo o espaço; `btns` ficava com 0px de altura.
+   - Fix: separar criação de `body` do `.pack()`, empacotar `btns` antes de `body.pack()`.
+   - Adicionado: ao remover o último peer, VPN é desativada automaticamente (`set_vpn_enabled(False)`).
+
+**Limitação de rede (não código):** se o roteador do escritório não rotear `10.0.0.x` de volta ao cliente PPTP, LAN → notebook TCP falha. O notebook sempre consegue iniciar mensagens (via túnel). Não alterar a lógica de relay para contornar isso sem testar.
+
+**Teste automatizado:** `test_vpn_fixes.py` — 11 checks, inclui teste comportamental com sockets reais no localhost que confirma a resposta chegando em `UDP_PORT=50100` e nada na porta efêmera.
+
 ## Conectividade VPN Tailscale e Fixes de GUI (v1.8.8 - v1.8.11)
 
 1. **Proxy de Descoberta VPN (Announce Relay)**: 

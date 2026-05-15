@@ -771,7 +771,7 @@ class UDPDiscovery:
                 # Responde diretamente pro IP de origem (ts_ip ou addr[0]) com is_reply=True
                 reply_ip = pkt.get('ts_ip') or addr[0]
                 try:
-                    self.announce_to_ip(reply_ip, port=addr[1], request_peer_list=False, is_reply=True)
+                    self.announce_to_ip(reply_ip, port=UDP_PORT, request_peer_list=False, is_reply=True)
                 except Exception as e:
                     _log().warning('unicast reply to %s:%d failed: %s', reply_ip, addr[1], e)
 
@@ -787,7 +787,7 @@ class UDPDiscovery:
                         relay_pkt['ip'] = relay_pkt['ts_ip']
                     relay_data = json.dumps(relay_pkt).encode('utf-8')
                     if self._sock_send:
-                        self._sock_send.sendto(relay_data, (MCAST_GRP, UDP_PORT))
+                        self._sock_send.sendto(relay_data, (MULTICAST_GROUP, UDP_PORT))
                         self._sock_send.sendto(relay_data, ('<broadcast>', UDP_PORT))
                 except Exception as e:
                     _log().warning('announce relay failed: %s', e)

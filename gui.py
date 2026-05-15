@@ -15446,6 +15446,10 @@ class LanMessengerApp:
                  ).pack(side='left', padx=14)
 
         body = tk.Frame(dlg, bg='#f8fafc')
+
+        btns = tk.Frame(dlg, bg='#f8fafc')
+        btns.pack(side='bottom', fill='x', padx=14, pady=(0, 12))
+
         body.pack(fill='both', expand=True, padx=14, pady=10)
 
         info = (
@@ -15499,12 +15503,6 @@ class LanMessengerApp:
                        selectcolor='#ffffff'
                        ).pack(side='left')
         _update_status_label()
-
-        # Botoes do rodape primeiro para garantir que nao sejam empurrados pra fora
-        btns = tk.Frame(dlg, bg='#f8fafc')
-        btns.pack(side='bottom', fill='x', padx=14, pady=(0, 12))
-
-
 
         form = tk.LabelFrame(body, text='Adicionar peer', font=('Segoe UI', 9, 'bold'),
                              bg='#f8fafc', fg='#1a202c', padx=10, pady=8)
@@ -15600,6 +15598,13 @@ class LanMessengerApp:
             try:
                 self.messenger.remove_manual_peer(ip)
                 _refresh_list()
+                if not tree.get_children() and var_enabled.get():
+                    var_enabled.set(False)
+                    try:
+                        self.messenger.set_vpn_enabled(False)
+                    except Exception:
+                        pass
+                    _update_status_label()
             except Exception as e:
                 messagebox.showerror(
                     'Erro', f'Nao foi possivel remover:\n{e}', parent=dlg)
