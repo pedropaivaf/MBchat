@@ -15500,6 +15500,12 @@ class LanMessengerApp:
                        ).pack(side='left')
         _update_status_label()
 
+        # Botoes do rodape primeiro para garantir que nao sejam empurrados pra fora
+        btns = tk.Frame(dlg, bg='#f8fafc')
+        btns.pack(side='bottom', fill='x', padx=14, pady=(0, 12))
+
+
+
         form = tk.LabelFrame(body, text='Adicionar peer', font=('Segoe UI', 9, 'bold'),
                              bg='#f8fafc', fg='#1a202c', padx=10, pady=8)
         form.pack(fill='x', pady=(0, 10))
@@ -15606,8 +15612,7 @@ class LanMessengerApp:
         # Enter no IP/Nota tambem adiciona
         ent_ip.bind('<Return>', lambda e: _do_add())
 
-        btns = tk.Frame(dlg, bg='#f8fafc')
-        btns.pack(side='bottom', fill='x', padx=14, pady=(0, 12))
+
         tk.Button(btns, text='Remover selecionado', font=('Segoe UI', 9),
                   bg='#fee2e2', fg='#991b1b', bd=0, padx=12, pady=6,
                   cursor='hand2', command=_do_remove).pack(side='left')
