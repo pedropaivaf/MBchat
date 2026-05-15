@@ -325,6 +325,32 @@ Três bugs de código impediam que o notebook em home-office (PPTP VPN) visse co
 
 **Teste automatizado:** `test_vpn_fixes.py` — 11 checks, inclui teste comportamental com sockets reais no localhost que confirma a resposta chegando em `UDP_PORT=50100` e nada na porta efêmera.
 
+## Plano de Hardening de Segurança (v1.8.13 — pendente)
+
+Análise completa da superfície de ataque revelou que qualquer PC na mesma LAN pode forjar mensagens, envenenar roteamento via UDP announce falso e fazer spam sem rate limit. Ameaça realista: funcionário mal-intencionado ou curioso na rede interna.
+
+**9 fixes planejados (NÃO implementados ainda):**
+
+1. **IP Pinning UDP (network.py `_handle_packet`)** — se `ip` declarado no announce diverge do IP real do socket, corrige para o real. Elimina envenenamento de roteamento.
+
+2. **IP Pinning TCP (messenger.py `_on_tcp_message`)** — verifica que `from_user` veio do IP cadastrado para esse user_id. Rejeita silenciosamente se divergir. Exceção: peers VPN com `ts_ip`.
+
+3. **Rate Limiting por IP (network.py)** — janela deslizante 10s/10 pacotes UDP por IP. Máximo 30 conexões TCP/min por IP. Previne DDoS interno.
+
+4. **Replay Protection (network.py / messenger.py)** — rejeita `MT_MESSAGE`, `MT_FILE_OFFER`, `MT_MEETING_INVITE` com timestamp > 120s no passado ou > 30s no futuro. Não aplica a `MT_ANNOUNCE`.
+
+5. **HMAC com Chave de Rede (network.py + database.py + gui.py)** — chave gerada em `secrets.token_hex(32)` na primeira execução, salva em settings `network_hmac_key`. Campo `sig` em cada pacote. Modo degradado (aceita sem `sig`) para rollout gradual. UI em Ferramentas > Segurança de Rede para copiar/colar chave entre PCs.
+
+6. **MT_PEER_LIST Subnet Filter (network.py)** — rejeita IPs fora da subnet /24 local, Tailscale (100.x.x.x) ou manual_peers cadastrado. Usa `ipaddress.ip_network`.
+
+7. **Validação IP em manual_peers (database.py)** — `ipaddress.ip_address(ip)` antes de INSERT. Rejeita hostnames e strings inválidas.
+
+8. **Block List (database.py + messenger.py + gui.py)** — nova tabela `block_list`. Clique direito em contato → "Bloquear usuário". Ferramentas > Usuários Bloqueados para gerenciar. Peer bloqueado some da lista e é ignorado em todos os handlers.
+
+9. **SHA256 no Auto-Update (updater.py + build.py)** — `build.py` publica hash no release body. `updater.py` verifica antes de aplicar. Abort com `showerror` se divergir.
+
+**Fora do escopo:** TLS no TCP, SQLCipher, PKI/ECDSA por usuário.
+
 ## Conectividade VPN Tailscale e Fixes de GUI (v1.8.8 - v1.8.11)
 
 1. **Proxy de Descoberta VPN (Announce Relay)**: 
