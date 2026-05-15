@@ -12178,7 +12178,7 @@ class LanMessengerApp:
             msg_text.delete('1.0', 'end')
             msg_text.configure(state='disabled')
 
-        def _render_messages(peer_id, msgs, query=''):
+        def _render_messages(peer_id, msgs, query='', scroll_to_id=None):
             peer_name = _resolve_name(peer_id)
             if msgs:
                 hdr_extra = f'  ({len(msgs)} mensagens)'
@@ -12199,6 +12199,7 @@ class LanMessengerApp:
             first_match_idx = None  # posicao da primeira ocorrencia pra scroll
             match_count = 0
             is_group = peer_id.startswith('group:')
+            id_to_pos = {}  # msg_id -> text index (para scroll_to_id)
             for m in msgs:
                 is_mine = bool(m.get('is_sent'))
                 if is_group:
@@ -12208,12 +12209,15 @@ class LanMessengerApp:
                     who = my_name if is_mine else peer_name
                 ts = datetime.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
                 content = m.get('content', '') or ''
+                _mid = m.get('msg_id', '')
                 start_idx = msg_text.index('end-1c')
+                if _mid:
+                    id_to_pos[_mid] = start_idx
                 msg_text.insert('end', f'[{ts}] ', 'ts')
                 msg_text.insert('end', f'{who}: ', 'me' if is_mine else 'peer_tag')
                 if m.get('msg_type') == 'image':
                     gtag = f'himg_{id(m)}'
-                    msg_text.insert('end', '[Imagem]\n', gtag)
+                    msg_text.insert('end', '[Imagem]', gtag)
                     msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
                     msg_text.tag_bind(gtag, '<Button-1>',
                                       lambda e, p=content: os.startfile(p) if os.path.exists(p) else None)
@@ -12221,10 +12225,25 @@ class LanMessengerApp:
                                       lambda e: msg_text.config(cursor='hand2'))
                     msg_text.tag_bind(gtag, '<Leave>',
                                       lambda e: msg_text.config(cursor=''))
+                    if query_lower and scroll_to_id is None:
+                        ctx_tag = f'ctx_{id(m)}'
+                        msg_text.insert('end', '  ↗', ctx_tag)
+                        msg_text.tag_config(ctx_tag,
+                            foreground='#1565c0', font=('Segoe UI', 8, 'bold'),
+                            underline=True)
+                        def _on_ctx_img(e, mid=_mid, pid=peer_id, q=query):
+                            all_msgs = db.get_messages_with_peer(user_id, pid)
+                            _render_messages(pid, all_msgs, query=q, scroll_to_id=mid)
+                        msg_text.tag_bind(ctx_tag, '<Button-1>', _on_ctx_img)
+                        msg_text.tag_bind(ctx_tag, '<Enter>',
+                            lambda e: msg_text.config(cursor='hand2'))
+                        msg_text.tag_bind(ctx_tag, '<Leave>',
+                            lambda e: msg_text.config(cursor=''))
+                    msg_text.insert('end', '\n')
                 elif m.get('msg_type') == 'file' and m.get('file_path'):
                     fp = m.get('file_path', '')
                     gtag = f'hfile_{id(m)}'
-                    msg_text.insert('end', f'{content}\n', gtag)
+                    msg_text.insert('end', f'{content}', gtag)
                     msg_text.tag_config(gtag, foreground='#0066cc', underline=True)
                     msg_text.tag_bind(gtag, '<Button-1>',
                                       lambda e, path=fp: _open_file_location(path))
@@ -12232,8 +12251,40 @@ class LanMessengerApp:
                                       lambda e: msg_text.config(cursor='hand2'))
                     msg_text.tag_bind(gtag, '<Leave>',
                                       lambda e: msg_text.config(cursor=''))
+                    if query_lower and scroll_to_id is None:
+                        ctx_tag = f'ctx_{id(m)}'
+                        msg_text.insert('end', '  ↗', ctx_tag)
+                        msg_text.tag_config(ctx_tag,
+                            foreground='#1565c0', font=('Segoe UI', 8, 'bold'),
+                            underline=True)
+                        def _on_ctx_file(e, mid=_mid, pid=peer_id, q=query):
+                            all_msgs = db.get_messages_with_peer(user_id, pid)
+                            _render_messages(pid, all_msgs, query=q, scroll_to_id=mid)
+                        msg_text.tag_bind(ctx_tag, '<Button-1>', _on_ctx_file)
+                        msg_text.tag_bind(ctx_tag, '<Enter>',
+                            lambda e: msg_text.config(cursor='hand2'))
+                        msg_text.tag_bind(ctx_tag, '<Leave>',
+                            lambda e: msg_text.config(cursor=''))
+                    msg_text.insert('end', '\n')
                 else:
-                    msg_text.insert('end', f'{content}\n')
+                    if query_lower and scroll_to_id is None and query_lower in content.lower():
+                        ctx_tag = f'ctx_{id(m)}'
+                        msg_text.insert('end', content)
+                        msg_text.insert('end', '  ↗', ctx_tag)
+                        msg_text.tag_config(ctx_tag,
+                            foreground='#1565c0', font=('Segoe UI', 8, 'bold'),
+                            underline=True)
+                        def _on_ctx(e, mid=_mid, pid=peer_id, q=query):
+                            all_msgs = db.get_messages_with_peer(user_id, pid)
+                            _render_messages(pid, all_msgs, query=q, scroll_to_id=mid)
+                        msg_text.tag_bind(ctx_tag, '<Button-1>', _on_ctx)
+                        msg_text.tag_bind(ctx_tag, '<Enter>',
+                            lambda e: msg_text.config(cursor='hand2'))
+                        msg_text.tag_bind(ctx_tag, '<Leave>',
+                            lambda e: msg_text.config(cursor=''))
+                        msg_text.insert('end', '\n')
+                    else:
+                        msg_text.insert('end', f'{content}\n')
                 if query_lower:
                     line_end = msg_text.index(f'{start_idx} lineend +1c')
                     full_line = msg_text.get(start_idx, line_end).lower()
@@ -12250,9 +12301,15 @@ class LanMessengerApp:
                         match_count += 1
                         s = pos + len(query_lower)
             msg_text.configure(state='disabled')
-            # Se ha busca: rola ate a primeira ocorrencia (mostra contexto antes e
-            # depois da mensagem encontrada). Sem busca: scroll pro fim.
-            if first_match_idx is not None:
+            if scroll_to_id and scroll_to_id in id_to_pos:
+                target = id_to_pos[scroll_to_id]
+                msg_text.see(target)
+                msg_text.configure(state='normal')
+                line_end = msg_text.index(f'{target} lineend')
+                msg_text.tag_configure('ctx_target', background='#e3f2fd')
+                msg_text.tag_add('ctx_target', target, line_end)
+                msg_text.configure(state='disabled')
+            elif first_match_idx is not None:
                 try:
                     msg_text.see(first_match_idx)
                 except Exception:
@@ -14928,30 +14985,10 @@ class LanMessengerApp:
                     APP_NAME, _t('update_none')))
         updater.check_update_async(_on_result)
 
-    # Mostra barra amarela no topo da lista de contatos com botao Atualizar.
+        # Notifica nova versao via badge no sino (sem barra amarela - atualizar pelo sino).
     def _show_update_bar(self, version, notes=''):
-        if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
-            return  # ja esta visivel
         self._pending_update = {'version': version, 'notes': notes}
         self._refresh_bell_badge()
-        bar = tk.Frame(self.root, bg='#fff3cd', bd=0)
-        bar.pack(fill='x', before=self.root.winfo_children()[1] if len(self.root.winfo_children()) > 1 else None)
-        self._update_bar = bar
-
-        def _dismiss_bar():
-            bar.destroy()  # Fecha só a barra; badge no sino permanece até atualizar
-
-        tk.Label(bar, text=_t('update_available').format(ver=version),
-                 font=('Segoe UI', 9), bg='#fff3cd', fg='#856404'
-                 ).pack(side='left', padx=(10, 5), pady=4)
-        btn = tk.Button(bar, text=_t('update_btn'), font=('Segoe UI', 9, 'bold'),
-                        bg='#28a745', fg='white', bd=0, padx=10, cursor='hand2',
-                        command=lambda: self._do_update(version))
-        btn.pack(side='right', padx=(0, 10), pady=4)
-        tk.Button(bar, text='\u2715', font=('Segoe UI', 9), bg='#fff3cd',
-                  fg='#856404', bd=0, cursor='hand2',
-                  command=_dismiss_bar).pack(side='right', padx=(0, 4), pady=4)
-
     # ============ AUTO-FIX DE FIREWALL (primeira execucao pos-update) ============
     # Dispara UAC e cria regras de firewall via netsh se ainda nao existem.
     # So roda em build frozen (PyInstaller), nunca em dev. Cooldown de 24h
@@ -15638,12 +15675,6 @@ class LanMessengerApp:
 
     # Executa o download e apply do update.
     def _do_update(self, version):
-        if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
-            for w in self._update_bar.winfo_children():
-                w.destroy()
-            tk.Label(self._update_bar, text=_t('update_downloading'),
-                     font=('Segoe UI', 9), bg='#fff3cd', fg='#856404'
-                     ).pack(side='left', padx=10, pady=4)
         def _download():
             path = updater.download_update()
             if path:
@@ -15651,8 +15682,6 @@ class LanMessengerApp:
             else:
                 self.root.after(0, lambda: messagebox.showerror(
                     APP_NAME, _t('update_failed')))
-                if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
-                    self.root.after(0, self._update_bar.destroy)
         threading.Thread(target=_download, daemon=True).start()
 
     # Aplica o update e encerra o app. Batch reabre via explorer.exe.
@@ -16181,11 +16210,6 @@ class LanMessengerApp:
             def _do_update_from_bell(v=upd['version']):
                 self._pending_update = None
                 self._refresh_bell_badge()
-                try:
-                    if hasattr(self, '_update_bar') and self._update_bar.winfo_exists():
-                        self._update_bar.destroy()
-                except Exception:
-                    pass
                 popup.destroy()
                 self._do_update(v)
             tk.Button(upd_body, text='⬇  Atualizar agora',
