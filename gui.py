@@ -9673,6 +9673,7 @@ class LanMessengerApp:
             font=('Segoe UI', 7, 'bold'), bg='#ef4444', fg='white', width=2)
         self._bell_lbl.bind('<Button-1>', lambda e: self._open_bell_dropdown() or 'break')
         self._bell_frame.bind('<Button-1>', lambda e: self._open_bell_dropdown() or 'break')
+        self._bell_badge.bind('<Button-1>', lambda e: self._open_bell_dropdown() or 'break')
 
         # Ramal (4 digitos numericos) — substitui badge de Departamento no TreeView
         tk.Label(status_row, text='Ramal:', font=('Segoe UI', 8),
@@ -16271,7 +16272,14 @@ class LanMessengerApp:
             except Exception:
                 pass
 
-        popup.bind('<FocusOut>', lambda e: popup.destroy())
+        def _bind_focus():
+            try:
+                if popup.winfo_exists():
+                    # Garante que só feche se o FocusOut for no proprio popup e não num filho
+                    popup.bind('<FocusOut>', lambda e: popup.destroy() if str(e.widget) == str(popup) else None)
+            except Exception: pass
+        popup.after(200, _bind_focus)
+        
         bind_id = self.root.bind('<Button-1>', _close_on_outside, add='+')
         popup.focus_set()
 
