@@ -5,6 +5,13 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.11] - 2026-05-15
+
+### Fixed
+- Corrigido um bug onde clicar exatamente no número (crachá vermelho) de notificações ignorava o clique.
+- Resolvido um problema no Windows onde abrir o menu de notificações enquanto o evento de clique estava sendo processado fechava o menu instantaneamente (FocusOut instantâneo).
+- Documentação da funcionalidade "Proxy de Descoberta VPN / Tailscale" adicionada à página principal, detalhando os passos para usar a VPN de fora do escritório.
+
 ## [1.8.9] - 2026-05-13
 
 ### Added
