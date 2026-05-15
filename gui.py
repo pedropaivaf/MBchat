@@ -14147,7 +14147,17 @@ class LanMessengerApp:
         is_shared = bool(ext_id and creator_uid)
         is_creator = creator_uid == my_uid
         top = list_frame.winfo_toplevel()
-        preview = f'"{rem.get("text", "")[:80]}"'
+        
+        raw_text = rem.get("text", "")
+        if raw_text.startswith('{'):
+            try:
+                import json as _json_parse
+                _j = _json_parse.loads(raw_text)
+                if _j.get('type') == 'meeting':
+                    raw_text = f"Reunião: {_j.get('title', 'Sem título')}"
+            except Exception:
+                pass
+        preview = f'"{raw_text[:80]}"'
 
         if is_shared and is_creator:
             if not messagebox.askyesno('Excluir lembrete',
