@@ -6748,8 +6748,10 @@ class GroupChatWindow(tk.Toplevel):
         self._chat_emoji_cache = {}     # Cache de emojis renderizados para a área de chat
         self._entry_emoji_cache = {}    # Cache de emojis renderizados para o campo de entrada
         self._entry_img_map = {}        # Mapeamento img_name -> emoji_char (para converter imagens de volta para texto)
-        self._participant_widgets = {}  # uid -> {frame, name_lbl, note_lbl, avatar_lbl} - widgets do painel
+        self._participant_widgets = {}  # uid -> {frame, name_lbl, note_lbl, avatar_lbl, remove_badge} - widgets do painel
         self._participant_avatars = {}  # Cache de imagens de avatar dos participantes
+        self.creator_uid = app.messenger.db.get_group_creator(group_id) or ''
+        self._remove_mode = False       # Modo remoção de participantes (toggle pelo criador)
 
         tipo_label = 'Fixo' if group_type == 'fixed' else 'Temporário'
         self.title(f'{group_name} ({tipo_label})')
@@ -7223,6 +7225,16 @@ class GroupChatWindow(tk.Toplevel):
         btn_add.pack(side='right', padx=4)
         _add_hover(btn_add, '#edf2f7', '#e2e8f0')
 
+        # Botão remover — visível apenas para o criador do grupo
+        self._btn_remove = None
+        if app.messenger.user_id == self.creator_uid:
+            self._btn_remove = tk.Button(ph, text='−', font=('Segoe UI', 10, 'bold'),
+                                         bg='#edf2f7', fg='#e53e3e', relief='flat',
+                                         bd=0, cursor='hand2', padx=6,
+                                         command=self._toggle_remove_mode)
+            self._btn_remove.pack(side='right', padx=2)
+            _add_hover(self._btn_remove, '#edf2f7', '#fed7d7')
+
         # Panel scrollable list
         self._panel_canvas = tk.Canvas(self._panel, bg='#f8fafc',
                                         highlightthickness=0)
@@ -7323,8 +7335,12 @@ class GroupChatWindow(tk.Toplevel):
 
         self._participant_widgets[uid] = {
             'frame': row, 'name_lbl': name_lbl,
-            'note_txt': note_txt, 'avatar_lbl': av_lbl
+            'note_txt': note_txt, 'avatar_lbl': av_lbl,
+            'remove_badge': None,
         }
+        # Mostra badge de remoção se modo ativo ao adicionar membro
+        if self._remove_mode and uid != self.app.messenger.user_id:
+            self._refresh_remove_badge(uid)
 
     # Atualiza widget de participante existente.
     def _refresh_participant_widget(self, uid):
@@ -7936,6 +7952,40 @@ class GroupChatWindow(tk.Toplevel):
                          daemon=True).start()
         filename = os.path.basename(filepath)
         self.system_message(f'Enviando "{filename}" para o grupo...')
+
+    # ===== Remove participants (criador) =====
+
+    def _toggle_remove_mode(self):
+        self._remove_mode = not self._remove_mode
+        for uid in list(self._participant_widgets.keys()):
+            self._refresh_remove_badge(uid)
+
+    def _refresh_remove_badge(self, uid):
+        w = self._participant_widgets.get(uid)
+        if not w:
+            return
+        badge = w.get('remove_badge')
+        if badge:
+            try:
+                badge.destroy()
+            except Exception:
+                pass
+            w['remove_badge'] = None
+        if self._remove_mode and uid != self.app.messenger.user_id:
+            badge = tk.Label(w['frame'], text='−', font=('Segoe UI', 11, 'bold'),
+                             bg='#f8fafc', fg='#e53e3e', cursor='hand2')
+            badge.pack(side='right', padx=(0, 6))
+            badge.bind('<Button-1>', lambda e, u=uid: self._kick_member(u))
+            w['remove_badge'] = badge
+
+    def _kick_member(self, uid):
+        name = self._members.get(uid, {}).get('display_name', uid)
+        if not messagebox.askyesno('Remover participante',
+                                   f'Remover {name} do grupo?', parent=self):
+            return
+        self.app.messenger.kick_group_member(self.group_id, uid)
+        self.remove_member(uid)
+        self.system_message(f'{name} foi removido do grupo.')
 
     # ===== Messages — envio e exibição de mensagens no grupo =====
     # Exibe mensagem de sistema no chat (ex: 'X entrou/saiu do grupo').
@@ -8926,9 +8976,14 @@ class GroupChatWindow(tk.Toplevel):
         for msg in history:
             from_user = msg.get('from_user', '')
             is_mine = (from_user == my_uid)
-            sender = msg.get('file_path', '') or msg.get('sender_name', '') or from_user
+            sender = msg.get('file_path', '') or msg.get('sender_name', '') or ''
             if is_mine:
                 sender = self.app.messenger.display_name
+            elif not sender:
+                _contact = self.app.messenger.db.get_contact(from_user)
+                sender = (_contact.get('display_name', '') if _contact else '') or \
+                         self.app.peer_info.get(from_user, {}).get('display_name', '') or \
+                         from_user
             ts = msg.get('timestamp')
             content = msg.get('content', '')
             mtype = msg.get('msg_type', 'text')
@@ -9285,6 +9340,7 @@ class LanMessengerApp:
             on_meeting_response=self._safe(self._on_meeting_response),
             on_meeting_cancel=self._safe(self._on_meeting_cancel),
             on_meeting_sync=self._safe(self._on_meeting_sync),
+            on_group_kick=self._safe(self._on_group_kick),
         )
         self.messenger.start()
         if hasattr(self.messenger, 'discovery'):
@@ -9347,6 +9403,8 @@ class LanMessengerApp:
                        command=self._show_transfers)
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
+        m2.add_command(label='Usuários Bloqueados',
+                       command=self._open_blocked_users)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
@@ -9385,6 +9443,7 @@ class LanMessengerApp:
         self.ctx_menu.entryconfigure(0, label=_t('ctx_send_msg'))
         self.ctx_menu.entryconfigure(1, label=_t('ctx_send_file'))
         self.ctx_menu.entryconfigure(3, label=_t('ctx_info'))
+        self.ctx_menu.entryconfigure(5, label='Bloquear usuário')
 
     # Aplica um tema em toda a interface.
     def apply_theme(self, theme_name):
@@ -9593,6 +9652,7 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
+        m2.add_command(label='Usuários Bloqueados', command=self._open_blocked_users)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -10103,6 +10163,8 @@ class LanMessengerApp:
                                   command=self._ctx_file)   # Enviar arquivo
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)
+        self.ctx_menu.add_separator()
+        self.ctx_menu.add_command(label='Bloquear usuário', command=self._ctx_block_user)
 
 
     # Cria imagens de bolinha colorida (10x10px) para cada status possível.
@@ -11732,6 +11794,70 @@ class LanMessengerApp:
                 info_text += f"\nNota privada: {pnote}"
             messagebox.showinfo('Info do Usuário', info_text)
 
+    def _ctx_block_user(self):
+        uid = self._get_selected_peer()
+        if not uid:
+            return
+        name = self.peer_info.get(uid, {}).get('display_name', uid)
+        if not messagebox.askyesno('Bloquear usuário',
+                                   f'Bloquear {name}?\n\nMensagens desse usuário serão ignoradas.',
+                                   parent=self.root):
+            return
+        self.messenger.db.block_user(uid, name)
+        self._remove_contact(uid)
+
+    def _open_blocked_users(self):
+        blocked = self.messenger.db.get_blocked_list()
+        win = tk.Toplevel(self.root)
+        win.title('Usuários Bloqueados')
+        win.resizable(False, False)
+        win.grab_set()
+        t = self._theme
+        win.configure(bg=t['bg_window'])
+        _apply_rounded_corners(win)
+        _center_window(win, 420, 320)
+
+        tk.Label(win, text='Usuários Bloqueados', font=('Segoe UI', 11, 'bold'),
+                 bg=t['bg_window'], fg=t['fg_black']).pack(pady=(16, 8))
+
+        frame = tk.Frame(win, bg=t['bg_window'])
+        frame.pack(fill='both', expand=True, padx=16, pady=(0, 8))
+
+        sb = tk.Scrollbar(frame, orient='vertical')
+        lb = tk.Listbox(frame, font=FONT, bg=t.get('bg_white', '#ffffff'),
+                        fg=t['fg_black'], selectbackground=t.get('accent', '#1a3f7a'),
+                        selectforeground='white', relief='flat', bd=1,
+                        yscrollcommand=sb.set)
+        sb.config(command=lb.yview)
+        sb.pack(side='right', fill='y')
+        lb.pack(side='left', fill='both', expand=True)
+
+        uid_map = []
+        for row in blocked:
+            display = row.get('display_name', '') or row['user_id']
+            lb.insert('end', display)
+            uid_map.append(row['user_id'])
+
+        def _unblock():
+            sel = lb.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            uid = uid_map[idx]
+            self.messenger.db.unblock_user(uid)
+            lb.delete(idx)
+            uid_map.pop(idx)
+
+        btn_frame = tk.Frame(win, bg=t['bg_window'])
+        btn_frame.pack(fill='x', padx=16, pady=(0, 16))
+        tk.Button(btn_frame, text='Desbloquear', font=FONT,
+                  bg='#0f2a5c', fg='white', bd=0, padx=12, pady=6, cursor='hand2',
+                  command=_unblock).pack(side='left')
+        tk.Button(btn_frame, text='Fechar', font=FONT,
+                  bg=t.get('bg_header', '#edf2f7'), fg=t['fg_black'],
+                  bd=0, padx=12, pady=6, cursor='hand2',
+                  command=win.destroy).pack(side='right')
+
     # Dialogo para editar nota privada do contato selecionado (so visivel localmente)
     def _ctx_private_note(self):
         uid = self._get_selected_peer()
@@ -13295,6 +13421,16 @@ class LanMessengerApp:
                                                'note': ''})
             gw.add_member(uid, display_name, m_info)
             gw.system_message(f'{display_name} entrou no grupo.')
+
+    def _on_group_kick(self, group_id, target_uid):
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            name = gw._members.get(target_uid, {}).get('display_name', target_uid)
+            gw.remove_member(target_uid)
+            if target_uid != self.messenger.user_id:
+                gw.system_message(f'{name} foi removido do grupo.')
+            else:
+                gw.system_message('Você foi removido do grupo.')
 
     # Abre dialogo de selecao de arquivo e envia ao contato selecionado na toolbar.
     #
@@ -15086,6 +15222,21 @@ class LanMessengerApp:
                     text='Porta UDP 50100 ocupada. A descoberta de colegas '
                          'nao funciona. Feche outras instancias do MBChat '
                          'ou reinicie o computador.')
+            # AVISO: VPN ativa mas sem pacotes recebidos apos 120s
+            vpn_stuck = False
+            if uptime > 120 and recv == 0:
+                try:
+                    vpn_on = self.messenger.db.get_setting('vpn_enabled') == '1'
+                    manual = self.messenger.db.get_manual_peers()
+                    vpn_stuck = vpn_on and len(manual) > 0
+                except Exception:
+                    pass
+            if vpn_stuck:
+                self._show_health_banner(
+                    severity='warning',
+                    text='VPN ativa mas sem resposta dos colegas. '
+                         'Verifique a conexão PPTP/Tailscale — '
+                         'o túnel pode estar bloqueando UDP.')
             # AVISO: 30s rodando mas nenhum pacote recebido (envia mas nao recebe)
             elif uptime > 30 and recv == 0 and sent > 0:
                 self._show_health_banner(

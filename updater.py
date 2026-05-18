@@ -2,8 +2,10 @@
 # Verifica latest release no GitHub, compara com versao local,
 # baixa o zip com o app novo e aplica via PowerShell script com restart.
 import os
+import re
 import sys
 import shutil
+import hashlib
 import subprocess
 import logging
 import threading
@@ -46,8 +48,25 @@ def _parse_version(v):
         return (0, 0, 0)
 
 
+def _extract_sha256(body):
+    if not body:
+        return None
+    m = re.search(r'SHA256:\s*([a-f0-9]{64})', body, re.IGNORECASE)
+    return m.group(1).lower() if m else None
+
+
+def _verify_sha256(zip_path, expected):
+    if not expected:
+        return True  # releases sem hash: aceita (backward compat)
+    h = hashlib.sha256()
+    with open(zip_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest().lower() == expected.lower()
+
+
 def check_update_github():
-    # Retorna (has_update, version_str, download_url, notes).
+    # Retorna (has_update, version_str, download_url, notes, sha256).
     # Procura MBChat_update.zip nos assets. notes = primeiras linhas do body.
     try:
         req = request.Request(GITHUB_API_URL, headers={
@@ -65,19 +84,21 @@ def check_update_github():
                     download_url = asset['browser_download_url']
                     break
             body = data.get('body', '') or ''
+            sha256 = _extract_sha256(body)
             lines = [l.strip().lstrip('#').lstrip('*').lstrip('-').strip()
                      for l in body.splitlines()
-                     if l.strip() and not l.strip().startswith('http')]
+                     if l.strip() and not l.strip().startswith('http')
+                     and not l.strip().upper().startswith('SHA256')]
             notes = '\n'.join(('• ' + l) for l in lines[:5])
-            return True, remote_ver, download_url, notes
-        return False, remote_ver, '', ''
+            return True, remote_ver, download_url, notes, sha256
+        return False, remote_ver, '', '', None
     except Exception as e:
         log.warning(f'GitHub update check falhou: {e}')
-        return False, '', '', ''
+        return False, '', '', '', None
 
 
 def check_update():
-    has_update, ver, url, notes = check_update_github()
+    has_update, ver, url, notes, _sha = check_update_github()
     return has_update, ver, notes
 
 
@@ -87,8 +108,17 @@ def download_update(progress_cb=None):
     zip_dst = os.path.join(_UPDATE_DIR, 'MBChat_update.zip')
     extract_dir = os.path.join(_UPDATE_DIR, 'update_staging')
 
-    path = _download_from_github(zip_dst, progress_cb)
+    path, expected_sha256 = _download_from_github(zip_dst, progress_cb)
     if not path:
+        return None
+
+    # Verifica integridade antes de extrair
+    if not _verify_sha256(path, expected_sha256):
+        log.error('SHA256 do zip nao confere — update corrompido ou adulterado, abortando.')
+        try:
+            os.remove(path)
+        except Exception:
+            pass
         return None
 
     # Extrai o zip
@@ -107,9 +137,9 @@ def download_update(progress_cb=None):
 
 def _download_from_github(dst, progress_cb=None):
     try:
-        has_update, ver, url, _notes = check_update_github()
+        has_update, ver, url, _notes, sha256 = check_update_github()
         if not url:
-            return None
+            return None, None
         log.info(f'Baixando update v{ver} do GitHub...')
         req = request.Request(url, headers={'User-Agent': 'MBChat-Updater'})
         with request.urlopen(req, timeout=60) as resp:
@@ -126,10 +156,10 @@ def _download_from_github(dst, progress_cb=None):
                     if progress_cb and total:
                         progress_cb(copied, total)
         log.info(f'Update baixado do GitHub: {dst} ({copied} bytes)')
-        return dst
+        return dst, sha256
     except Exception as e:
         log.warning(f'Download GitHub falhou: {e}')
-        return None
+        return None, None
 
 
 def apply_update(staging_dir):

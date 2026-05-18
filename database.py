@@ -102,9 +102,10 @@ class Database:
     def conn(self):
         # Retorna conexão da thread atual, cria nova se não existe
         if not hasattr(self._local, 'conn') or self._local.conn is None:
-            self._local.conn = sqlite3.connect(self.db_path)
+            self._local.conn = sqlite3.connect(self.db_path, timeout=30)
             self._local.conn.row_factory = sqlite3.Row  # Acesso por nome de coluna
             self._local.conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
+            self._local.conn.execute("PRAGMA busy_timeout=30000")  # 30s busy wait SQLite
             self._local.conn.execute("PRAGMA foreign_keys=ON")  # Ativa chaves estrangeiras
         return self._local.conn
 
@@ -307,6 +308,23 @@ class Database:
                 ip TEXT PRIMARY KEY,
                 note TEXT DEFAULT '',
                 created_at REAL NOT NULL
+            );
+        """)
+        c.commit()
+
+        # Migration: creator_uid na tabela groups
+        try:
+            c.execute("ALTER TABLE groups ADD COLUMN creator_uid TEXT NOT NULL DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
+
+        # Tabela de usuarios bloqueados
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS block_list (
+                user_id TEXT PRIMARY KEY,
+                display_name TEXT DEFAULT '',
+                blocked_at REAL NOT NULL
             );
         """)
         c.commit()
@@ -914,12 +932,18 @@ class Database:
     # ========================================
 
     # Salva grupo no banco (apenas fixos são persistidos, temporários só em memória)
-    def save_group(self, group_id, name, group_type='temp'):
+    def save_group(self, group_id, name, group_type='temp', creator_uid=''):
         self.conn.execute("""
-            INSERT OR REPLACE INTO groups (group_id, name, group_type, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (group_id, name, group_type, time.time()))
+            INSERT OR REPLACE INTO groups (group_id, name, group_type, created_at, creator_uid)
+            VALUES (?, ?, ?, ?, ?)
+        """, (group_id, name, group_type, time.time(), creator_uid or ''))
         self.conn.commit()
+
+    # Retorna uid do criador de um grupo
+    def get_group_creator(self, group_id):
+        row = self.conn.execute(
+            "SELECT creator_uid FROM groups WHERE group_id=?", (group_id,)).fetchone()
+        return (dict(row).get('creator_uid', '') if row else '') or ''
 
     # Retorna lista de grupos (filtrados por tipo se especificado)
     def get_groups(self, group_type=None):
@@ -1394,9 +1418,39 @@ class Database:
     # de cenario VPN/home-office onde tunel L3 nao propaga multicast/broadcast.
     # Lista vazia = comportamento default da LAN (zero overhead).
 
+    # ========================================
+    # BLOCK LIST — Usuarios bloqueados
+    # ========================================
+
+    def block_user(self, user_id, display_name=''):
+        self.conn.execute("""
+            INSERT OR REPLACE INTO block_list (user_id, display_name, blocked_at)
+            VALUES (?, ?, ?)
+        """, (user_id, display_name or '', time.time()))
+        self.conn.commit()
+
+    def unblock_user(self, user_id):
+        self.conn.execute("DELETE FROM block_list WHERE user_id=?", (user_id,))
+        self.conn.commit()
+
+    def is_blocked(self, user_id):
+        row = self.conn.execute(
+            "SELECT 1 FROM block_list WHERE user_id=?", (user_id,)).fetchone()
+        return row is not None
+
+    def get_blocked_list(self):
+        rows = self.conn.execute(
+            "SELECT * FROM block_list ORDER BY blocked_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
     def add_manual_peer(self, ip, note=''):
+        import ipaddress as _ipmod
         ip = (ip or '').strip()
         if not ip:
+            return False
+        try:
+            _ipmod.ip_address(ip)
+        except ValueError:
             return False
         self.conn.execute("""
             INSERT OR REPLACE INTO manual_peers (ip, note, created_at)

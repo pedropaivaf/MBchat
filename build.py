@@ -10,6 +10,7 @@ import os
 import shutil
 import argparse
 import re
+import hashlib
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -269,6 +270,16 @@ def _do_release(version):
         print('AVISO: nenhum asset encontrado para upload.')
         return False
 
+    sha256_line = ''
+    if os.path.isfile(update_zip):
+        h = hashlib.sha256()
+        with open(update_zip, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        sha256_line = f'\n\nSHA256: {h.hexdigest()}'
+
+    release_notes = f'MB Chat {tag}{sha256_line}'
+
     check = subprocess.run(['gh', 'release', 'view', tag], capture_output=True, cwd=HERE)
     if check.returncode == 0:
         print(f'Release {tag} ja existe, atualizando assets...')
@@ -277,7 +288,7 @@ def _do_release(version):
         print(f'Criando release {tag}...')
         cmd = ['gh', 'release', 'create', tag,
                '--title', f'MB Chat {tag}',
-               '--notes', f'MB Chat {tag}'] + assets
+               '--notes', release_notes] + assets
 
     result = subprocess.run(cmd, cwd=HERE)
     if result.returncode != 0:

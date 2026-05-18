@@ -199,6 +199,7 @@ MT_GROUP_INV = 'group_invite'   # TCP: convite para entrar em grupo
 MT_GROUP_MSG = 'group_message'  # TCP: mensagem de texto em grupo (mesh)
 MT_GROUP_LEAVE = 'group_leave'  # TCP: notificacao de saida do grupo
 MT_GROUP_JOIN = 'group_join'    # TCP: notificacao de entrada no grupo
+MT_GROUP_KICK = 'group_kick'    # TCP: criador removeu membro do grupo
 MT_IMAGE = 'image'              # TCP: imagem inline (clipboard, base64)
 MT_POLL_CREATE = 'poll_create'  # TCP: criacao de enquete em grupo
 MT_POLL_VOTE = 'poll_vote'      # TCP: voto em enquete de grupo
@@ -365,6 +366,10 @@ class UDPDiscovery:
         # Lista vazia = caminho da LAN intocado, zero overhead.
         self._unicast_targets = {}
         self._unicast_lock = threading.Lock()
+
+        # Rate limiting UDP: {ip: [timestamps]} para janela deslizante 10s
+        self._udp_rate = {}
+        self._udp_rate_lock = threading.Lock()
 
     # Inicia o discovery: sockets, threads e primeiro announce
     def start(self):
@@ -661,6 +666,17 @@ class UDPDiscovery:
             except Exception as e:
                 _log().warning('_receive_loop erro inesperado: %s', e)
 
+    # Fix 3: rate limiting por IP — janela 10s, max 15 pacotes (tolerante para DISCOVERY_INTERVAL=5s)
+    def _is_rate_ok(self, ip):
+        now = time.time()
+        with self._udp_rate_lock:
+            bucket = self._udp_rate.setdefault(ip, [])
+            self._udp_rate[ip] = [t for t in bucket if now - t < 10]
+            if len(self._udp_rate[ip]) >= 15:
+                return False
+            self._udp_rate[ip].append(now)
+        return True
+
     # Processa um pacote UDP recebido
     # Ignora pacotes de outros apps (app != 'mbchat') e os proprios
     # Para MT_DEPART: remove peer da lista
@@ -676,8 +692,33 @@ class UDPDiscovery:
         if pkt.get('user_id') == self.user_id:
             return  # Pacote proprio (eco), ignora
 
+        # Fix 3: rate limit — ignora silenciosamente spam de mesmo IP
+        if not self._is_rate_ok(addr[0]):
+            return
+
+        # Fix 4: replay protection para tipos críticos
+        _REPLAY_PROTECTED = {'message', 'file_offer', 'meeting_invite', 'group_message'}
+        msg_type_check = pkt.get('type', '')
+        if msg_type_check in _REPLAY_PROTECTED:
+            ts = pkt.get('timestamp') or pkt.get('time')
+            if ts:
+                try:
+                    delta = time.time() - float(ts)
+                    if not (-30 < delta < 120):
+                        return  # Pacote muito antigo ou do futuro
+                except (TypeError, ValueError):
+                    pass
+
         self.health['packets_received'] += 1
         self.health['last_peer_seen_at'] = time.time()
+
+        # Fix 1: IP pinning UDP — corrige IP declarado para o IP real do socket
+        # Só para LAN (via_manual=False) — VPN/Tailscale têm IPs legítimos diferentes
+        if not pkt.get('via_manual'):
+            actual_ip = addr[0]
+            declared_ip = pkt.get('ip', '')
+            if declared_ip and declared_ip != actual_ip:
+                pkt['ip'] = actual_ip
 
         uid = pkt.get('user_id', '')
         if not uid:
@@ -706,17 +747,35 @@ class UDPDiscovery:
                 local_ip = get_local_ip()
             except Exception:
                 local_ip = ''
+            # Fix 6: subnet filter — computa rede local /24 uma vez
+            import ipaddress as _ip_mod
+            try:
+                local_net = _ip_mod.ip_network(f'{local_ip}/24', strict=False)
+            except Exception:
+                local_net = None
+            with self._unicast_lock:
+                manual_ips = set(self._unicast_targets.keys())
             with self._unicast_lock:
                 for p in peers_data:
                     pip = p.get('ts_ip') or p.get('ip') or ''
                     pip = pip.strip()
                     if not pip or pip == local_ip:
                         continue
+                    # Fix 6: rejeita IPs fora de escopo (não /24, não Tailscale, não manual)
+                    try:
+                        addr_obj = _ip_mod.ip_address(pip)
+                    except ValueError:
+                        continue
+                    is_tailscale = str(addr_obj).startswith('100.')
+                    is_same_subnet = local_net and addr_obj in local_net
+                    is_manual = pip in manual_ips
+                    if not (is_tailscale or is_same_subnet or is_manual):
+                        continue
                     if pip not in self._unicast_targets:
                         self._unicast_targets[pip] = 'auto'
                         new_targets.append(pip)
-                    # Se o peer veio com info completa, popula contatos diretamente
-                    # sem esperar announce de volta (resolve VPN onde respostas nao chegam)
+                    # Popula contatos diretamente sem esperar announce
+                    # (resolve VPN onde respostas UDP não chegam de volta)
                     p_uid = p.get('user_id', '')
                     p_name = p.get('display_name', '')
                     if p_uid and p_name and p_uid != self.user_id:
@@ -741,6 +800,12 @@ class UDPDiscovery:
                             if p_uid not in self.peers:
                                 self.peers[p_uid] = peer_info
                                 peers_to_notify.append((p_uid, peer_info))
+                            else:
+                                # Fix VPN: atualiza last_seen para peers existentes
+                                # evita que _cleanup_loop os expire enquanto peer_lists chegam
+                                self.peers[p_uid]['last_seen'] = time.time()
+                                self.peers[p_uid]['status'] = p.get('status', 'online')
+                                self.peers[p_uid]['note'] = p.get('note', '')
             # Notifica GUI para cada peer novo descoberto via peer_list
             if self.on_peer_found:
                 for p_uid, peer_info in peers_to_notify:

@@ -24,7 +24,7 @@ from network import (
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
-    MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN,
+    MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
     MT_REMINDER_COMPLETED,
@@ -68,7 +68,8 @@ class Messenger:
                  on_reminder_invite=None, on_reminder_response=None,
                  on_reminder_cancel=None, on_reminder_completed=None,
                  on_meeting_invite=None, on_meeting_response=None,
-                 on_meeting_cancel=None, on_meeting_sync=None):
+                 on_meeting_cancel=None, on_meeting_sync=None,
+                 on_group_kick=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -99,6 +100,7 @@ class Messenger:
         self.on_meeting_response = on_meeting_response    # Resposta de convite de reunião
         self.on_meeting_cancel = on_meeting_cancel        # Reunião cancelada
         self.on_meeting_sync = on_meeting_sync            # Sync de reservas (timegrid atualizar)
+        self.on_group_kick = on_group_kick                # Membro removido do grupo pelo criador
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -305,6 +307,26 @@ class Messenger:
         if from_user and from_user == self.user_id:
             return
 
+        # Fix 8: bloqueia mensagens de usuarios na block_list
+        if from_user and self.db.is_blocked(from_user):
+            return
+
+        # Fix 2: IP pinning TCP — warning se IP diverge do cadastrado (não rejeita, VPN pode divergir)
+        if from_user:
+            try:
+                known = self.db.get_contact(from_user)
+                if known and known.get('ip_address'):
+                    expected = known['ip_address']
+                    ts_ip = known.get('ts_ip', '') or ''
+                    sender_ip = addr[0] if addr else ''
+                    if sender_ip and sender_ip not in (expected, ts_ip):
+                        import logging as _logging
+                        _logging.getLogger('mbchat.messenger').warning(
+                            'IP mismatch from %s: expected %s got %s',
+                            from_user, expected, sender_ip)
+            except Exception:
+                pass
+
         # --- Mensagem de texto individual ---
         if msg_type == MT_MESSAGE:
             msg_id = msg.get('msg_id', str(uuid.uuid4()))
@@ -409,14 +431,17 @@ class Messenger:
             group_name = msg.get('group_name', 'Grupo')
             group_type = msg.get('group_type', 'temp')  # temp ou fixed
             members = msg.get('members', [])
+            creator_uid = msg.get('creator_uid', from_user)
 
             # Salva grupo em memoria
             self._groups[group_id] = {'name': group_name, 'members': members,
-                                       'group_type': group_type}
+                                       'group_type': group_type,
+                                       'creator_uid': creator_uid}
 
             # Se fixo, persiste no banco
             if group_type == 'fixed':
-                self.db.save_group(group_id, group_name, 'fixed')
+                self.db.save_group(group_id, group_name, 'fixed',
+                                   creator_uid=creator_uid)
                 for m in members:
                     self.db.save_group_member(group_id, m['uid'],
                                               m['display_name'],
@@ -547,6 +572,19 @@ class Messenger:
             # Notifica GUI para exibir "X entrou no grupo"
             if self.on_group_join:
                 self.on_group_join(group_id, from_user, display_name)
+
+        # --- Membro removido do grupo pelo criador ---
+        elif msg_type == MT_GROUP_KICK:
+            group_id = msg.get('group_id')
+            target_uid = msg.get('target_uid', '')
+            group = self._groups.get(group_id)
+            if group and target_uid:
+                group['members'] = [m for m in group['members']
+                                    if m['uid'] != target_uid]
+                if group.get('group_type') == 'fixed':
+                    self.db.delete_group_member(group_id, target_uid)
+            if self.on_group_kick:
+                self.on_group_kick(group_id, target_uid)
 
         # --- Enquete criada ---
         elif msg_type == MT_POLL_CREATE:
@@ -1052,7 +1090,8 @@ class Messenger:
 
         # Se fixo, persiste no banco de dados
         if group_type == 'fixed':
-            self.db.save_group(group_id, group_name, 'fixed')
+            self.db.save_group(group_id, group_name, 'fixed',
+                               creator_uid=self.user_id)
             for m in members_info:
                 self.db.save_group_member(group_id, m['uid'],
                                           m['display_name'], m.get('ip', ''))
@@ -1068,8 +1107,37 @@ class Messenger:
                     'group_id': group_id,
                     'group_name': group_name,
                     'group_type': group_type,
+                    'creator_uid': self.user_id,
                     'members': members_info,  # Lista completa de membros
                 })
+
+    # Remove participante do grupo (apenas criador pode chamar).
+    # Envia MT_GROUP_KICK para todos os membros e atualiza estado local.
+    def kick_group_member(self, group_id, target_uid):
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        # Remove localmente
+        group['members'] = [m for m in group['members'] if m['uid'] != target_uid]
+        if group.get('group_type') == 'fixed':
+            self.db.delete_group_member(group_id, target_uid)
+        # Propaga para todos os membros restantes
+        pkt = {
+            'type': MT_GROUP_KICK,
+            'from_user': self.user_id,
+            'group_id': group_id,
+            'target_uid': target_uid,
+        }
+        for member in group['members']:
+            if member['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(member['uid'])
+            ip = contact['ip_address'] if contact else member.get('ip', '')
+            if ip:
+                try:
+                    TCPClient.send_message(ip, TCP_PORT, pkt)
+                except Exception:
+                    pass
 
     # Notifica membros existentes que alguem entrou no grupo
     # Envia MT_GROUP_JOIN para todos os membros (exceto nos mesmos)
