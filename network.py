@@ -701,13 +701,13 @@ class UDPDiscovery:
         if msg_type == MT_PEER_LIST:
             peers_data = pkt.get('peers', []) or []
             new_targets = []
+            peers_to_notify = []
             try:
                 local_ip = get_local_ip()
             except Exception:
                 local_ip = ''
             with self._unicast_lock:
                 for p in peers_data:
-                    # Usa o IP da VPN se houver e estivermos na VPN, senao usa IP LAN
                     pip = p.get('ts_ip') or p.get('ip') or ''
                     pip = pip.strip()
                     if not pip or pip == local_ip:
@@ -715,6 +715,39 @@ class UDPDiscovery:
                     if pip not in self._unicast_targets:
                         self._unicast_targets[pip] = 'auto'
                         new_targets.append(pip)
+                    # Se o peer veio com info completa, popula contatos diretamente
+                    # sem esperar announce de volta (resolve VPN onde respostas nao chegam)
+                    p_uid = p.get('user_id', '')
+                    p_name = p.get('display_name', '')
+                    if p_uid and p_name and p_uid != self.user_id:
+                        peer_info = {
+                            'user_id': p_uid,
+                            'display_name': p_name,
+                            'ip': pip,
+                            'ts_ip': p.get('ts_ip'),
+                            'hostname': p.get('hostname', ''),
+                            'winuser': p.get('winuser', ''),
+                            'os': p.get('os', ''),
+                            'status': p.get('status', 'online'),
+                            'note': p.get('note', ''),
+                            'avatar_index': p.get('avatar_index', 0),
+                            'avatar_data': '',
+                            'department': p.get('department', ''),
+                            'ramal': p.get('ramal', ''),
+                            'tcp_port': p.get('tcp_port', TCP_PORT),
+                            'last_seen': time.time(),
+                        }
+                        with self._lock:
+                            if p_uid not in self.peers:
+                                self.peers[p_uid] = peer_info
+                                peers_to_notify.append((p_uid, peer_info))
+            # Notifica GUI para cada peer novo descoberto via peer_list
+            if self.on_peer_found:
+                for p_uid, peer_info in peers_to_notify:
+                    try:
+                        self.on_peer_found(p_uid, peer_info)
+                    except Exception:
+                        pass
             # Anuncia imediatamente para os novos targets para que nos vejam
             for pip in new_targets:
                 try:
@@ -724,6 +757,9 @@ class UDPDiscovery:
             if new_targets:
                 _log().info('peer_list: %d novos targets auto adicionados',
                             len(new_targets))
+            if peers_to_notify:
+                _log().info('peer_list: %d contatos populados diretamente (VPN sem rota de retorno)',
+                            len(peers_to_notify))
             return
 
         if msg_type == MT_ANNOUNCE:
@@ -904,6 +940,13 @@ class UDPDiscovery:
                     'ip': pip,
                     'ts_ip': info.get('ts_ip', None),
                     'tcp_port': info.get('tcp_port', TCP_PORT),
+                    'status': info.get('status', 'online'),
+                    'note': info.get('note', ''),
+                    'avatar_index': info.get('avatar_index', 0),
+                    'department': info.get('department', ''),
+                    'ramal': info.get('ramal', ''),
+                    'hostname': info.get('hostname', ''),
+                    'winuser': info.get('winuser', ''),
                 })
         data = {
             'app': 'mbchat',
