@@ -1473,6 +1473,7 @@ class PreferencesWindow(tk.Toplevel):
             ('Aparência', self._build_aparencia),
             ('Teclas de atalho', self._build_atalhos),
             ('Utilitários', self._build_utilitarios),
+            ('Admin', self._build_admin),
         ]
 
         self.cat_buttons = []
@@ -2240,6 +2241,135 @@ class PreferencesWindow(tk.Toplevel):
                   font=FONT,
                   command=lambda: self.app._test_flash_taskbar()
                   ).pack(anchor='w')
+
+    def _build_admin(self, parent):
+        t = self._theme or {}
+        bg = t.get('bg_window', BG_WINDOW)
+        fg = t.get('fg_black', '#1a202c')
+
+        if not getattr(self, '_admin_unlocked', False):
+            tk.Label(parent, text='Área Admin', font=('Segoe UI', 11, 'bold'),
+                     bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(16, 4))
+            tk.Label(parent, text='Digite a senha de administrador:',
+                     font=FONT, bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(8, 2))
+            pw_var = tk.StringVar()
+            pw_entry = tk.Entry(parent, textvariable=pw_var, show='*', font=FONT,
+                                bg=t.get('bg_white', '#ffffff'), fg=fg,
+                                relief='flat', bd=1, width=22)
+            pw_entry.pack(anchor='w', padx=16, pady=(0, 4))
+            pw_entry.focus_set()
+            lbl_err = tk.Label(parent, text='', font=FONT, bg=bg, fg='#e53e3e')
+            lbl_err.pack(anchor='w', padx=16)
+
+            def _check(*_):
+                if pw_var.get() == '1234512345':
+                    self._admin_unlocked = True
+                    self._select_category(self._current_idx)
+                else:
+                    lbl_err.config(text='Senha incorreta')
+                    pw_var.set('')
+                    pw_entry.focus_set()
+
+            pw_entry.bind('<Return>', _check)
+            tk.Button(parent, text='Entrar', font=FONT, command=_check,
+                      bg='#0f2a5c', fg='white', bd=0, padx=12, pady=4,
+                      cursor='hand2').pack(anchor='w', padx=16, pady=(4, 0))
+            return
+
+        tk.Label(parent, text='Painel Admin', font=('Segoe UI', 11, 'bold'),
+                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(12, 8))
+
+        tk.Label(parent, text='Bloquear contato:', font=('Segoe UI', 9, 'bold'),
+                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(0, 2))
+
+        try:
+            blocked_ids = {r['user_id'] for r in self.app.messenger.db.get_blocked_list()}
+        except Exception:
+            blocked_ids = set()
+        peers = [(uid, info.get('display_name', uid))
+                 for uid, info in self.app.peer_info.items()
+                 if uid not in blocked_ids]
+        peers.sort(key=lambda x: x[1].lower())
+        peer_names = [name for uid, name in peers]
+        peer_uids = [uid for uid, name in peers]
+
+        block_var = tk.StringVar(value=peer_names[0] if peer_names else '')
+        if peer_names:
+            from tkinter import ttk as _ttk
+            cb = _ttk.Combobox(parent, textvariable=block_var, values=peer_names,
+                               state='readonly', font=FONT, width=24)
+            cb.pack(anchor='w', padx=16, pady=(0, 4))
+
+            def _do_block():
+                sel = block_var.get()
+                if not sel:
+                    return
+                try:
+                    idx = peer_names.index(sel)
+                    uid = peer_uids[idx]
+                    name = peer_names[idx]
+                except (ValueError, IndexError):
+                    return
+                ip = self.app.peer_info.get(uid, {}).get('ip', '')
+                if not messagebox.askyesno('Bloquear computador',
+                                           f'Bloquear {name} ({ip})?\n\nEsse computador não aparecerá na lista nem poderá enviar mensagens.',
+                                           parent=self):
+                    return
+                self.app.messenger.db.block_user(uid, name, ip)
+                self.app._remove_contact(uid)
+                self._select_category(self._current_idx)
+
+            tk.Button(parent, text='Bloquear', font=FONT, command=_do_block,
+                      bg='#e53e3e', fg='white', bd=0, padx=10, pady=3,
+                      cursor='hand2').pack(anchor='w', padx=16, pady=(0, 12))
+        else:
+            tk.Label(parent, text='(Nenhum contato online disponível)',
+                     font=FONT, bg=bg, fg=t.get('fg_gray', '#718096')).pack(
+                         anchor='w', padx=16, pady=(0, 12))
+
+        tk.Label(parent, text='Computadores bloqueados:', font=('Segoe UI', 9, 'bold'),
+                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(0, 2))
+
+        try:
+            blocked = self.app.messenger.db.get_blocked_list()
+        except Exception:
+            blocked = []
+
+        if not blocked:
+            tk.Label(parent, text='(Nenhum computador bloqueado)',
+                     font=FONT, bg=bg, fg=t.get('fg_gray', '#718096')).pack(
+                         anchor='w', padx=16)
+        else:
+            frm = tk.Frame(parent, bg=bg)
+            frm.pack(fill='x', padx=16, pady=(0, 4))
+            sb = tk.Scrollbar(frm, orient='vertical')
+            lb = tk.Listbox(frm, font=FONT, height=min(len(blocked), 5),
+                            bg=t.get('bg_white', '#ffffff'), fg=fg,
+                            selectbackground=t.get('accent', '#1a3f7a'),
+                            selectforeground='white', relief='flat', bd=1,
+                            yscrollcommand=sb.set)
+            sb.config(command=lb.yview)
+            sb.pack(side='right', fill='y')
+            lb.pack(side='left', fill='both', expand=True)
+            uid_map = []
+            for row in blocked:
+                ip_str = row.get('ip_address', '')
+                display = row.get('display_name', '') or row['user_id']
+                lb.insert('end', f'{display}  {ip_str}'.strip())
+                uid_map.append(row['user_id'])
+
+            def _do_unblock():
+                sel = lb.curselection()
+                if not sel:
+                    return
+                uid = uid_map[sel[0]]
+                self.app.messenger.db.unblock_user(uid)
+                self._select_category(self._current_idx)
+
+            tk.Button(parent, text='Desbloquear selecionado', font=FONT,
+                      command=_do_unblock, bg='#0f2a5c', fg='white',
+                      bd=0, padx=10, pady=3, cursor='hand2').pack(
+                          anchor='w', padx=16, pady=(0, 4))
 
     # ----- SAVE ALL -----
     # Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
@@ -9403,8 +9533,6 @@ class LanMessengerApp:
                        command=self._show_transfers)
         m2.add_command(label='Lembretes',
                        command=self._show_reminders)
-        m2.add_command(label='Usuários Bloqueados',
-                       command=self._open_blocked_users)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'),
                        command=self._manual_check_update)
@@ -9443,7 +9571,6 @@ class LanMessengerApp:
         self.ctx_menu.entryconfigure(0, label=_t('ctx_send_msg'))
         self.ctx_menu.entryconfigure(1, label=_t('ctx_send_file'))
         self.ctx_menu.entryconfigure(3, label=_t('ctx_info'))
-        self.ctx_menu.entryconfigure(5, label='Bloquear usuário')
 
     # Aplica um tema em toda a interface.
     def apply_theme(self, theme_name):
@@ -9652,7 +9779,6 @@ class LanMessengerApp:
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
         m2.add_command(label='Lembretes', command=self._show_reminders)
-        m2.add_command(label='Usuários Bloqueados', command=self._open_blocked_users)
         m2.add_separator()
         m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
         menubar.add_cascade(label=_t('menu_tools'), menu=m2)
@@ -10163,8 +10289,6 @@ class LanMessengerApp:
                                   command=self._ctx_file)   # Enviar arquivo
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)
-        self.ctx_menu.add_separator()
-        self.ctx_menu.add_command(label='Bloquear usuário', command=self._ctx_block_user)
 
 
     # Cria imagens de bolinha colorida (10x10px) para cada status possível.
@@ -11794,69 +11918,6 @@ class LanMessengerApp:
                 info_text += f"\nNota privada: {pnote}"
             messagebox.showinfo('Info do Usuário', info_text)
 
-    def _ctx_block_user(self):
-        uid = self._get_selected_peer()
-        if not uid:
-            return
-        name = self.peer_info.get(uid, {}).get('display_name', uid)
-        if not messagebox.askyesno('Bloquear usuário',
-                                   f'Bloquear {name}?\n\nMensagens desse usuário serão ignoradas.',
-                                   parent=self.root):
-            return
-        self.messenger.db.block_user(uid, name)
-        self._remove_contact(uid)
-
-    def _open_blocked_users(self):
-        blocked = self.messenger.db.get_blocked_list()
-        win = tk.Toplevel(self.root)
-        win.title('Usuários Bloqueados')
-        win.resizable(False, False)
-        win.grab_set()
-        t = self._theme
-        win.configure(bg=t['bg_window'])
-        _apply_rounded_corners(win)
-        _center_window(win, 420, 320)
-
-        tk.Label(win, text='Usuários Bloqueados', font=('Segoe UI', 11, 'bold'),
-                 bg=t['bg_window'], fg=t['fg_black']).pack(pady=(16, 8))
-
-        frame = tk.Frame(win, bg=t['bg_window'])
-        frame.pack(fill='both', expand=True, padx=16, pady=(0, 8))
-
-        sb = tk.Scrollbar(frame, orient='vertical')
-        lb = tk.Listbox(frame, font=FONT, bg=t.get('bg_white', '#ffffff'),
-                        fg=t['fg_black'], selectbackground=t.get('accent', '#1a3f7a'),
-                        selectforeground='white', relief='flat', bd=1,
-                        yscrollcommand=sb.set)
-        sb.config(command=lb.yview)
-        sb.pack(side='right', fill='y')
-        lb.pack(side='left', fill='both', expand=True)
-
-        uid_map = []
-        for row in blocked:
-            display = row.get('display_name', '') or row['user_id']
-            lb.insert('end', display)
-            uid_map.append(row['user_id'])
-
-        def _unblock():
-            sel = lb.curselection()
-            if not sel:
-                return
-            idx = sel[0]
-            uid = uid_map[idx]
-            self.messenger.db.unblock_user(uid)
-            lb.delete(idx)
-            uid_map.pop(idx)
-
-        btn_frame = tk.Frame(win, bg=t['bg_window'])
-        btn_frame.pack(fill='x', padx=16, pady=(0, 16))
-        tk.Button(btn_frame, text='Desbloquear', font=FONT,
-                  bg='#0f2a5c', fg='white', bd=0, padx=12, pady=6, cursor='hand2',
-                  command=_unblock).pack(side='left')
-        tk.Button(btn_frame, text='Fechar', font=FONT,
-                  bg=t.get('bg_header', '#edf2f7'), fg=t['fg_black'],
-                  bd=0, padx=12, pady=6, cursor='hand2',
-                  command=win.destroy).pack(side='right')
 
     # Dialogo para editar nota privada do contato selecionado (so visivel localmente)
     def _ctx_private_note(self):
@@ -16300,7 +16361,17 @@ class LanMessengerApp:
         if not self._pending_update or self._pending_update.get('version') != peer_version:
             self._pending_update = {'version': peer_version, 'notes': 'Nova atualização disponível na rede!'}
             self._refresh_bell_badge()
-            self._show_toast_generic('Atualização Disponível', f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
+            try:
+                shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
+            except Exception:
+                shown_for = ''
+            if shown_for != peer_version:
+                self._show_toast_generic('Atualização Disponível',
+                                         f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
+                try:
+                    self.messenger.db.set_setting('update_toast_shown_for', peer_version)
+                except Exception:
+                    pass
 
     def _open_bell_dropdown(self):
         # Re-check em background ao abrir o sino (se não há update pendente)

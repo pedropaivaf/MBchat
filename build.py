@@ -246,7 +246,7 @@ def _do_web_installer():
     return False
 
 
-def _do_release(version):
+def _do_release(version, notes=''):
     try:
         subprocess.run(['gh', '--version'], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -278,7 +278,10 @@ def _do_release(version):
                 h.update(chunk)
         sha256_line = f'\n\nSHA256: {h.hexdigest()}'
 
-    release_notes = f'MB Chat {tag}{sha256_line}'
+    if notes:
+        release_notes = f'{notes}{sha256_line}'
+    else:
+        release_notes = f'MB Chat {tag}{sha256_line}'
 
     check = subprocess.run(['gh', 'release', 'view', tag], capture_output=True, cwd=HERE)
     if check.returncode == 0:
@@ -370,6 +373,8 @@ def build():
                         help='Caminho para copiar exe + version.txt')
     parser.add_argument('--release', action='store_true',
                         help='Cria GitHub release com zip + instalador')
+    parser.add_argument('--notes', type=str, default='',
+                        help='Texto das release notes (substitui o padrao)')
     args = parser.parse_args()
 
     if args.version is None and args.deploy is None and not args.release:
@@ -390,7 +395,7 @@ def build():
         if args.deploy:
             _deploy(args.deploy, version)
         if args.release:
-            _do_release(version)
+            _do_release(version, notes=getattr(args, 'notes', ''))
 
 
 if __name__ == '__main__':

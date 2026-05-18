@@ -329,6 +329,13 @@ class Database:
         """)
         c.commit()
 
+        # Migration: ip_address em block_list
+        try:
+            c.execute("ALTER TABLE block_list ADD COLUMN ip_address TEXT NOT NULL DEFAULT ''")
+            c.commit()
+        except Exception:
+            pass
+
         # Tabelas de reserva de salas (Agendar > Reunião). Totalmente aditivo.
         c.executescript("""
             CREATE TABLE IF NOT EXISTS rooms (
@@ -1422,11 +1429,11 @@ class Database:
     # BLOCK LIST — Usuarios bloqueados
     # ========================================
 
-    def block_user(self, user_id, display_name=''):
+    def block_user(self, user_id, display_name='', ip=''):
         self.conn.execute("""
-            INSERT OR REPLACE INTO block_list (user_id, display_name, blocked_at)
-            VALUES (?, ?, ?)
-        """, (user_id, display_name or '', time.time()))
+            INSERT OR REPLACE INTO block_list (user_id, display_name, ip_address, blocked_at)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, display_name or '', ip or '', time.time()))
         self.conn.commit()
 
     def unblock_user(self, user_id):

@@ -269,6 +269,8 @@ class Messenger:
             self.db.set_contact_department(uid, dept)
         ramal = info.get('ramal', '')
         self.db.set_contact_ramal(uid, ramal)
+        if self.db.is_blocked(uid):
+            return  # Computador bloqueado: nao aparece na GUI nem sincroniza
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
         # Sync de reuniões ao reconectar peer
