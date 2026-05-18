@@ -747,21 +747,30 @@ class UDPDiscovery:
                 local_ip = get_local_ip()
             except Exception:
                 local_ip = ''
-            # Fix 6: subnet filter — computa rede local /24 uma vez
+            # Fix 6: subnet filter — computa rede local /24 e subnets dos peers manuais
             import ipaddress as _ip_mod
             try:
                 local_net = _ip_mod.ip_network(f'{local_ip}/24', strict=False)
             except Exception:
                 local_net = None
             with self._unicast_lock:
-                manual_ips = set(self._unicast_targets.keys())
+                manual_ips = {ip for ip, src in self._unicast_targets.items()
+                              if src == 'manual'}
+            # Aceita a /24 de cada peer manual (ex: âncora 192.168.0.216 → aceita 192.168.0.x)
+            anchor_subnets = set()
+            for mp in manual_ips:
+                try:
+                    anchor_subnets.add(_ip_mod.ip_network(f'{mp}/24', strict=False))
+                except Exception:
+                    pass
             with self._unicast_lock:
                 for p in peers_data:
                     pip = p.get('ts_ip') or p.get('ip') or ''
                     pip = pip.strip()
                     if not pip or pip == local_ip:
                         continue
-                    # Fix 6: rejeita IPs fora de escopo (não /24, não Tailscale, não manual)
+                    # Fix 6: rejeita IPs fora de escopo (não /24 local, não Tailscale,
+                    # não manual, não na subnet de um anchor manual)
                     try:
                         addr_obj = _ip_mod.ip_address(pip)
                     except ValueError:
@@ -769,7 +778,8 @@ class UDPDiscovery:
                     is_tailscale = str(addr_obj).startswith('100.')
                     is_same_subnet = local_net and addr_obj in local_net
                     is_manual = pip in manual_ips
-                    if not (is_tailscale or is_same_subnet or is_manual):
+                    is_anchor_subnet = any(addr_obj in sn for sn in anchor_subnets)
+                    if not (is_tailscale or is_same_subnet or is_manual or is_anchor_subnet):
                         continue
                     if pip not in self._unicast_targets:
                         self._unicast_targets[pip] = 'auto'
