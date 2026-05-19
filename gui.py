@@ -2276,100 +2276,210 @@ class PreferencesWindow(tk.Toplevel):
                       cursor='hand2').pack(anchor='w', padx=16, pady=(4, 0))
             return
 
-        tk.Label(parent, text='Painel Admin', font=('Segoe UI', 11, 'bold'),
-                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(12, 8))
+        # ===== Painel Admin — Dashboard Moderno =====
+        # Scrollable canvas englobando todo o conteúdo
+        adm_canvas = tk.Canvas(parent, bg=bg, highlightthickness=0)
+        adm_vsb = tk.Scrollbar(parent, orient='vertical', command=adm_canvas.yview)
+        adm_canvas.configure(yscrollcommand=adm_vsb.set)
+        adm_vsb.pack(side='right', fill='y')
+        adm_canvas.pack(fill='both', expand=True)
+        inner = tk.Frame(adm_canvas, bg=bg)
+        adm_canvas.create_window((0, 0), window=inner, anchor='nw', tags='inner')
+        inner.bind('<Configure>',
+                   lambda e: adm_canvas.configure(scrollregion=adm_canvas.bbox('all')))
+        adm_canvas.bind('<Configure>',
+                        lambda e: adm_canvas.itemconfig('inner', width=e.width))
+        adm_canvas.bind('<MouseWheel>',
+                        lambda e: adm_canvas.yview_scroll(-1 * (e.delta // 120), 'units'))
 
-        tk.Label(parent, text='Bloquear contato:', font=('Segoe UI', 9, 'bold'),
-                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(0, 2))
+        # --- Helpers ---
+        STATUS_DOT = {'online': '#48bb78', 'away': '#ecc94b',
+                      'busy': '#f56565', 'offline': '#a0aec0'}
 
+        def _section_hdr(txt):
+            f = tk.Frame(inner, bg=bg)
+            f.pack(fill='x', padx=16, pady=(12, 4))
+            tk.Label(f, text=txt, font=('Segoe UI', 8, 'bold'),
+                     bg=bg, fg='#4a5568').pack(side='left')
+            tk.Frame(f, bg='#e2e8f0', height=1).pack(
+                side='left', fill='x', expand=True, padx=(8, 0))
+
+        # --- Stats Row ---
         try:
-            blocked_ids = {r['user_id'] for r in self.app.messenger.db.get_blocked_list()}
+            blocked_list = self.app.messenger.db.get_blocked_list()
         except Exception:
-            blocked_ids = set()
-        peers = [(uid, info.get('display_name', uid))
-                 for uid, info in self.app.peer_info.items()
-                 if uid not in blocked_ids]
-        peers.sort(key=lambda x: x[1].lower())
-        peer_names = [name for uid, name in peers]
-        peer_uids = [uid for uid, name in peers]
+            blocked_list = []
+        blocked_ids = {r['user_id'] for r in blocked_list}
+        online_count = len(self.app.peer_info)
+        group_count = len(self.app.messenger._groups)
 
-        block_var = tk.StringVar(value=peer_names[0] if peer_names else '')
-        if peer_names:
-            from tkinter import ttk as _ttk
-            cb = _ttk.Combobox(parent, textvariable=block_var, values=peer_names,
-                               state='readonly', font=FONT, width=24)
-            cb.pack(anchor='w', padx=16, pady=(0, 4))
+        stats_row = tk.Frame(inner, bg=bg)
+        stats_row.pack(fill='x', padx=16, pady=(10, 2))
+        for lbl, val, color in [
+            ('Online', str(online_count), '#48bb78'),
+            ('Bloqueados', str(len(blocked_ids)), '#f56565'),
+            ('Grupos', str(group_count), '#667eea'),
+        ]:
+            sf = tk.Frame(stats_row, bg=color, padx=14, pady=8)
+            sf.pack(side='left', padx=(0, 8))
+            tk.Label(sf, text=val, font=('Segoe UI', 14, 'bold'),
+                     bg=color, fg='white').pack()
+            tk.Label(sf, text=lbl, font=('Segoe UI', 7),
+                     bg=color, fg='white').pack()
 
-            def _do_block():
-                sel = block_var.get()
-                if not sel:
-                    return
+        # --- Computadores Online ---
+        _section_hdr('Computadores Online')
+        peers_sorted = sorted(
+            self.app.peer_info.items(),
+            key=lambda x: x[1].get('display_name', '').lower()
+        )
+        if not peers_sorted:
+            tk.Label(inner, text='(Nenhum computador online)',
+                     font=FONT, bg=bg, fg='#718096').pack(anchor='w', padx=20)
+
+        for uid, info in peers_sorted:
+            if uid in blocked_ids:
+                continue
+            row = tk.Frame(inner, bg='#f8fafc',
+                           highlightthickness=1,
+                           highlightbackground='#e2e8f0',
+                           highlightcolor='#e2e8f0')
+            row.pack(fill='x', padx=16, pady=2)
+            row.columnconfigure(1, weight=1)
+
+            dot_c = STATUS_DOT.get(info.get('status', 'offline'), '#a0aec0')
+            tk.Label(row, text='●', font=('Segoe UI', 14),
+                     fg=dot_c, bg='#f8fafc').grid(
+                row=0, column=0, rowspan=2, padx=(10, 6), pady=6)
+
+            tk.Label(row, text=info.get('display_name', uid),
+                     font=('Segoe UI', 9, 'bold'),
+                     bg='#f8fafc', fg='#1a202c', anchor='w').grid(
+                row=0, column=1, sticky='w', pady=(6, 0))
+
+            sub = '  ·  '.join(filter(None, [
+                info.get('winuser', ''), info.get('ip', '')]))
+            tk.Label(row, text=sub, font=('Segoe UI', 7),
+                     bg='#f8fafc', fg='#718096', anchor='w').grid(
+                row=1, column=1, sticky='w', pady=(0, 6))
+
+            def _make_block(u=uid, i=info):
+                def _block():
+                    name = i.get('display_name', u)
+                    ip = i.get('ip', '')
+                    if not messagebox.askyesno(
+                            'Bloquear computador',
+                            f'Bloquear {name} ({ip})?\n\nEsse computador não '
+                            f'aparecerá na lista e não poderá enviar mensagens.',
+                            parent=self):
+                        return
+                    self.app.messenger.db.block_user(u, name, ip)
+                    self.app._remove_contact(u)
+                    self._select_category(self._current_idx)
+                return _block
+
+            btn_b = tk.Button(row, text='Bloquear', font=('Segoe UI', 7),
+                              bg='#fed7d7', fg='#c53030', relief='flat', bd=0,
+                              padx=8, pady=3, cursor='hand2',
+                              command=_make_block())
+            btn_b.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=6)
+            _add_hover(btn_b, '#fed7d7', '#feb2b2')
+
+        # --- Computadores Bloqueados ---
+        _section_hdr('Computadores Bloqueados')
+        if not blocked_list:
+            tk.Label(inner, text='(Nenhum computador bloqueado)',
+                     font=FONT, bg=bg, fg='#718096').pack(anchor='w', padx=20)
+        for rec in blocked_list:
+            brow = tk.Frame(inner, bg='#fff5f5',
+                            highlightthickness=1,
+                            highlightbackground='#fed7d7',
+                            highlightcolor='#fed7d7')
+            brow.pack(fill='x', padx=16, pady=2)
+            brow.columnconfigure(1, weight=1)
+
+            tk.Label(brow, text='○', font=('Segoe UI', 14),
+                     fg='#f56565', bg='#fff5f5').grid(
+                row=0, column=0, rowspan=2, padx=(10, 6), pady=6)
+
+            display = rec.get('display_name', '') or rec['user_id']
+            ip_str = rec.get('ip_address', '')
+            tk.Label(brow, text=display, font=('Segoe UI', 9, 'bold'),
+                     bg='#fff5f5', fg='#c53030', anchor='w').grid(
+                row=0, column=1, sticky='w', pady=(6, 0))
+            tk.Label(brow, text=ip_str, font=('Segoe UI', 7),
+                     bg='#fff5f5', fg='#718096', anchor='w').grid(
+                row=1, column=1, sticky='w', pady=(0, 6))
+
+            def _make_unblock(uid=rec['user_id']):
+                def _unblock():
+                    self.app.messenger.db.unblock_user(uid)
+                    self._select_category(self._current_idx)
+                return _unblock
+
+            btn_u = tk.Button(brow, text='Desbloquear', font=('Segoe UI', 7),
+                              bg='#c6f6d5', fg='#276749', relief='flat', bd=0,
+                              padx=8, pady=3, cursor='hand2',
+                              command=_make_unblock())
+            btn_u.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=6)
+            _add_hover(btn_u, '#c6f6d5', '#9ae6b4')
+
+        # --- Grupos Ativos ---
+        if self.app.messenger._groups:
+            _section_hdr('Grupos Ativos')
+            for gid, gdata in self.app.messenger._groups.items():
+                g_type = 'Fixo' if gdata.get('group_type') == 'fixed' else 'Temp'
+                n_mem = len(gdata.get('members', []))
+                creator_uid = gdata.get('creator_uid', '')
+                creator_name = (self.app.peer_info.get(creator_uid, {})
+                                .get('display_name', '')
+                                or ('você' if creator_uid == self.app.messenger.user_id
+                                    else creator_uid or '?'))
+                grow = tk.Frame(inner, bg='#f0f4ff',
+                                highlightthickness=1,
+                                highlightbackground='#c3d0f0',
+                                highlightcolor='#c3d0f0')
+                grow.pack(fill='x', padx=16, pady=2)
+                tk.Label(grow, text='\U0001f4ac', font=('Segoe UI', 10),
+                         bg='#f0f4ff').pack(side='left', padx=(10, 6), pady=6)
+                tk.Label(grow, text=f"{gdata.get('name', 'Grupo')} ({g_type})",
+                         font=('Segoe UI', 9, 'bold'),
+                         bg='#f0f4ff', fg='#2d3748').pack(side='left')
+                tk.Label(grow,
+                         text=f'· {n_mem} membros · por {creator_name}',
+                         font=('Segoe UI', 7),
+                         bg='#f0f4ff', fg='#718096').pack(side='left', padx=6)
+
+        # --- Aviso Geral ---
+        _section_hdr('Aviso Geral')
+        aviso_outer = tk.Frame(inner, bg=bg)
+        aviso_outer.pack(fill='x', padx=16, pady=(0, 16))
+        aviso_var = tk.StringVar()
+        eb = tk.Frame(aviso_outer, bg='#d0d5dd')
+        eb.pack(fill='x', pady=(0, 6))
+        aviso_entry = tk.Entry(eb, textvariable=aviso_var, font=FONT,
+                               bg='white', fg='#1a202c', relief='flat', bd=0)
+        aviso_entry.pack(fill='x', padx=1, pady=1, ipady=4)
+
+        def _send_aviso():
+            text = aviso_var.get().strip()
+            if not text:
+                return
+            sent = 0
+            for uid in list(self.app.peer_info.keys()):
                 try:
-                    idx = peer_names.index(sel)
-                    uid = peer_uids[idx]
-                    name = peer_names[idx]
-                except (ValueError, IndexError):
-                    return
-                ip = self.app.peer_info.get(uid, {}).get('ip', '')
-                if not messagebox.askyesno('Bloquear computador',
-                                           f'Bloquear {name} ({ip})?\n\nEsse computador não aparecerá na lista nem poderá enviar mensagens.',
-                                           parent=self):
-                    return
-                self.app.messenger.db.block_user(uid, name, ip)
-                self.app._remove_contact(uid)
-                self._select_category(self._current_idx)
+                    self.app.messenger.send_message(uid, f'[AVISO] {text}')
+                    sent += 1
+                except Exception:
+                    pass
+            aviso_var.set('')
+            messagebox.showinfo('Aviso Geral',
+                                f'Aviso enviado para {sent} usuário(s).', parent=self)
 
-            tk.Button(parent, text='Bloquear', font=FONT, command=_do_block,
-                      bg='#e53e3e', fg='white', bd=0, padx=10, pady=3,
-                      cursor='hand2').pack(anchor='w', padx=16, pady=(0, 12))
-        else:
-            tk.Label(parent, text='(Nenhum contato online disponível)',
-                     font=FONT, bg=bg, fg=t.get('fg_gray', '#718096')).pack(
-                         anchor='w', padx=16, pady=(0, 12))
-
-        tk.Label(parent, text='Computadores bloqueados:', font=('Segoe UI', 9, 'bold'),
-                 bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(0, 2))
-
-        try:
-            blocked = self.app.messenger.db.get_blocked_list()
-        except Exception:
-            blocked = []
-
-        if not blocked:
-            tk.Label(parent, text='(Nenhum computador bloqueado)',
-                     font=FONT, bg=bg, fg=t.get('fg_gray', '#718096')).pack(
-                         anchor='w', padx=16)
-        else:
-            frm = tk.Frame(parent, bg=bg)
-            frm.pack(fill='x', padx=16, pady=(0, 4))
-            sb = tk.Scrollbar(frm, orient='vertical')
-            lb = tk.Listbox(frm, font=FONT, height=min(len(blocked), 5),
-                            bg=t.get('bg_white', '#ffffff'), fg=fg,
-                            selectbackground=t.get('accent', '#1a3f7a'),
-                            selectforeground='white', relief='flat', bd=1,
-                            yscrollcommand=sb.set)
-            sb.config(command=lb.yview)
-            sb.pack(side='right', fill='y')
-            lb.pack(side='left', fill='both', expand=True)
-            uid_map = []
-            for row in blocked:
-                ip_str = row.get('ip_address', '')
-                display = row.get('display_name', '') or row['user_id']
-                lb.insert('end', f'{display}  {ip_str}'.strip())
-                uid_map.append(row['user_id'])
-
-            def _do_unblock():
-                sel = lb.curselection()
-                if not sel:
-                    return
-                uid = uid_map[sel[0]]
-                self.app.messenger.db.unblock_user(uid)
-                self._select_category(self._current_idx)
-
-            tk.Button(parent, text='Desbloquear selecionado', font=FONT,
-                      command=_do_unblock, bg='#0f2a5c', fg='white',
-                      bd=0, padx=10, pady=3, cursor='hand2').pack(
-                          anchor='w', padx=16, pady=(0, 4))
+        aviso_entry.bind('<Return>', lambda e: _send_aviso())
+        tk.Button(aviso_outer, text='Enviar para Todos', font=FONT,
+                  bg='#0f2a5c', fg='white', bd=0, padx=14, pady=5,
+                  cursor='hand2', command=_send_aviso).pack(anchor='w')
 
     # ----- SAVE ALL -----
     # Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
