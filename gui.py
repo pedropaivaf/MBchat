@@ -2243,7 +2243,7 @@ class PreferencesWindow(tk.Toplevel):
                   ).pack(anchor='w')
 
     def _build_admin(self, parent):
-        t = self._t or {}
+        t = self._theme or {}
         bg = t.get('bg_window', BG_WINDOW)
         fg = t.get('fg_black', '#1a202c')
 
@@ -6969,16 +6969,16 @@ class GroupChatWindow(tk.Toplevel):
         # Botão Enviar destacado em navy
         send_bg = t.get('btn_send_bg', t.get('btn_bg', '#0f2a5c'))
         send_fg = t.get('btn_send_fg', '#ffffff')
-        btn_send = tk.Button(btn_frame, text=f' {_t("send_btn")} ',
-                             font=('Segoe UI', 9, 'bold'),
-                             bg=send_bg, fg=send_fg,
-                             relief='flat', bd=0, cursor='hand2',
-                             padx=12, pady=3,
-                             activebackground=t.get('btn_active', '#1a3f7a'),
-                             activeforeground=send_fg,
-                             command=self._send_message)
-        btn_send.pack(side='right', pady=2)
-        _add_hover(btn_send, '#0f2a5c', '#1a3f7a')
+        self._btn_send = tk.Button(btn_frame, text=f' {_t("send_btn")} ',
+                                   font=('Segoe UI', 9, 'bold'),
+                                   bg=send_bg, fg=send_fg,
+                                   relief='flat', bd=0, cursor='hand2',
+                                   padx=12, pady=3,
+                                   activebackground=t.get('btn_active', '#1a3f7a'),
+                                   activeforeground=send_fg,
+                                   command=self._send_message)
+        self._btn_send.pack(side='right', pady=2)
+        _add_hover(self._btn_send, '#0f2a5c', '#1a3f7a')
 
         # Botões flat à esquerda
         flat_fg = '#4a5568'
@@ -13606,6 +13606,15 @@ class LanMessengerApp:
                 gw.system_message(f'{name} foi removido do grupo.')
             else:
                 gw.system_message('Você foi removido do grupo.')
+                try:
+                    gw._btn_send.config(state='disabled')
+                except Exception:
+                    pass
+        if target_uid == self.messenger.user_id:
+            self._remove_group_from_tree(group_id)
+            if group_id in self.group_windows:
+                gw = self.group_windows.pop(group_id)
+                gw.after(2000, lambda: gw.destroy() if gw.winfo_exists() else None)
 
     def _on_group_admin_set(self, group_id, target_uid, is_admin):
         if group_id in self.group_windows:
@@ -13628,15 +13637,14 @@ class LanMessengerApp:
 
     def _on_group_deleted(self, group_id):
         if group_id in self.group_windows:
-            gw = self.group_windows[group_id]
-            gw.system_message('O criador deletou este grupo. Nenhuma nova mensagem pode ser enviada.')
-            gw._btn_send.config(state='disabled')
-            gw.chat_text.config(state='normal')
-            gw.chat_text.insert('end', '\n\n[GRUPO DELETADO]\n\n', 'sys')
-            gw.chat_text.config(state='disabled')
-        if group_id in self._group_tree_items:
-            self.tree.delete(self._group_tree_items[group_id])
-            del self._group_tree_items[group_id]
+            gw = self.group_windows.pop(group_id)
+            gw.system_message('O criador deletou este grupo.')
+            try:
+                gw._btn_send.config(state='disabled')
+            except Exception:
+                pass
+            gw.after(2000, lambda: gw.destroy() if gw.winfo_exists() else None)
+        self._remove_group_from_tree(group_id)
     # Abre dialogo de selecao de arquivo e envia ao contato selecionado na toolbar.
     #
     # Se nenhum contato estiver selecionado, exibe aviso ao usuario.

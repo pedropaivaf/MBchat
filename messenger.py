@@ -596,6 +596,11 @@ class Messenger:
                                     if m['uid'] != target_uid]
                 if group.get('group_type') == 'fixed':
                     self.db.delete_group_member(group_id, target_uid)
+                # Se eu fui kickado, limpa o grupo completamente da memória e banco
+                if target_uid == self.user_id:
+                    if group_id in self._groups:
+                        del self._groups[group_id]
+                    self.db.delete_group(group_id)
             if self.on_group_kick:
                 self.on_group_kick(group_id, target_uid)
 
@@ -1235,17 +1240,28 @@ class Messenger:
         group = self._groups.get(group_id)
         if not group:
             return
-        # Remove localmente
-        group['members'] = [m for m in group['members'] if m['uid'] != target_uid]
-        if group.get('group_type') == 'fixed':
-            self.db.delete_group_member(group_id, target_uid)
-        # Propaga para todos os membros restantes
+        # Localiza o membro antes de remover da lista (precisamos do IP)
+        target_member = next((m for m in group['members'] if m['uid'] == target_uid), None)
         pkt = {
             'type': MT_GROUP_KICK,
             'from_user': self.user_id,
             'group_id': group_id,
             'target_uid': target_uid,
         }
+        # Envia para o KICKADO primeiro (antes de remover da lista)
+        if target_member:
+            contact = self.db.get_contact(target_uid)
+            ip = contact['ip_address'] if contact else target_member.get('ip', '')
+            if ip:
+                try:
+                    TCPClient.send_message(ip, TCP_PORT, pkt)
+                except Exception:
+                    pass
+        # Remove localmente
+        group['members'] = [m for m in group['members'] if m['uid'] != target_uid]
+        if group.get('group_type') == 'fixed':
+            self.db.delete_group_member(group_id, target_uid)
+        # Broadcast para membros restantes
         for member in group['members']:
             if member['uid'] == self.user_id:
                 continue
