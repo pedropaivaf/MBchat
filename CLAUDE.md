@@ -351,6 +351,43 @@ Análise completa da superfície de ataque revelou que qualquer PC na mesma LAN 
 
 **Fora do escopo:** TLS no TCP, SQLCipher, PKI/ECDSA por usuário.
 
+## Superpoderes Admin + Senha Segura (v1.8.18 — WIP, NÃO lançada ainda)
+
+Commit: `a3a0363` — branch main, aguardando validação e release pelo usuário.
+
+### O que foi implementado (gui.py + network.py)
+
+**Senha admin segura (substituiu hardcode `1234512345`):**
+- **Primeiro acesso:** formulário "Defina uma senha para esta instalação" — cada instalação tem senha própria
+- Hash SHA256 salvo em `db.get_setting('admin_password_hash')` via `database.py`
+- Login normal: compara SHA256(entrada) com hash salvo
+- **Reset:** criar arquivo vazio `%APPDATA%\.mbchat\admin_reset` → na próxima abertura do Admin, hash é apagado e volta ao formulário de criação
+- Botão "Mudar Senha Admin" visível no painel desbloqueado (seção Segurança)
+
+**Monitor de versões:**
+- `network.py`: campo `'version': pkt.get('version', '')` adicionado ao dict `peer_info` nos dois lugares onde ele é montado (announce direto ~linha 864 e peer_list ~linha 808)
+- Cada peer card no Admin mostra `v{versão}` em cinza (atualizado) ou **vermelho** (desatualizado vs `APP_VERSION`)
+
+**Auditoria de conversas (por peer card):**
+- Botão "Ver conversa" → Toplevel read-only com histórico completo (todos os `get_messages_with_peer`)
+- Botão "Exportar" → `filedialog.asksaveasfilename` → TXT com timestamps `[dd/mm/yyyy HH:MM] Remetente: texto`
+
+**Busca global de mensagens:**
+- Seção "Busca em Todas as Conversas" após stats row
+- Campo Entry + botão Buscar (ou Enter) → `db.search_all_messages(q, limit=200)`
+- Resultados agrupados por contato (até 10 peers, até 3 msgs por peer)
+- Após renderizar resultados: chama `_bind_wheel(inner)` para manter scroll funcionando
+
+**Superadmin de grupos:**
+- Seção "Grupos Ativos": cada grupo tem botões "Ver membros" e "Deletar"
+- "Ver membros" → Toplevel com lista (★ = admin)
+- "Deletar" → `messenger.delete_group_globally(gid)` — funciona para qualquer grupo, não só os criados pelo admin
+
+### O que FALTA para fechar v1.8.18
+- Validação manual completa: senha (primeiro acesso → login → mudar → reset), monitor versão com peer desatualizado, busca, exportar TXT, grupos
+- Após validação: `git commit` de qualquer ajuste + `python build.py --version 1.8.18 --release`
+- Notas de release humanizadas para o sino do app
+
 ## Conectividade VPN Tailscale e Fixes de GUI (v1.8.8 - v1.8.11)
 
 1. **Proxy de Descoberta VPN (Announce Relay)**: 
