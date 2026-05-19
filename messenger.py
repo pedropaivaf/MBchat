@@ -25,6 +25,7 @@ from network import (
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
+    MT_GROUP_ADMIN_SET, MT_GROUP_DELETE,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
     MT_REMINDER_COMPLETED,
@@ -69,7 +70,8 @@ class Messenger:
                  on_reminder_cancel=None, on_reminder_completed=None,
                  on_meeting_invite=None, on_meeting_response=None,
                  on_meeting_cancel=None, on_meeting_sync=None,
-                 on_group_kick=None):
+                 on_group_kick=None, on_group_admin_set=None,
+                 on_group_deleted=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -101,6 +103,8 @@ class Messenger:
         self.on_meeting_cancel = on_meeting_cancel        # Reunião cancelada
         self.on_meeting_sync = on_meeting_sync            # Sync de reservas (timegrid atualizar)
         self.on_group_kick = on_group_kick                # Membro removido do grupo pelo criador
+        self.on_group_admin_set = on_group_admin_set      # Status de admin de um membro alterado
+        self.on_group_deleted = on_group_deleted          # Grupo deletado pelo criador
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -434,20 +438,23 @@ class Messenger:
             group_type = msg.get('group_type', 'temp')  # temp ou fixed
             members = msg.get('members', [])
             creator_uid = msg.get('creator_uid', from_user)
+            admins = msg.get('admins', [creator_uid])
 
             # Salva grupo em memoria
             self._groups[group_id] = {'name': group_name, 'members': members,
                                        'group_type': group_type,
-                                       'creator_uid': creator_uid}
+                                       'creator_uid': creator_uid,
+                                       'admins': admins}
 
             # Se fixo, persiste no banco
             if group_type == 'fixed':
                 self.db.save_group(group_id, group_name, 'fixed',
                                    creator_uid=creator_uid)
                 for m in members:
+                    is_admin = 1 if m['uid'] in admins else 0
                     self.db.save_group_member(group_id, m['uid'],
                                               m['display_name'],
-                                              m.get('ip', ''))
+                                              m.get('ip', ''), is_admin=is_admin)
 
             # Notifica GUI para abrir janela do grupo
             if self.on_group_invite:
@@ -480,9 +487,13 @@ class Messenger:
                 db_g = next((g for g in rows if g['group_id'] == group_id), None)
                 if db_g:
                     members = self.db.get_group_members(group_id)
+                    creator_uid = db_g.get('creator_uid', '')
+                    admins = [m['uid'] for m in members if m.get('is_admin')]
                     self._groups[group_id] = {
                         'name': db_g['name'],
                         'group_type': db_g['group_type'],
+                        'creator_uid': creator_uid,
+                        'admins': admins,
                         'members': [{'uid': m['uid'],
                                      'display_name': m['display_name'],
                                      'ip': m['ip']} for m in members],
@@ -587,6 +598,39 @@ class Messenger:
                     self.db.delete_group_member(group_id, target_uid)
             if self.on_group_kick:
                 self.on_group_kick(group_id, target_uid)
+
+        # --- Atualizacao de Status de Admin ---
+        elif msg_type == MT_GROUP_ADMIN_SET:
+            group_id = msg.get('group_id')
+            target_uid = msg.get('target_uid', '')
+            is_admin = msg.get('is_admin', False)
+            group = self._groups.get(group_id)
+            if group and target_uid:
+                admins = group.get('admins', [])
+                if is_admin and target_uid not in admins:
+                    admins.append(target_uid)
+                elif not is_admin and target_uid in admins:
+                    admins.remove(target_uid)
+                group['admins'] = admins
+                if group.get('group_type') == 'fixed':
+                    # Atualizar no banco
+                    members = group.get('members', [])
+                    for m in members:
+                        if m['uid'] == target_uid:
+                            self.db.save_group_member(group_id, target_uid, m['display_name'], m.get('ip', ''), is_admin=1 if is_admin else 0)
+                            break
+            if hasattr(self, 'on_group_admin_set') and self.on_group_admin_set:
+                self.on_group_admin_set(group_id, target_uid, is_admin)
+
+        # --- Grupo deletado pelo criador ---
+        elif msg_type == MT_GROUP_DELETE:
+            group_id = msg.get('group_id')
+            if group_id in self._groups:
+                del self._groups[group_id]
+            # Apaga o grupo e seus membros do banco local sempre (se existirem)
+            self.db.delete_group(group_id)
+            if hasattr(self, 'on_group_deleted') and self.on_group_deleted:
+                self.on_group_deleted(group_id)
 
         # --- Enquete criada ---
         elif msg_type == MT_POLL_CREATE:
@@ -1088,21 +1132,24 @@ class Messenger:
 
         # Salva grupo em memoria
         self._groups[group_id] = {'name': group_name, 'members': members_info,
-                                   'group_type': group_type}
+                                   'group_type': group_type,
+                                   'creator_uid': self.user_id,
+                                   'admins': [self.user_id]}
 
         # Se fixo, persiste no banco de dados
         if group_type == 'fixed':
             self.db.save_group(group_id, group_name, 'fixed',
                                creator_uid=self.user_id)
             for m in members_info:
+                is_admin = 1 if m['uid'] == self.user_id else 0
                 self.db.save_group_member(group_id, m['uid'],
-                                          m['display_name'], m.get('ip', ''))
+                                          m['display_name'], m.get('ip', ''), is_admin=is_admin)
 
         # Envia convite TCP para cada membro convidado
         for uid in member_ids:
             contact = self.db.get_contact(uid)
             if contact:
-                TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                pkt = {
                     'type': MT_GROUP_INV,
                     'from_user': self.user_id,
                     'display_name': self.display_name,
@@ -1110,8 +1157,77 @@ class Messenger:
                     'group_name': group_name,
                     'group_type': group_type,
                     'creator_uid': self.user_id,
+                    'admins': [self.user_id],
                     'members': members_info,  # Lista completa de membros
-                })
+                }
+                threading.Thread(target=TCPClient.send_message,
+                                 args=(contact['ip_address'], TCP_PORT, pkt),
+                                 daemon=True).start()
+
+    def set_group_admin(self, group_id, target_uid, is_admin):
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        admins = group.get('admins', [])
+        if is_admin and target_uid not in admins:
+            admins.append(target_uid)
+        elif not is_admin and target_uid in admins:
+            admins.remove(target_uid)
+        group['admins'] = admins
+        
+        if group.get('group_type') == 'fixed':
+            # Atualizar no banco
+            members = group.get('members', [])
+            for m in members:
+                if m['uid'] == target_uid:
+                    self.db.save_group_member(group_id, target_uid, m['display_name'], m.get('ip', ''), is_admin=1 if is_admin else 0)
+                    break
+                    
+        # Propaga para todos os membros
+        pkt = {
+            'type': MT_GROUP_ADMIN_SET,
+            'from_user': self.user_id,
+            'group_id': group_id,
+            'target_uid': target_uid,
+            'is_admin': is_admin,
+        }
+        for member in group['members']:
+            if member['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(member['uid'])
+            ip = contact['ip_address'] if contact else member.get('ip', '')
+            if ip:
+                threading.Thread(target=TCPClient.send_message,
+                                 args=(ip, TCP_PORT, pkt),
+                                 daemon=True).start()
+
+    def delete_group_globally(self, group_id):
+        group = self._groups.get(group_id)
+        if not group:
+            return
+        # Salva membros para notificar antes de apagar
+        members = group.get('members', [])
+        
+        # Apaga localmente
+        if group_id in self._groups:
+            del self._groups[group_id]
+        self.db.delete_group(group_id)
+        
+        # Propaga
+        pkt = {
+            'type': MT_GROUP_DELETE,
+            'from_user': self.user_id,
+            'group_id': group_id,
+        }
+        for member in members:
+            if member['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(member['uid'])
+            ip = contact['ip_address'] if contact else member.get('ip', '')
+            if ip:
+                threading.Thread(target=TCPClient.send_message,
+                                 args=(ip, TCP_PORT, pkt),
+                                 daemon=True).start()
 
     # Remove participante do grupo (apenas criador pode chamar).
     # Envia MT_GROUP_KICK para todos os membros e atualiza estado local.
@@ -1269,9 +1385,13 @@ class Messenger:
         for g in groups:
             gid = g['group_id']
             members = self.db.get_group_members(gid)
+            creator_uid = g.get('creator_uid', '')
+            admins = [m['uid'] for m in members if m.get('is_admin')]
             self._groups[gid] = {
                 'name': g['name'],
                 'group_type': 'fixed',
+                'creator_uid': creator_uid,
+                'admins': admins,
                 'members': [{'uid': m['uid'], 'display_name': m['display_name'],
                              'ip': m['ip']} for m in members]
             }

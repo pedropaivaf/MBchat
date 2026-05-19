@@ -5,6 +5,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.17] - 2026-05-19
+
+### Added
+- **Admins em Grupos**: Múltiplos administradores podem ser definidos por grupo. O criador original (sempre Adm) e outros Adms podem promover ou rebaixar participantes através de um clique com o botão direito no nome do membro.
+- **Remover Participantes**: O botão de remover (`−`) agora fica disponível para todos os Administradores.
+- **Deletar Grupo**: Adicionado botão exclusivo para o criador deletar o grupo inteiro. A exclusão apaga o histórico de todos os membros e impede novas mensagens no grupo deletado.
+
+### Changed
+- A tag `(Criador)` foi substituída por `(Adm)` na interface para refletir o novo sistema de permissões hierárquicas.
 ## [1.8.12] - 2026-05-15
 
 ### Fixed

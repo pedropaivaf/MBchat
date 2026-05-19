@@ -2243,7 +2243,7 @@ class PreferencesWindow(tk.Toplevel):
                   ).pack(anchor='w')
 
     def _build_admin(self, parent):
-        t = self._theme or {}
+        t = self._t or {}
         bg = t.get('bg_window', BG_WINDOW)
         fg = t.get('fg_black', '#1a202c')
 
@@ -6880,13 +6880,16 @@ class GroupChatWindow(tk.Toplevel):
         self._entry_img_map = {}        # Mapeamento img_name -> emoji_char (para converter imagens de volta para texto)
         self._participant_widgets = {}  # uid -> {frame, name_lbl, note_lbl, avatar_lbl, remove_badge} - widgets do painel
         self._participant_avatars = {}  # Cache de imagens de avatar dos participantes
-        self.creator_uid = app.messenger.db.get_group_creator(group_id) or ''
+        group_info = app.messenger._groups.get(group_id, {})
+        self.creator_uid = group_info.get('creator_uid') or app.messenger.db.get_group_creator(group_id) or ''
+        self.admins = group_info.get('admins', [self.creator_uid] if self.creator_uid else [])
         self._remove_mode = False       # Modo remoção de participantes (toggle pelo criador)
+        self._remove_vars = {}           # uid -> BooleanVar para seleção múltipla de remoção
 
         tipo_label = 'Fixo' if group_type == 'fixed' else 'Temporário'
         self.title(f'{group_name} ({tipo_label})')
-        self.minsize(480, 380)
-        _center_window(self, 620, 480)
+        self.minsize(600, 380)
+        _center_window(self, 820, 480)
         _apply_rounded_corners(self)
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
@@ -7339,7 +7342,7 @@ class GroupChatWindow(tk.Toplevel):
         self._ctx_click_index = None
 
         # ===== Participants panel (right) =====
-        self._panel = tk.Frame(self._paned, bg='#f8fafc', width=250)
+        self._panel = tk.Frame(self._paned, bg='#f8fafc', width=310)
         self._panel.pack_propagate(False)
 
         # Panel header
@@ -7355,15 +7358,26 @@ class GroupChatWindow(tk.Toplevel):
         btn_add.pack(side='right', padx=4)
         _add_hover(btn_add, '#edf2f7', '#e2e8f0')
 
-        # Botão remover — visível apenas para o criador do grupo
-        self._btn_remove = None
-        if app.messenger.user_id == self.creator_uid:
-            self._btn_remove = tk.Button(ph, text='−', font=('Segoe UI', 10, 'bold'),
-                                         bg='#edf2f7', fg='#e53e3e', relief='flat',
-                                         bd=0, cursor='hand2', padx=6,
-                                         command=self._toggle_remove_mode)
-            self._btn_remove.pack(side='right', padx=2)
-            _add_hover(self._btn_remove, '#edf2f7', '#fed7d7')
+        # Botão remover participantes - visível para os Adms
+        self._btn_remove_mode = None
+        if self.app.messenger.user_id in self.admins:
+            self._btn_remove_mode = tk.Button(ph, text='Remover', font=('Segoe UI', 9),
+                                              bg='#edf2f7', fg='#4a5568', relief='flat',
+                                              bd=0, cursor='hand2', padx=6,
+                                              command=self._toggle_remove_mode)
+            self._btn_remove_mode.pack(side='right', padx=2)
+            _add_hover(self._btn_remove_mode, '#edf2f7', '#e2e8f0')
+
+        # Botão deletar grupo - apenas para o criador original
+        self._btn_delete = None
+        if self.app.messenger.user_id == self.creator_uid:
+            self._btn_delete = tk.Button(ph, text='🗑', font=('Segoe UI', 10),
+                                         bg='#edf2f7', fg='#c53030', relief='flat',
+                                         bd=0, cursor='hand2', padx=4,
+                                         command=self._delete_group)
+            self._btn_delete.pack(side='right', padx=2)
+            _add_hover(self._btn_delete, '#edf2f7', '#e2e8f0')
+            _Tooltip(self._btn_delete, 'Deletar grupo')
 
         # Panel scrollable list
         self._panel_canvas = tk.Canvas(self._panel, bg='#f8fafc',
@@ -7382,7 +7396,7 @@ class GroupChatWindow(tk.Toplevel):
 
         # Add panes to PanedWindow
         self._paned.add(chat_frame, minsize=300)
-        self._paned.add(self._panel, minsize=150, width=250)
+        self._paned.add(self._panel, minsize=240, width=340)
 
     # ===== Panel toggle =====
     def _toggle_panel(self):
@@ -7428,24 +7442,27 @@ class GroupChatWindow(tk.Toplevel):
         self._members[uid]['note'] = info.get('note', '')
         self._refresh_participant_widget(uid)
 
-    # Cria widget de participante no painel.
     def _add_participant_widget(self, uid):
         member = self._members[uid]
         name = member['display_name']
+        if uid in self.admins:
+            name += ' (Adm)'
         note = member.get('note', '')
         status = member.get('status', 'online')
 
+        # Usa GRID na row para garantir espaço reservado ao checkbox (coluna 2)
         row = tk.Frame(self._panel_inner, bg='#f8fafc')
         row.pack(fill='x', padx=4, pady=2)
+        row.columnconfigure(1, weight=1)  # coluna 1 (info) expande
 
-        # Avatar
+        # Coluna 0: Avatar
         avatar = self._create_member_avatar(uid, name, status)
         av_lbl = tk.Label(row, image=avatar, bg='#f8fafc')
-        av_lbl.pack(side='left', padx=(4, 6), pady=2)
+        av_lbl.grid(row=0, column=0, padx=(4, 6), pady=4, sticky='w')
 
-        # Name + Note
+        # Coluna 1: Nome + Nota
         info_frame = tk.Frame(row, bg='#f8fafc')
-        info_frame.pack(side='left', fill='x', expand=True)
+        info_frame.grid(row=0, column=1, sticky='ew')
 
         name_lbl = tk.Label(info_frame, text=name, font=('Segoe UI', 8, 'bold'),
                             bg='#f8fafc', fg='#2d3748', anchor='w')
@@ -7455,7 +7472,7 @@ class GroupChatWindow(tk.Toplevel):
                            bg='#f8fafc', fg='#718096', relief='flat', bd=0,
                            height=1, wrap='none', highlightthickness=0,
                            state='disabled', cursor='arrow')
-        note_txt.bind("<FocusIn>", lambda e: self.focus_set())
+        note_txt.bind('<FocusIn>', lambda e: self.focus_set())
         if note:
             note_txt.config(state='normal')
             note_txt.insert('1.0', note)
@@ -7463,14 +7480,35 @@ class GroupChatWindow(tk.Toplevel):
             note_txt.pack(fill='x')
             _scan_entry_emojis(note_txt, self._chat_emoji_cache, {}, prefix=f'part_note_{uid}', size=12)
 
+        # Coluna 2: Checkbox de remoção (sempre presente na grid, mas hidden inicialmente)
+        is_my_admin = self.app.messenger.user_id in self.admins
+        can_remove_ever = is_my_admin and uid != self.app.messenger.user_id and uid != self.creator_uid
+        var = tk.BooleanVar(value=False)
+        self._remove_vars[uid] = var
+        chk = tk.Checkbutton(row, variable=var, bg='#f8fafc', activebackground='#f8fafc', cursor='hand2')
+        if can_remove_ever:
+            chk.grid(row=0, column=2, padx=(0, 6), pady=4)
+            if not self._remove_mode:
+                chk.grid_remove()  # oculta mas mantém a coluna reservada
+
         self._participant_widgets[uid] = {
-            'frame': row, 'name_lbl': name_lbl,
-            'note_txt': note_txt, 'avatar_lbl': av_lbl,
-            'remove_badge': None,
+            'frame': row,
+            'name_lbl': name_lbl,
+            'note_txt': note_txt,
+            'avatar_lbl': av_lbl,
+            'remove_badge': chk,
+            'can_remove_ever': can_remove_ever,
         }
-        # Mostra badge de remoção se modo ativo ao adicionar membro
-        if self._remove_mode and uid != self.app.messenger.user_id:
-            self._refresh_remove_badge(uid)
+
+        # Menu de contexto
+        def on_right_click(event):
+            self._show_admin_context_menu(uid, event)
+        row.bind('<Button-3>', on_right_click)
+        name_lbl.bind('<Button-3>', on_right_click)
+        av_lbl.bind('<Button-3>', on_right_click)
+
+        # Atualiza nome/nota com estado atual
+        self._refresh_participant_widget(uid)
 
     # Atualiza widget de participante existente.
     def _refresh_participant_widget(self, uid):
@@ -7478,7 +7516,10 @@ class GroupChatWindow(tk.Toplevel):
             return
         member = self._members[uid]
         w = self._participant_widgets[uid]
-        w['name_lbl'].config(text=member['display_name'])
+        name = member['display_name']
+        if uid in self.admins:
+            name += ' (Adm)'
+        w['name_lbl'].config(text=name)
         note = member.get('note', '')
         w['note_txt'].config(state='normal')
         w['note_txt'].delete('1.0', 'end')
@@ -7494,6 +7535,18 @@ class GroupChatWindow(tk.Toplevel):
         avatar = self._create_member_avatar(uid, member['display_name'],
                                              member.get('status', 'online'))
         w['avatar_lbl'].config(image=avatar)
+
+        # Checkbox de remover: usa grid_remove/grid para mostrar/ocultar sem perder o slot
+        chk = w.get('remove_badge')
+        can_remove_ever = w.get('can_remove_ever', False)
+        is_my_admin = self.app.messenger.user_id in self.admins
+        should_show = is_my_admin and self._remove_mode and can_remove_ever
+
+        if chk and can_remove_ever:
+            if should_show:
+                chk.grid()       # restaura com as configurações originais de grid
+            else:
+                chk.grid_remove()  # oculta mas preserva configurações de grid
 
     # Cria avatar 30x30 para painel de participantes.
     def _create_member_avatar(self, uid, name, status='online'):
@@ -8083,30 +8136,90 @@ class GroupChatWindow(tk.Toplevel):
         filename = os.path.basename(filepath)
         self.system_message(f'Enviando "{filename}" para o grupo...')
 
-    # ===== Remove participants (criador) =====
-
     def _toggle_remove_mode(self):
-        self._remove_mode = not self._remove_mode
-        for uid in list(self._participant_widgets.keys()):
-            self._refresh_remove_badge(uid)
+        self._remove_mode = True
+        # Zera seleções SEM destruir as vars (checkbuttons já guardam referência a elas)
+        for var in self._remove_vars.values():
+            var.set(False)
 
-    def _refresh_remove_badge(self, uid):
-        w = self._participant_widgets.get(uid)
-        if not w:
+        self._btn_remove_mode.config(text='✓ Confirmar', fg='#38a169', command=self._confirm_remove)
+
+        if not hasattr(self, '_btn_cancel_remove'):
+            self._btn_cancel_remove = tk.Button(
+                self._btn_remove_mode.master, text='✕', font=('Segoe UI', 9),
+                bg='#edf2f7', fg='#a0aec0', relief='flat',
+                bd=0, cursor='hand2', padx=6,
+                command=self._cancel_remove_mode)
+            _add_hover(self._btn_cancel_remove, '#edf2f7', '#e2e8f0')
+
+        self._btn_cancel_remove.pack(side='right', padx=2, before=self._btn_remove_mode)
+
+        for uid in list(self._participant_widgets.keys()):
+            self._refresh_participant_widget(uid)
+
+    def _cancel_remove_mode(self):
+        self._remove_mode = False
+        self._btn_remove_mode.config(text='Remover', fg='#4a5568', command=self._toggle_remove_mode)
+        if hasattr(self, '_btn_cancel_remove'):
+            self._btn_cancel_remove.pack_forget()
+        # Zera seleções
+        for var in self._remove_vars.values():
+            var.set(False)
+        for uid in list(self._participant_widgets.keys()):
+            self._refresh_participant_widget(uid)
+
+    def _confirm_remove(self):
+        # Lê seleções diretamente dos BooleanVars (que vivem nos checkbuttons)
+        selected_uids = [uid for uid, var in self._remove_vars.items() if var.get()]
+        if not selected_uids:
+            self._cancel_remove_mode()
             return
-        badge = w.get('remove_badge')
-        if badge:
-            try:
-                badge.destroy()
-            except Exception:
-                pass
-            w['remove_badge'] = None
-        if self._remove_mode and uid != self.app.messenger.user_id:
-            badge = tk.Label(w['frame'], text='−', font=('Segoe UI', 11, 'bold'),
-                             bg='#f8fafc', fg='#e53e3e', cursor='hand2')
-            badge.pack(side='right', padx=(0, 6))
-            badge.bind('<Button-1>', lambda e, u=uid: self._kick_member(u))
-            w['remove_badge'] = badge
+
+        from tkinter import messagebox
+        names = [self._members.get(uid, {}).get('display_name', uid) for uid in selected_uids]
+        names_str = ', '.join(names)
+        if not messagebox.askyesno('Remover participantes',
+                                   f'Deseja remover os seguintes participantes?\n\n{names_str}',
+                                   parent=self):
+            return
+
+        for uid in selected_uids:
+            name = self._members.get(uid, {}).get('display_name', uid)
+            self.app.messenger.kick_group_member(self.group_id, uid)
+            self.remove_member(uid)
+            self.system_message(f'{name} foi removido do grupo.')
+
+        self._cancel_remove_mode()
+
+    def _show_admin_context_menu(self, target_uid, event):
+        if self.app.messenger.user_id not in self.admins:
+            return  # apenas admins podem gerenciar
+        if target_uid == self.app.messenger.user_id:
+            return  # nao pode alterar a si mesmo
+        if target_uid == self.creator_uid:
+            return  # criador nunca pode ser alterado/rebaixado
+
+        menu = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
+        is_admin = target_uid in self.admins
+        
+        def toggle_admin():
+            self.app.messenger.set_group_admin(self.group_id, target_uid, not is_admin)
+
+        lbl = "Remover Adm" if is_admin else "Promover a Adm"
+        menu.add_command(label=lbl, command=toggle_admin)
+        menu.post(event.x_root, event.y_root)
+
+    def _delete_group(self):
+        from tkinter import messagebox
+        if not messagebox.askyesno('Deletar Grupo', 'Tem certeza que deseja deletar o grupo?', parent=self):
+            return
+        gid = self.group_id
+        self.app.messenger.delete_group_globally(gid)
+        # Remove do TreeView e do dicionário de janelas abertas (lado do criador)
+        self.app._remove_group_from_tree(gid)
+        if gid in self.app.group_windows:
+            del self.app.group_windows[gid]
+        self.destroy()
 
     def _kick_member(self, uid):
         name = self._members.get(uid, {}).get('display_name', uid)
@@ -9471,6 +9584,8 @@ class LanMessengerApp:
             on_meeting_cancel=self._safe(self._on_meeting_cancel),
             on_meeting_sync=self._safe(self._on_meeting_sync),
             on_group_kick=self._safe(self._on_group_kick),
+            on_group_admin_set=self._safe(self._on_group_admin_set),
+            on_group_deleted=self._safe(self._on_group_deleted),
         )
         self.messenger.start()
         if hasattr(self.messenger, 'discovery'):
@@ -13359,12 +13474,11 @@ class LanMessengerApp:
             gw.deiconify()  # exibe se oculta
             gw.lift()       # traz para frente
             return
+        # Prepara a estrutura do grupo localmente e dispara envio em background
+        self.messenger.send_group_invite(group_id, group_name, member_ids, group_type)
+        
         gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)  # cria janela
         self.group_windows[group_id] = gw  # registra no dicionario
-        # Envia convites MT_GROUP_INV para todos os membros em thread separada
-        threading.Thread(target=self.messenger.send_group_invite,
-                         args=(group_id, group_name, member_ids, group_type),
-                         daemon=True).start()  # nao bloqueia a UI
         # Adiciona o proprio usuario ao painel lateral da janela de grupo
         my_info = {'ip': '', 'status': 'online', 'note': self.messenger.note}  # propria info
         gw.add_member(self.messenger.user_id, self.messenger.display_name, my_info)
@@ -13493,6 +13607,36 @@ class LanMessengerApp:
             else:
                 gw.system_message('Você foi removido do grupo.')
 
+    def _on_group_admin_set(self, group_id, target_uid, is_admin):
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            # Atualiza lista local
+            group_info = self.messenger._groups.get(group_id, {})
+            gw.admins = group_info.get('admins', [gw.creator_uid])
+            # Força atualização visual
+            if target_uid == self.messenger.user_id:
+                # Refresh all to update minus buttons visibility
+                for uid in list(gw._participant_widgets.keys()):
+                    gw._refresh_participant_widget(uid)
+            else:
+                gw._refresh_participant_widget(target_uid)
+            name = gw._members.get(target_uid, {}).get('display_name', target_uid)
+            if is_admin:
+                gw.system_message(f'{name} agora é um administrador do grupo.')
+            else:
+                gw.system_message(f'{name} não é mais um administrador do grupo.')
+
+    def _on_group_deleted(self, group_id):
+        if group_id in self.group_windows:
+            gw = self.group_windows[group_id]
+            gw.system_message('O criador deletou este grupo. Nenhuma nova mensagem pode ser enviada.')
+            gw._btn_send.config(state='disabled')
+            gw.chat_text.config(state='normal')
+            gw.chat_text.insert('end', '\n\n[GRUPO DELETADO]\n\n', 'sys')
+            gw.chat_text.config(state='disabled')
+        if group_id in self._group_tree_items:
+            self.tree.delete(self._group_tree_items[group_id])
+            del self._group_tree_items[group_id]
     # Abre dialogo de selecao de arquivo e envia ao contato selecionado na toolbar.
     #
     # Se nenhum contato estiver selecionado, exibe aviso ao usuario.

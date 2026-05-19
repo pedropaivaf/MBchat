@@ -319,6 +319,13 @@ class Database:
         except Exception:
             pass
 
+        # Migration: is_admin na tabela group_members
+        try:
+            c.execute("ALTER TABLE group_members ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+            c.commit()
+        except Exception:
+            pass
+
         # Tabela de usuarios bloqueados
         c.executescript("""
             CREATE TABLE IF NOT EXISTS block_list (
@@ -969,11 +976,11 @@ class Database:
         self.conn.commit()
 
     # Adiciona ou atualiza membro em um grupo
-    def save_group_member(self, group_id, uid, display_name, ip=''):
+    def save_group_member(self, group_id, uid, display_name, ip='', is_admin=0):
         self.conn.execute("""
-            INSERT OR REPLACE INTO group_members (group_id, uid, display_name, ip)
-            VALUES (?, ?, ?, ?)
-        """, (group_id, uid, display_name, ip))
+            INSERT OR REPLACE INTO group_members (group_id, uid, display_name, ip, is_admin)
+            VALUES (?, ?, ?, ?, ?)
+        """, (group_id, uid, display_name, ip, is_admin))
         self.conn.commit()
 
     # Retorna lista de membros de um grupo
