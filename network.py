@@ -805,6 +805,7 @@ class UDPDiscovery:
                             'avatar_data': '',
                             'department': p.get('department', ''),
                             'ramal': p.get('ramal', ''),
+                            'version': p.get('version', ''),
                             'tcp_port': p.get('tcp_port', TCP_PORT),
                             'last_seen': time.time(),
                         }
@@ -862,6 +863,7 @@ class UDPDiscovery:
                 'avatar_data': pkt.get('avatar_data', ''),
                 'department': pkt.get('department', ''),
                 'ramal': pkt.get('ramal', ''),
+                'version': pkt.get('version', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
                 'last_seen': time.time()  # Marca momento do recebimento
             }

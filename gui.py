@@ -2248,32 +2248,96 @@ class PreferencesWindow(tk.Toplevel):
         fg = t.get('fg_black', '#1a202c')
 
         if not getattr(self, '_admin_unlocked', False):
+            import hashlib as _hl, os as _os
+
+            _db_dir = _os.path.dirname(self.app.messenger.db.db_path)
+            _reset_file = _os.path.join(_db_dir, 'admin_reset')
+            if _os.path.exists(_reset_file):
+                try:
+                    self.app.messenger.db.set_setting('admin_password_hash', '')
+                    _os.remove(_reset_file)
+                except Exception:
+                    pass
+
+            stored_hash = self.app.messenger.db.get_setting('admin_password_hash', '')
+
             tk.Label(parent, text='Área Admin', font=('Segoe UI', 11, 'bold'),
                      bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(16, 4))
-            tk.Label(parent, text='Digite a senha de administrador:',
-                     font=FONT, bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(8, 2))
-            pw_var = tk.StringVar()
-            pw_entry = tk.Entry(parent, textvariable=pw_var, show='*', font=FONT,
-                                bg=t.get('bg_white', '#ffffff'), fg=fg,
-                                relief='flat', bd=1, width=22)
-            pw_entry.pack(anchor='w', padx=16, pady=(0, 4))
-            pw_entry.focus_set()
-            lbl_err = tk.Label(parent, text='', font=FONT, bg=bg, fg='#e53e3e')
-            lbl_err.pack(anchor='w', padx=16)
 
-            def _check(*_):
-                if pw_var.get() == '1234512345':
+            if not stored_hash:
+                # Primeiro acesso — pedir para definir senha
+                tk.Label(parent,
+                         text='Defina uma senha de administrador para esta instalação:',
+                         font=FONT, bg=bg, fg=fg,
+                         wraplength=340).pack(anchor='w', padx=16, pady=(8, 2))
+                pw1_var = tk.StringVar()
+                pw2_var = tk.StringVar()
+                pw1 = tk.Entry(parent, textvariable=pw1_var, show='*', font=FONT,
+                               bg=t.get('bg_white', '#ffffff'), fg=fg,
+                               relief='flat', bd=1, width=22)
+                pw1.pack(anchor='w', padx=16, pady=(0, 2))
+                tk.Label(parent, text='Confirmar senha:', font=FONT,
+                         bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(4, 2))
+                pw2 = tk.Entry(parent, textvariable=pw2_var, show='*', font=FONT,
+                               bg=t.get('bg_white', '#ffffff'), fg=fg,
+                               relief='flat', bd=1, width=22)
+                pw2.pack(anchor='w', padx=16, pady=(0, 4))
+                pw1.focus_set()
+                lbl_err = tk.Label(parent, text='', font=FONT, bg=bg, fg='#e53e3e')
+                lbl_err.pack(anchor='w', padx=16)
+
+                def _create(*_):
+                    p1, p2 = pw1_var.get().strip(), pw2_var.get().strip()
+                    if len(p1) < 6:
+                        lbl_err.config(text='Mínimo 6 caracteres')
+                        return
+                    if p1 != p2:
+                        lbl_err.config(text='Senhas não coincidem')
+                        return
+                    self.app.messenger.db.set_setting(
+                        'admin_password_hash',
+                        _hl.sha256(p1.encode()).hexdigest())
                     self._admin_unlocked = True
                     self._select_category(self._current_idx)
-                else:
-                    lbl_err.config(text='Senha incorreta')
-                    pw_var.set('')
-                    pw_entry.focus_set()
 
-            pw_entry.bind('<Return>', _check)
-            tk.Button(parent, text='Entrar', font=FONT, command=_check,
-                      bg='#0f2a5c', fg='white', bd=0, padx=12, pady=4,
-                      cursor='hand2').pack(anchor='w', padx=16, pady=(4, 0))
+                pw2.bind('<Return>', _create)
+                tk.Button(parent, text='Definir senha e entrar', font=FONT,
+                          command=_create, bg='#0f2a5c', fg='white',
+                          bd=0, padx=12, pady=4,
+                          cursor='hand2').pack(anchor='w', padx=16, pady=(4, 0))
+            else:
+                # Login normal
+                tk.Label(parent, text='Digite a senha de administrador:',
+                         font=FONT, bg=bg, fg=fg).pack(anchor='w', padx=16, pady=(8, 2))
+                pw_var = tk.StringVar()
+                pw_entry = tk.Entry(parent, textvariable=pw_var, show='*', font=FONT,
+                                    bg=t.get('bg_white', '#ffffff'), fg=fg,
+                                    relief='flat', bd=1, width=22)
+                pw_entry.pack(anchor='w', padx=16, pady=(0, 4))
+                pw_entry.focus_set()
+                lbl_err = tk.Label(parent, text='', font=FONT, bg=bg, fg='#e53e3e')
+                lbl_err.pack(anchor='w', padx=16)
+
+                def _check(*_):
+                    entered = pw_var.get()
+                    ok = _hl.sha256(entered.encode()).hexdigest() == stored_hash
+                    if ok:
+                        self._admin_unlocked = True
+                        self._select_category(self._current_idx)
+                    else:
+                        lbl_err.config(text='Senha incorreta')
+                        pw_var.set('')
+                        pw_entry.focus_set()
+
+                pw_entry.bind('<Return>', _check)
+                tk.Button(parent, text='Entrar', font=FONT, command=_check,
+                          bg='#0f2a5c', fg='white', bd=0, padx=12, pady=4,
+                          cursor='hand2').pack(anchor='w', padx=16, pady=(4, 0))
+
+            tk.Label(parent,
+                     text='Reset: crie o arquivo "admin_reset" em %APPDATA%\\.mbchat\\',
+                     font=('Segoe UI', 6), bg=bg, fg='#a0aec0',
+                     wraplength=340).pack(anchor='w', padx=16, pady=(8, 0))
             return
 
         # ===== Painel Admin — Dashboard Moderno =====
@@ -2342,6 +2406,58 @@ class PreferencesWindow(tk.Toplevel):
             tk.Label(card, text=lbl, font=('Segoe UI', 7),
                      bg='white', fg='#64748b').pack(anchor='w')
 
+        # --- Busca Global ---
+        _section_hdr('Busca em Todas as Conversas')
+        srch_outer = tk.Frame(inner, bg=bg)
+        srch_outer.pack(fill='x', padx=16, pady=(0, 4))
+        srch_var = tk.StringVar()
+        srch_eb = tk.Frame(srch_outer, bg='#d0d5dd')
+        srch_eb.pack(side='left', fill='x', expand=True, padx=(0, 6))
+        srch_entry = tk.Entry(srch_eb, textvariable=srch_var, font=FONT,
+                              bg='white', fg='#1a202c', relief='flat', bd=0)
+        srch_entry.pack(fill='x', padx=1, pady=1, ipady=4)
+        srch_results = tk.Frame(inner, bg=bg)
+        srch_results.pack(fill='x', padx=16, pady=(0, 6))
+
+        def _do_search():
+            for w in srch_results.winfo_children():
+                w.destroy()
+            q = srch_var.get().strip()
+            if not q:
+                return
+            matches = self.app.messenger.db.search_all_messages(q, limit=200)
+            if not matches:
+                tk.Label(srch_results, text='Nenhum resultado.',
+                         font=FONT, bg=bg, fg='#718096').pack(anchor='w')
+                inner.after(50, lambda: _bind_wheel(inner))
+                return
+            from collections import defaultdict
+            from datetime import datetime as _dt
+            by_peer = defaultdict(list)
+            my_uid = self.app.messenger.user_id
+            for m in matches:
+                peer = m['from_user'] if m['from_user'] != my_uid else m['to_user']
+                by_peer[peer].append(m)
+            for peer_uid, peer_msgs in list(by_peer.items())[:10]:
+                pinfo = self.app.peer_info.get(peer_uid, {})
+                pname = pinfo.get('display_name', peer_uid)
+                tk.Label(srch_results, text=f'● {pname}',
+                         font=('Segoe UI', 8, 'bold'), bg=bg,
+                         fg='#2d3748').pack(anchor='w', pady=(6, 1))
+                for m in peer_msgs[:3]:
+                    ts = _dt.fromtimestamp(m['timestamp']).strftime('%d/%m %H:%M')
+                    preview = m['content'][:90] + ('…' if len(m['content']) > 90 else '')
+                    tk.Label(srch_results, text=f'   [{ts}] {preview}',
+                             font=('Segoe UI', 7), bg=bg, fg='#718096',
+                             anchor='w', justify='left',
+                             wraplength=340).pack(anchor='w')
+            inner.after(50, lambda: _bind_wheel(inner))
+
+        srch_entry.bind('<Return>', lambda e: _do_search())
+        tk.Button(srch_outer, text='Buscar', font=FONT,
+                  bg='#0f2a5c', fg='white', bd=0, padx=10, pady=3,
+                  cursor='hand2', command=_do_search).pack(side='left')
+
         # --- Computadores Online ---
         _section_hdr('Computadores Online')
         peers_sorted = sorted(
@@ -2365,7 +2481,7 @@ class PreferencesWindow(tk.Toplevel):
             dot_c = STATUS_DOT.get(info.get('status', 'offline'), '#a0aec0')
             tk.Label(row, text='●', font=('Segoe UI', 14),
                      fg=dot_c, bg='#f8fafc').grid(
-                row=0, column=0, rowspan=2, padx=(10, 6), pady=6)
+                row=0, column=0, rowspan=3, padx=(10, 6), pady=6)
 
             tk.Label(row, text=info.get('display_name', uid),
                      font=('Segoe UI', 9, 'bold'),
@@ -2376,7 +2492,14 @@ class PreferencesWindow(tk.Toplevel):
                 info.get('winuser', ''), info.get('ip', '')]))
             tk.Label(row, text=sub, font=('Segoe UI', 7),
                      bg='#f8fafc', fg='#718096', anchor='w').grid(
-                row=1, column=1, sticky='w', pady=(0, 6))
+                row=1, column=1, sticky='w')
+
+            peer_ver = info.get('version', '')
+            ver_color = '#e53e3e' if (peer_ver and peer_ver != APP_VERSION) else '#718096'
+            ver_txt = f'v{peer_ver}' if peer_ver else 'versão desconhecida'
+            tk.Label(row, text=ver_txt, font=('Segoe UI', 7),
+                     bg='#f8fafc', fg=ver_color, anchor='w').grid(
+                row=2, column=1, sticky='w', pady=(0, 6))
 
             def _make_block(u=uid, i=info):
                 def _block():
@@ -2393,12 +2516,73 @@ class PreferencesWindow(tk.Toplevel):
                     self._select_category(self._current_idx)
                 return _block
 
-            btn_b = tk.Button(row, text='Bloquear', font=('Segoe UI', 7),
+            def _make_view_conv(u=uid, n=info.get('display_name', uid)):
+                def _view():
+                    from datetime import datetime as _dt
+                    msgs = self.app.messenger.db.get_messages_with_peer(
+                        self.app.messenger.user_id, u)
+                    win = tk.Toplevel(self)
+                    win.title(f'Conversa — {n}')
+                    _center_window(win, 600, 450)
+                    txt = tk.Text(win, wrap='word', font=('Segoe UI', 9),
+                                  bg='#f8fafc', fg='#1a202c', relief='flat',
+                                  bd=0, state='normal')
+                    vsb = tk.Scrollbar(win, command=txt.yview)
+                    txt.configure(yscrollcommand=vsb.set)
+                    vsb.pack(side='right', fill='y')
+                    txt.pack(fill='both', expand=True, padx=8, pady=8)
+                    my = self.app.messenger.user_id
+                    for m in msgs:
+                        ts = _dt.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
+                        s = 'Você' if m['from_user'] == my else n
+                        txt.insert('end', f'[{ts}] {s}: {m["content"]}\n')
+                    txt.config(state='disabled')
+                    txt.see('end')
+                return _view
+
+            def _make_export(u=uid, n=info.get('display_name', uid)):
+                def _export():
+                    from datetime import datetime as _dt
+                    msgs = self.app.messenger.db.get_messages_with_peer(
+                        self.app.messenger.user_id, u)
+                    path = filedialog.asksaveasfilename(
+                        parent=self, defaultextension='.txt',
+                        initialfile=f'conversa_{n}.txt',
+                        filetypes=[('Texto', '*.txt'), ('Todos', '*.*')])
+                    if not path:
+                        return
+                    my = self.app.messenger.user_id
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write(f'MB Chat — Conversa com {n}\n')
+                        f.write(f'Exportado em {_dt.now().strftime("%d/%m/%Y %H:%M")}\n')
+                        f.write('=' * 50 + '\n\n')
+                        for m in msgs:
+                            ts = _dt.fromtimestamp(m['timestamp']).strftime('%d/%m/%Y %H:%M')
+                            s = 'Você' if m['from_user'] == my else n
+                            f.write(f'[{ts}] {s}: {m["content"]}\n')
+                    messagebox.showinfo('Exportar', f'Salvo em:\n{path}', parent=self)
+                return _export
+
+            btn_col = tk.Frame(row, bg='#f8fafc')
+            btn_col.grid(row=0, column=2, rowspan=3, padx=(0, 10), pady=6)
+            btn_b = tk.Button(btn_col, text='Bloquear', font=('Segoe UI', 7),
                               bg='#fed7d7', fg='#c53030', relief='flat', bd=0,
-                              padx=8, pady=3, cursor='hand2',
+                              padx=8, pady=2, cursor='hand2',
                               command=_make_block())
-            btn_b.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=6)
+            btn_b.pack(pady=(0, 2))
             _add_hover(btn_b, '#fed7d7', '#feb2b2')
+            btn_v = tk.Button(btn_col, text='Ver conversa', font=('Segoe UI', 7),
+                              bg='#e2e8f0', fg='#2d3748', relief='flat', bd=0,
+                              padx=6, pady=2, cursor='hand2',
+                              command=_make_view_conv())
+            btn_v.pack(pady=(0, 2))
+            _add_hover(btn_v, '#e2e8f0', '#cbd5e0')
+            btn_e = tk.Button(btn_col, text='Exportar', font=('Segoe UI', 7),
+                              bg='#e2e8f0', fg='#2d3748', relief='flat', bd=0,
+                              padx=6, pady=2, cursor='hand2',
+                              command=_make_export())
+            btn_e.pack()
+            _add_hover(btn_e, '#e2e8f0', '#cbd5e0')
 
         # --- Computadores Bloqueados ---
         _section_hdr('Computadores Bloqueados')
@@ -2464,6 +2648,103 @@ class PreferencesWindow(tk.Toplevel):
                          text=f'· {n_mem} membros · por {creator_name}',
                          font=('Segoe UI', 7),
                          bg='#f0f4ff', fg='#718096').pack(side='left', padx=6)
+
+                def _make_view_members(gid=gid, gname=gdata.get('name', 'Grupo')):
+                    def _view():
+                        members = self.app.messenger.db.get_group_members(gid)
+                        win = tk.Toplevel(self)
+                        win.title(f'Membros — {gname}')
+                        _center_window(win, 360, 300)
+                        win.grab_set()
+                        tk.Label(win, text=f'Grupo: {gname}',
+                                 font=('Segoe UI', 10, 'bold')).pack(padx=16, pady=(12, 8))
+                        for m in members:
+                            mname = m.get('display_name', m.get('uid', '?'))
+                            flag = ' ★' if m.get('is_admin') else ''
+                            tk.Label(win, text=f'{mname}{flag}',
+                                     font=FONT, anchor='w').pack(
+                                fill='x', padx=20, pady=2)
+                        tk.Button(win, text='Fechar', command=win.destroy,
+                                  font=FONT, bg='#e2e8f0', fg='#2d3748',
+                                  bd=0, padx=12, pady=4,
+                                  cursor='hand2').pack(pady=10)
+                    return _view
+
+                def _make_del_group(gid=gid, gname=gdata.get('name', 'Grupo')):
+                    def _del():
+                        if messagebox.askyesno(
+                                'Deletar Grupo',
+                                f'Deletar "{gname}" para todos os membros?',
+                                parent=self):
+                            try:
+                                self.app.messenger.delete_group_globally(gid)
+                            except Exception:
+                                pass
+                            self._select_category(self._current_idx)
+                    return _del
+
+                grp_btns = tk.Frame(grow, bg='#f0f4ff')
+                grp_btns.pack(side='right', padx=(0, 10), pady=6)
+                tk.Button(grp_btns, text='Ver membros', font=('Segoe UI', 7),
+                          bg='#e2e8f0', fg='#2d3748', relief='flat', bd=0,
+                          padx=6, pady=2, cursor='hand2',
+                          command=_make_view_members()).pack(pady=(0, 2))
+                btn_dg = tk.Button(grp_btns, text='Deletar', font=('Segoe UI', 7),
+                                   bg='#fed7d7', fg='#c53030', relief='flat', bd=0,
+                                   padx=6, pady=2, cursor='hand2',
+                                   command=_make_del_group())
+                btn_dg.pack()
+                _add_hover(btn_dg, '#fed7d7', '#feb2b2')
+
+        # --- Segurança Admin ---
+        _section_hdr('Segurança')
+        sec_frame = tk.Frame(inner, bg=bg)
+        sec_frame.pack(fill='x', padx=16, pady=(0, 8))
+
+        def _change_pw():
+            import hashlib as _hl2
+            win = tk.Toplevel(self)
+            win.title('Mudar Senha Admin')
+            win.resizable(False, False)
+            _center_window(win, 320, 220)
+            win.grab_set()
+            tk.Label(win, text='Nova senha (mín. 6 caracteres):',
+                     font=FONT).pack(padx=16, pady=(16, 2), anchor='w')
+            var1 = tk.StringVar()
+            tk.Entry(win, textvariable=var1, show='*', font=FONT,
+                     width=28).pack(padx=16)
+            tk.Label(win, text='Confirmar senha:',
+                     font=FONT).pack(padx=16, pady=(8, 2), anchor='w')
+            var2 = tk.StringVar()
+            tk.Entry(win, textvariable=var2, show='*', font=FONT,
+                     width=28).pack(padx=16)
+            lbl_pw_err = tk.Label(win, text='', font=FONT, fg='#e53e3e')
+            lbl_pw_err.pack(pady=4)
+
+            def _save_pw():
+                p1, p2 = var1.get().strip(), var2.get().strip()
+                if len(p1) < 6:
+                    lbl_pw_err.config(text='Mínimo 6 caracteres')
+                    return
+                if p1 != p2:
+                    lbl_pw_err.config(text='Senhas não coincidem')
+                    return
+                h = _hl2.sha256(p1.encode()).hexdigest()
+                self.app.messenger.db.set_setting('admin_password_hash', h)
+                messagebox.showinfo('Senha', 'Senha alterada com sucesso!', parent=win)
+                win.destroy()
+
+            tk.Button(win, text='Salvar', font=FONT, bg='#0f2a5c', fg='white',
+                      bd=0, padx=14, pady=5, cursor='hand2',
+                      command=_save_pw).pack(pady=8)
+
+        tk.Button(sec_frame, text='Mudar Senha Admin', font=FONT,
+                  bg='#e2e8f0', fg='#2d3748', bd=0, padx=12, pady=4,
+                  cursor='hand2', command=_change_pw).pack(anchor='w')
+        tk.Label(sec_frame,
+                 text='Reset: crie o arquivo "admin_reset" em %APPDATA%\\.mbchat\\',
+                 font=('Segoe UI', 6), bg=bg, fg='#a0aec0',
+                 wraplength=360).pack(anchor='w', pady=(4, 0))
 
         # --- Aviso Geral ---
         _section_hdr('Aviso Geral')
