@@ -591,6 +591,7 @@ class Messenger:
             group_id = msg.get('group_id')
             target_uid = msg.get('target_uid', '')
             group = self._groups.get(group_id)
+            group_name = group.get('name', '') if group else ''
             if group and target_uid:
                 group['members'] = [m for m in group['members']
                                     if m['uid'] != target_uid]
@@ -602,7 +603,7 @@ class Messenger:
                         del self._groups[group_id]
                     self.db.delete_group(group_id)
             if self.on_group_kick:
-                self.on_group_kick(group_id, target_uid)
+                self.on_group_kick(group_id, target_uid, group_name)
 
         # --- Atualizacao de Status de Admin ---
         elif msg_type == MT_GROUP_ADMIN_SET:

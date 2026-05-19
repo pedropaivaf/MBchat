@@ -2243,7 +2243,7 @@ class PreferencesWindow(tk.Toplevel):
                   ).pack(anchor='w')
 
     def _build_admin(self, parent):
-        t = self._theme or {}
+        t = self._t or {}
         bg = t.get('bg_window', BG_WINDOW)
         fg = t.get('fg_black', '#1a202c')
 
@@ -2289,8 +2289,16 @@ class PreferencesWindow(tk.Toplevel):
                    lambda e: adm_canvas.configure(scrollregion=adm_canvas.bbox('all')))
         adm_canvas.bind('<Configure>',
                         lambda e: adm_canvas.itemconfig('inner', width=e.width))
-        adm_canvas.bind('<MouseWheel>',
-                        lambda e: adm_canvas.yview_scroll(-1 * (e.delta // 120), 'units'))
+
+        def _wheel(e):
+            adm_canvas.yview_scroll(-1 * (e.delta // 120), 'units')
+
+        def _bind_wheel(w):
+            w.bind('<MouseWheel>', _wheel)
+            for c in w.winfo_children():
+                _bind_wheel(c)
+
+        adm_canvas.bind('<MouseWheel>', _wheel)
 
         # --- Helpers ---
         STATUS_DOT = {'online': '#48bb78', 'away': '#ecc94b',
@@ -2314,18 +2322,25 @@ class PreferencesWindow(tk.Toplevel):
         group_count = len(self.app.messenger._groups)
 
         stats_row = tk.Frame(inner, bg=bg)
-        stats_row.pack(fill='x', padx=16, pady=(10, 2))
-        for lbl, val, color in [
-            ('Online', str(online_count), '#48bb78'),
-            ('Bloqueados', str(len(blocked_ids)), '#f56565'),
-            ('Grupos', str(group_count), '#667eea'),
+        stats_row.pack(fill='x', padx=16, pady=(14, 6))
+        for lbl, val, color, icon in [
+            ('computadores online', str(online_count), '#22c55e', '●'),
+            ('bloqueados', str(len(blocked_ids)), '#ef4444', '⊘'),
+            ('grupos ativos', str(group_count), '#6366f1', '◆'),
         ]:
-            sf = tk.Frame(stats_row, bg=color, padx=14, pady=8)
-            sf.pack(side='left', padx=(0, 8))
-            tk.Label(sf, text=val, font=('Segoe UI', 14, 'bold'),
-                     bg=color, fg='white').pack()
-            tk.Label(sf, text=lbl, font=('Segoe UI', 7),
-                     bg=color, fg='white').pack()
+            card_outer = tk.Frame(stats_row, bg='#e2e8f0')
+            card_outer.pack(side='left', padx=(0, 10))
+            tk.Frame(card_outer, bg=color, height=3).pack(fill='x')
+            card = tk.Frame(card_outer, bg='white', padx=18, pady=10)
+            card.pack()
+            top_r = tk.Frame(card, bg='white')
+            top_r.pack(anchor='w')
+            tk.Label(top_r, text=icon, font=('Segoe UI', 9),
+                     bg='white', fg=color).pack(side='left', padx=(0, 5))
+            tk.Label(top_r, text=val, font=('Segoe UI', 18, 'bold'),
+                     bg='white', fg='#0f172a').pack(side='left')
+            tk.Label(card, text=lbl, font=('Segoe UI', 7),
+                     bg='white', fg='#64748b').pack(anchor='w')
 
         # --- Computadores Online ---
         _section_hdr('Computadores Online')
@@ -2480,6 +2495,9 @@ class PreferencesWindow(tk.Toplevel):
         tk.Button(aviso_outer, text='Enviar para Todos', font=FONT,
                   bg='#0f2a5c', fg='white', bd=0, padx=14, pady=5,
                   cursor='hand2', command=_send_aviso).pack(anchor='w')
+
+        # Ativa scroll com mouse em qualquer widget da área admin
+        inner.after(50, lambda: _bind_wheel(inner))
 
     # ----- SAVE ALL -----
     # Salva todas as preferências no banco de dados e aplica as mudanças imediatamente.
@@ -13707,9 +13725,11 @@ class LanMessengerApp:
             gw.add_member(uid, display_name, m_info)
             gw.system_message(f'{display_name} entrou no grupo.')
 
-    def _on_group_kick(self, group_id, target_uid):
+    def _on_group_kick(self, group_id, target_uid, group_name=''):
         if group_id in self.group_windows:
             gw = self.group_windows[group_id]
+            if not group_name:
+                group_name = gw.group_name
             name = gw._members.get(target_uid, {}).get('display_name', target_uid)
             gw.remove_member(target_uid)
             if target_uid != self.messenger.user_id:
@@ -13725,6 +13745,11 @@ class LanMessengerApp:
             if group_id in self.group_windows:
                 gw = self.group_windows.pop(group_id)
                 gw.after(2000, lambda: gw.destroy() if gw.winfo_exists() else None)
+            label = f'grupo "{group_name}"' if group_name else 'um grupo'
+            self._show_toast_generic(
+                'Removido do grupo',
+                f'Você foi removido do {label}.'
+            )
 
     def _on_group_admin_set(self, group_id, target_uid, is_admin):
         if group_id in self.group_windows:
