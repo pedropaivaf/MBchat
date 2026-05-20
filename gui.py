@@ -12934,6 +12934,29 @@ class LanMessengerApp:
             msg_text.delete('1.0', 'end')
             msg_text.configure(state='disabled')
 
+        _hist_link_counter = [0]
+        def _insert_hist_links(text, newline=True):
+            last = 0
+            for m in _URL_RE.finditer(text):
+                if m.start() > last:
+                    msg_text.insert('end', text[last:m.start()])
+                url = m.group(0)
+                _hist_link_counter[0] += 1
+                ltag = f'hlink_{_hist_link_counter[0]}'
+                msg_text.insert('end', url, ltag)
+                msg_text.tag_config(ltag, foreground='#0066cc', underline=True)
+                msg_text.tag_bind(ltag, '<Button-1>',
+                                  lambda e, u=url: _open_url(u))
+                msg_text.tag_bind(ltag, '<Enter>',
+                                  lambda e: msg_text.config(cursor='hand2'))
+                msg_text.tag_bind(ltag, '<Leave>',
+                                  lambda e: msg_text.config(cursor=''))
+                last = m.end()
+            if last < len(text):
+                msg_text.insert('end', text[last:])
+            if newline:
+                msg_text.insert('end', '\n')
+
         def _render_messages(peer_id, msgs, query='', scroll_to_id=None):
             peer_name = _resolve_name(peer_id)
             if msgs:
@@ -13025,7 +13048,7 @@ class LanMessengerApp:
                 else:
                     if query_lower and scroll_to_id is None and query_lower in content.lower():
                         ctx_tag = f'ctx_{id(m)}'
-                        msg_text.insert('end', content)
+                        _insert_hist_links(content, newline=False)
                         msg_text.insert('end', '  ↗', ctx_tag)
                         msg_text.tag_config(ctx_tag,
                             foreground='#1565c0', font=('Segoe UI', 8, 'bold'),
@@ -13040,7 +13063,7 @@ class LanMessengerApp:
                             lambda e: msg_text.config(cursor=''))
                         msg_text.insert('end', '\n')
                     else:
-                        msg_text.insert('end', f'{content}\n')
+                        _insert_hist_links(content)
                 if query_lower:
                     line_end = msg_text.index(f'{start_idx} lineend +1c')
                     full_line = msg_text.get(start_idx, line_end).lower()
