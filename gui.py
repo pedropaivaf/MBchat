@@ -26,6 +26,8 @@ import re                                       # Detectar emojis Unicode via ex
 import io                                       # BytesIO para compressao de imagens em memoria
 import webbrowser                                # Abrir links clicaveis no browser padrao
 from pathlib import Path                        # Manipulação de caminhos de forma moderna
+import subprocess                               # PowerShell remoto (ver tela admin)
+import base64                                   # Decodificar screenshot remoto
 
 # --- Logging ---
 # Arquivo de log em %APPDATA%\MBChat\mbchat.log (Windows) ou ~/MBChat/mbchat.log
@@ -101,6 +103,18 @@ _EMOJI_RE = re.compile(
 _URL_RE = re.compile(
     r'(https?://[^\s<>"\'`]+|www\.[^\s<>"\'`]+)',
     re.IGNORECASE
+)
+
+# Script PowerShell para capturar tela remota via WinRM (admin)
+_PS_SCREENSHOT = (
+    "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+    "$s=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
+    "$b=New-Object System.Drawing.Bitmap($s.Width,$s.Height);"
+    "$g=[System.Drawing.Graphics]::FromImage($b);"
+    "$g.CopyFromScreen(0,0,0,0,$b.Size);"
+    "$ms=New-Object System.IO.MemoryStream;"
+    "$b.Save($ms,[System.Drawing.Imaging.ImageFormat]::Jpeg);"
+    "[Convert]::ToBase64String($ms.ToArray())"
 )
 
 # Bloco de codigo triplo backtick: ```lang\ncontent``` ou ```content```
@@ -10813,6 +10827,8 @@ class LanMessengerApp:
                                   command=self._ctx_file)   # Enviar arquivo
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label=_t('ctx_info'), command=self._ctx_info)
+        self.ctx_menu.add_separator()
+        self.ctx_menu.add_command(label='Ver tela', command=self._ctx_view_screen)
 
 
     # Cria imagens de bolinha colorida (10x10px) para cada status possível.
@@ -12491,6 +12507,121 @@ class LanMessengerApp:
                   bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0,
                   padx=12, pady=4, cursor='hand2',
                   command=dlg.destroy).pack(side='right', padx=(0, 6))
+
+    def _ctx_view_screen(self):
+        uid = self._get_selected_peer()
+        if uid:
+            self._view_remote_screen(uid)
+
+    def _view_remote_screen(self, uid):
+        info = self.peer_info.get(uid, {})
+        ip = info.get('ip', '')
+        name = info.get('display_name', uid)
+        if not ip:
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title(f'Tela — {name}')
+        win.geometry('960x580')
+        _apply_rounded_corners(win)
+        _center_window(win, 960, 580)
+        win.configure(bg='#1a1a2e')
+
+        lbl_status = tk.Label(win, text='Conectando...', font=('Segoe UI', 11),
+                              bg='#1a1a2e', fg='#a0aec0')
+        lbl_status.pack(pady=20)
+
+        img_label = tk.Label(win, bg='#1a1a2e')
+        img_label.pack(padx=8, pady=4)
+
+        win._screen_running = True
+        win._screen_job = None
+        win._img_ref = None
+
+        def _fetch():
+            try:
+                cmd = [
+                    'powershell', '-NonInteractive', '-NoProfile', '-Command',
+                    f'Invoke-Command -ComputerName {ip} -ScriptBlock {{ {_PS_SCREENSHOT} }}'
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+                b64 = result.stdout.strip()
+                if not b64:
+                    raise RuntimeError(result.stderr.strip() or 'Sem resposta do WinRM')
+                return base64.b64decode(b64), None
+            except Exception as exc:
+                return None, str(exc)
+
+        def _refresh():
+            if not win._screen_running or not win.winfo_exists():
+                return
+            lbl_status.config(text='Capturando...')
+
+            def _bg():
+                img_bytes, err = _fetch()
+                def _apply():
+                    if not win.winfo_exists():
+                        return
+                    if err:
+                        lbl_status.config(text=f'Erro: {err}')
+                    else:
+                        if HAS_PIL:
+                            from PIL import Image, ImageTk
+                            img = Image.open(io.BytesIO(img_bytes))
+                            img.thumbnail((940, 510), Image.LANCZOS)
+                            photo = ImageTk.PhotoImage(img)
+                            win._img_ref = photo
+                            img_label.config(image=photo)
+                            lbl_status.config(
+                                text=f'{name}  •  {img.size[0]}×{img.size[1]}  •  {len(img_bytes)//1024} KB')
+                        else:
+                            lbl_status.config(text='PIL não disponível para exibir imagem')
+                self.root.after(0, _apply)
+
+            threading.Thread(target=_bg, daemon=True).start()
+
+        bar = tk.Frame(win, bg='#16213e')
+        bar.pack(side='bottom', fill='x', padx=0, pady=0)
+
+        tk.Button(bar, text='↺  Atualizar', font=('Segoe UI', 9),
+                  bg='#0f3460', fg='#e2e8f0', relief='flat', bd=0,
+                  padx=14, pady=5, cursor='hand2',
+                  command=_refresh).pack(side='left', padx=8, pady=6)
+
+        auto_var = tk.BooleanVar(value=False)
+
+        def _toggle_auto():
+            if auto_var.get():
+                _schedule_auto()
+            elif win._screen_job:
+                win.after_cancel(win._screen_job)
+                win._screen_job = None
+
+        def _schedule_auto():
+            if not auto_var.get() or not win.winfo_exists():
+                return
+            _refresh()
+            win._screen_job = win.after(5000, _schedule_auto)
+
+        tk.Checkbutton(bar, text='Auto (5s)', variable=auto_var,
+                       command=_toggle_auto, font=('Segoe UI', 9),
+                       bg='#16213e', fg='#e2e8f0',
+                       selectcolor='#0f3460', activebackground='#16213e',
+                       activeforeground='#e2e8f0').pack(side='left')
+
+        tk.Button(bar, text='Fechar', font=('Segoe UI', 9),
+                  bg='#2d3748', fg='#e2e8f0', relief='flat', bd=0,
+                  padx=14, pady=5, cursor='hand2',
+                  command=win.destroy).pack(side='right', padx=8, pady=6)
+
+        def _on_close():
+            win._screen_running = False
+            if win._screen_job:
+                win.after_cancel(win._screen_job)
+            win.destroy()
+
+        win.protocol('WM_DELETE_WINDOW', _on_close)
+        _refresh()
 
     # Abre ou traz ao foco a janela de chat individual com peer_id.
     #
