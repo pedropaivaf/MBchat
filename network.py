@@ -582,7 +582,8 @@ class UDPDiscovery:
             'winuser': get_windows_user(),  # Conta Windows logada (multi-user)
             'os': f"{platform.system()} {platform.release()}",  # OS info
             'version': APP_VERSION,     # Versao do app para aviso de update
-            'tcp_port': getattr(self, 'tcp_port', TCP_PORT),       # Porta TCP para mensagens
+            'tcp_port': getattr(self, 'tcp_port', TCP_PORT),         # Porta TCP para mensagens
+            'file_port': getattr(self, 'file_port', TCP_PORT + 1),  # Porta TCP para arquivos
             'time': time.time()         # Timestamp do pacote
         }
         if extra:
@@ -807,6 +808,7 @@ class UDPDiscovery:
                             'ramal': p.get('ramal', ''),
                             'version': p.get('version', ''),
                             'tcp_port': p.get('tcp_port', TCP_PORT),
+                            'file_port': p.get('file_port', TCP_PORT + 1),
                             'last_seen': time.time(),
                         }
                         with self._lock:
@@ -865,6 +867,7 @@ class UDPDiscovery:
                 'ramal': pkt.get('ramal', ''),
                 'version': pkt.get('version', ''),
                 'tcp_port': pkt.get('tcp_port', TCP_PORT),
+                'file_port': pkt.get('file_port', TCP_PORT + 1),
                 'last_seen': time.time()  # Marca momento do recebimento
             }
             is_new = False
@@ -1392,7 +1395,7 @@ class FileSender:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(120.0)  # 2 min para usuario aceitar
-            sock.connect((self.peer_ip, self.peer_port + 1))  # File port = TCP+1
+            sock.connect((self.peer_ip, self.peer_port))  # peer_port ja e a porta de arquivo
 
             # Envia header JSON com informacoes do arquivo
             header = json.dumps({

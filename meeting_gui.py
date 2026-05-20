@@ -602,7 +602,7 @@ class MeetingWindow(tk.Toplevel):
         self._room_name_var = tk.StringVar(value=room_names[0] if room_names else '')
         self._room_menu = ttk.Combobox(lf, textvariable=self._room_name_var,
                                        values=room_names, state='readonly',
-                                       width=20, font=FONT_SM)
+                                       width=24, font=FONT_SM)
         self._room_menu.grid(row=1, column=1, sticky='ew', pady=2)
         self._room_map = {r['name']: r['id'] for r in rooms}
 

@@ -14,7 +14,7 @@ SetupIconFile=assets\mbchat.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
@@ -39,10 +39,16 @@ Name: "{autodesktop}\MB Chat"; Filename: "{app}\MBChat.exe"; Tasks: desktopicon
 Name: "{userstartup}\MB Chat"; Filename: "{app}\MBChat.exe"; Parameters: "--silent"; Tasks: autostart
 
 [Run]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat TCP In"""; Flags: runhidden; StatusMsg: "Configurando firewall..."
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MBChat TCP In"" dir=in action=allow protocol=TCP localport=50101,50102 profile=any"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MBChat UDP In"" dir=in action=allow protocol=UDP localport=50100 profile=any"; Flags: runhidden
 Filename: "{app}\MBChat.exe"; Description: "Abrir MB Chat"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/f /im MBChat.exe"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat TCP In"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat UDP In"""; Flags: runhidden
 
 [UninstallDelete]
 Type: files; Name: "{app}\MBChat.exe"
