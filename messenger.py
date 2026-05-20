@@ -196,8 +196,11 @@ class Messenger:
         # Informa o discovery qual foi a porta TCP efetiva (caso tenha usado fallback)
         self.discovery.tcp_port = getattr(self.tcp_server, 'port', TCP_PORT)
 
+        self._file_receiver.start()  # Comeca a aceitar arquivos (antes do discovery p/ anunciar porta real)
+        # Informa o discovery qual foi a porta de arquivo efetiva (caso tenha usado fallback)
+        self.discovery.file_port = getattr(self._file_receiver, 'port', TCP_PORT + 1)
+
         self.discovery.start()      # Comeca a enviar/receber announces UDP
-        self._file_receiver.start()  # Comeca a aceitar arquivos
 
         # Carrega peers manuais persistidos (cenario VPN/fora-da-LAN).
         # Lista vazia = no-op (caminho da LAN intocado, zero overhead).
@@ -1067,9 +1070,11 @@ class Messenger:
             'filesize': filesize
         })
 
-        # Cria sender que conecta na porta de arquivo (TCP_PORT + 1)
+        # Usa file_port anunciado pelo peer; fallback p/ TCP_PORT+1 se peer antigo
+        peer_live = self.discovery.peers.get(to_user_id, {})
+        file_port = peer_live.get('file_port', TCP_PORT + 1)
         sender = FileSender(
-            filepath, contact['ip_address'], TCP_PORT, file_id,
+            filepath, contact['ip_address'], file_port, file_id,
             on_progress=self._on_file_progress_internal,
             on_complete=lambda fid: self._on_file_complete_internal(fid, filepath),
             on_error=self._on_file_error_internal
@@ -1085,9 +1090,17 @@ class Messenger:
 
     # Callback quando recebe pedido de arquivo via TCP
     def _on_file_request(self, msg, addr):
+        fid = msg.get('file_id')
+        if fid:
+            try:
+                self.db.save_file_transfer(
+                    fid, msg.get('from_user', ''), self.user_id,
+                    msg.get('filename', ''), msg.get('filesize', 0))
+            except Exception:
+                pass
         if self.on_file_incoming:
             self.on_file_incoming(
-                msg.get('file_id'),
+                fid,
                 msg.get('from_user'),
                 msg.get('display_name', 'Unknown'),
                 msg.get('filename'),

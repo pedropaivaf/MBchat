@@ -3601,9 +3601,10 @@ class FileTransfersWindow(tk.Toplevel):
         lbl_status.pack(anchor='w')
         row._lbl_status = lbl_status
 
-        # Click to select
+        # Click to select; double-click to open in Explorer
         for w in [row, content] + list(content.winfo_children()):
             w.bind('<Button-1>', lambda e, r=row: self._select_row(r))
+            w.bind('<Double-Button-1>', lambda e, r=row: self._open_entry_file(r))
 
     def _select_row(self, row):
         # Deselect all
@@ -3653,23 +3654,30 @@ class FileTransfersWindow(tk.Toplevel):
                 os.makedirs(download_dir, exist_ok=True)
                 os.startfile(download_dir)
             except Exception:
-                log.exception('Erro ao abrir pasta de downloads')
+                pass
             return
         fp = row._entry.get('filepath', '')
         if not fp:
-            log.warning('Mostrar pasta: filepath vazio para %s', fid)
             return
-        # Abre a pasta que contem o arquivo. os.startfile e o caminho mais
-        # confiavel no Windows — evita o /select, do explorer que quebra
-        # quando passado como arg separado via subprocess.
-        folder = os.path.dirname(fp) if os.path.isfile(fp) else fp
-        if not os.path.isdir(folder):
-            log.warning('Mostrar pasta: diretorio nao existe: %s', folder)
+        self._open_entry_file(row)
+
+    # Abre Explorer selecionando o arquivo. Se arquivo nao existe, abre a pasta.
+    def _open_entry_file(self, row):
+        fp = row._entry.get('filepath', '')
+        if not fp:
             return
-        try:
-            os.startfile(folder)
-        except Exception:
-            log.exception('Erro ao abrir pasta')
+        if os.path.isfile(fp):
+            try:
+                subprocess.Popen(['explorer', '/select,', os.path.normpath(fp)])
+                return
+            except Exception:
+                pass
+        folder = os.path.dirname(fp) if not os.path.isdir(fp) else fp
+        if os.path.isdir(folder):
+            try:
+                os.startfile(folder)
+            except Exception:
+                pass
 
     def _remove_selected(self):
         fid, row = self._get_selected()
@@ -3685,6 +3693,10 @@ class FileTransfersWindow(tk.Toplevel):
             row.destroy()
         self._rows.clear()
         self.app._transfer_history.clear()
+        try:
+            self.app.messenger.db.clear_file_transfers()
+        except Exception:
+            pass
 
     # Adiciona ou atualiza uma entrada.
     def add_or_update(self, entry):
@@ -9942,6 +9954,9 @@ class LanMessengerApp:
         if autostart_val == '1':
             _setup_autostart()
 
+        # Carrega histórico de transferências de arquivo do banco
+        self._load_transfer_history_from_db()
+
         # Mostra barra de "atualizacao concluida" se versao mudou
         self._check_post_update()
 
@@ -11069,6 +11084,36 @@ class LanMessengerApp:
         photo = ImageTk.PhotoImage(img)
         self._row_images[uid] = photo  # previne garbage collection
         return photo
+
+    # Carrega historico de transferencias de arquivo do banco para _transfer_history.
+    # Chamado uma vez na inicializacao. Converte registros do DB para o formato
+    # esperado pela FileTransfersWindow. Transferencias 'pending' viram 'error'
+    # (app fechou antes de completar).
+    def _load_transfer_history_from_db(self):
+        if self._transfer_history:
+            return
+        try:
+            own_id = self.messenger.user_id
+            for r in self.messenger.db.get_file_transfers(own_id):
+                if r['from_user'] == own_id:
+                    direction, peer_id = 'send', r['to_user']
+                else:
+                    direction, peer_id = 'receive', r['from_user']
+                contact = self.messenger.db.get_contact(peer_id)
+                peer_name = contact['display_name'] if contact else peer_id
+                status = r['status'] if r['status'] != 'pending' else 'error'
+                self._transfer_history.append({
+                    'file_id': r['file_id'],
+                    'filename': r['filename'],
+                    'peer_name': peer_name,
+                    'direction': direction,
+                    'filesize': r['filesize'],
+                    'status': status,
+                    'filepath': r.get('filepath', ''),
+                    'peer_id': peer_id,
+                })
+        except Exception:
+            pass
 
     # Carrega todos os contatos do banco (inclusive offline) no TreeView ao iniciar.
     #

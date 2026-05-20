@@ -941,6 +941,18 @@ class Database:
             f"UPDATE file_transfers SET {sets} WHERE file_id=?", vals)
         self.conn.commit()
 
+    # Retorna todas as transferências onde o usuario foi remetente ou destinatario
+    def get_file_transfers(self, own_user_id):
+        rows = self.conn.execute(
+            "SELECT * FROM file_transfers WHERE from_user=? OR to_user=? ORDER BY timestamp ASC",
+            (own_user_id, own_user_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    # Remove todas as transferências (chamado pelo botão Apagar Lista)
+    def clear_file_transfers(self):
+        self.conn.execute("DELETE FROM file_transfers")
+        self.conn.commit()
+
     # ========================================
     # GROUPS — Grupos de chat
     # ========================================
