@@ -350,7 +350,7 @@ class Database:
                 name TEXT    NOT NULL
             );
             INSERT OR IGNORE INTO rooms VALUES
-                (1,'Sala de Vidro'),(2,'Sala MB'),(3,'Certificado');
+                (1,'Sala de Vidro'),(2,'Sala de Reuniões MB'),(3,'Certificado');
 
             CREATE TABLE IF NOT EXISTS bookings (
                 booking_id   TEXT PRIMARY KEY,
@@ -381,6 +381,8 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_bookings_room_time
                 ON bookings(room_id, start_ts, end_ts);
         """)
+        c.execute(
+            "UPDATE rooms SET name='Sala de Reuniões MB' WHERE id=2 AND name='Sala MB'")
         c.commit()
 
     # Migra os arquivos recebidos da antiga pasta LanMessenger_Files para a nova MB_Chat_Files.

@@ -764,6 +764,7 @@ class Messenger:
                     booking_id, responder_uid, 'accepted')
                 if self.db.get_booking_confirmed_count(booking_id) >= 2:
                     self.db.update_booking_status(booking_id, 'confirmed')
+                self._broadcast_booking_update(booking_id)
                 if self.on_meeting_response:
                     self.on_meeting_response({
                         'booking_id': booking_id,
@@ -1764,6 +1765,7 @@ class Messenger:
             return
         if self.db.get_booking_confirmed_count(booking_id) >= 2:
             self.db.update_booking_status(booking_id, 'confirmed')
+        self._broadcast_booking_update(booking_id)
         # Notifica o criador
         creator_uid = booking.get('creator_uid', '')
         if creator_uid and creator_uid != self.user_id:
@@ -1800,6 +1802,26 @@ class Messenger:
                 share_status='active')
         except Exception:
             pass
+
+    def _broadcast_booking_update(self, booking_id):
+        booking = self.db.get_booking(booking_id)
+        if not booking:
+            return
+        parts = self.db.get_booking_participants(booking_id)
+        payload = {
+            'type': MT_MEETING_SYNC_RES,
+            'from_user': self.user_id,
+            'bookings': [dict(booking)],
+        }
+        for p in parts:
+            if p['uid'] == self.user_id:
+                continue
+            contact = self.db.get_contact(p['uid'])
+            if contact and contact.get('ip_address'):
+                try:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+                except Exception:
+                    pass
 
     def decline_meeting(self, booking_id):
         self.db.update_booking_participant_response(

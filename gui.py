@@ -5946,9 +5946,9 @@ class ChatWindow(tk.Toplevel):
 
     # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
     def _send_file(self):
-        filepath = filedialog.askopenfilename(parent=self, title='Enviar arquivo')
-        if filepath:
-            self.app._start_file_send(self.peer_id, filepath)  # inicia transferência
+        filepaths = filedialog.askopenfilenames(parent=self, title='Enviar arquivo')
+        for filepath in filepaths:
+            self.app._start_file_send(self.peer_id, filepath)
 
     # Abre janela de histórico completo com as últimas 500 mensagens.
     #
@@ -6058,6 +6058,25 @@ class ChatWindow(tk.Toplevel):
         txt.tag_configure('me', foreground='#0d47a1', font=('Segoe UI', 9, 'bold'))
         txt.tag_configure('peer', foreground='#2e7d32', font=('Segoe UI', 9, 'bold'))
 
+        _lc = [0]
+        def _insert_links(text):
+            last = 0
+            for m in _URL_RE.finditer(text):
+                if m.start() > last:
+                    txt.insert('end', text[last:m.start()])
+                url = m.group(0)
+                _lc[0] += 1
+                ltag = f'hl_{_lc[0]}'
+                txt.insert('end', url, ltag)
+                txt.tag_config(ltag, foreground='#0066cc', underline=True)
+                txt.tag_bind(ltag, '<Button-1>', lambda e, u=url: _open_url(u))
+                txt.tag_bind(ltag, '<Enter>', lambda e: txt.config(cursor='hand2'))
+                txt.tag_bind(ltag, '<Leave>', lambda e: txt.config(cursor=''))
+                last = m.end()
+            if last < len(text):
+                txt.insert('end', text[last:])
+            txt.insert('end', '\n')
+
         def _parse_date(s):
             s = s.strip()
             if not s or s == ph:
@@ -6116,7 +6135,7 @@ class ChatWindow(tk.Toplevel):
                     txt.tag_bind(tag_img, '<Leave>',
                                  lambda e: txt.config(cursor=''))
                 else:
-                    txt.insert('end', f'{content}\n')
+                    _insert_links(content)
 
                 # Highlight matches
                 if query:
@@ -8548,14 +8567,13 @@ class GroupChatWindow(tk.Toplevel):
 
     # ===== File send =====
     def _send_file(self):
-        filepath = filedialog.askopenfilename(parent=self, title='Enviar arquivo')
-        if not filepath:
-            return
-        threading.Thread(target=self.app.messenger.send_file_to_group,
-                         args=(self.group_id, filepath),
-                         daemon=True).start()
-        filename = os.path.basename(filepath)
-        self.system_message(f'Enviando "{filename}" para o grupo...')
+        filepaths = filedialog.askopenfilenames(parent=self, title='Enviar arquivo')
+        for filepath in filepaths:
+            threading.Thread(target=self.app.messenger.send_file_to_group,
+                             args=(self.group_id, filepath),
+                             daemon=True).start()
+            filename = os.path.basename(filepath)
+            self.system_message(f'Enviando "{filename}" para o grupo...')
 
     def _toggle_remove_mode(self):
         self._remove_mode = True
@@ -12459,8 +12477,7 @@ class LanMessengerApp:
     def _ctx_file(self):
         uid = self._get_selected_peer()  # pega uid do contato selecionado
         if uid:
-            fp = filedialog.askopenfilename(title='Enviar arquivo')
-            if fp:
+            for fp in filedialog.askopenfilenames(title='Enviar arquivo'):
                 self.messenger.send_file(uid, fp)
 
     # Exibe dialogo com informacoes detalhadas do contato selecionado.
@@ -12646,13 +12663,17 @@ class LanMessengerApp:
                  bg=win_bg).pack(side='left')
         search_var = tk.StringVar()
         search_entry = tk.Entry(toolbar, textvariable=search_var,
-                                font=('Segoe UI', 10))
-        search_entry.pack(side='left', padx=(4, 12), fill='x', expand=True)
+                                font=('Segoe UI', 10), width=28)
+        search_entry.pack(side='left', padx=(4, 6))
+        _sh_ph = ''
         search_entry.focus_set()
 
+        tk.Label(toolbar, text='← Digite o trecho da mensagem',
+                 font=('Segoe UI', 8), bg=win_bg, fg='#999999').pack(side='left', padx=(0, 8))
+
         count_lbl = tk.Label(toolbar, text='', font=('Segoe UI', 9),
-                             bg=win_bg, fg='#666666')
-        count_lbl.pack(side='right', padx=(8, 0))
+                             bg=win_bg, fg='#666666', anchor='e')
+        count_lbl.pack(side='right', padx=(0, 4))
 
         # Toolbar de datas (De/Até) com validacao
         date_bar = tk.Frame(win, bg=win_bg)
@@ -12716,7 +12737,7 @@ class LanMessengerApp:
                                   values=('Contatos', 'Grupos'), state='readonly', font=('Segoe UI', 9))
         mode_combo.pack(fill='x')
         
-        tk.Label(left_frame, text='Conversas', font=('Segoe UI', 9, 'bold'),
+        tk.Label(left_frame, text='Nome da pessoa', font=('Segoe UI', 9, 'bold'),
                  bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(4, 2))
 
         name_search_frame = tk.Frame(left_frame, bg=panel_bg)
@@ -12725,7 +12746,7 @@ class LanMessengerApp:
         name_search_entry = tk.Entry(name_search_frame, textvariable=name_search_var,
                                       font=('Segoe UI', 9))
         name_search_entry.pack(fill='x')
-        _name_ph = 'Buscar contato...'
+        _name_ph = 'Digite o nome...'
         name_search_entry.insert(0, _name_ph)
         name_search_entry.config(fg='#999999')
         def _name_focus_in(e):
@@ -13134,7 +13155,8 @@ class LanMessengerApp:
             return shown
 
         def _run_refresh():
-            query = search_var.get().strip()
+            raw_q = search_var.get().strip()
+            query = '' if raw_q == _sh_ph else raw_q
             d_from, d_to, ok = _validate_dates()
             if not ok:
                 count_lbl.config(text='')
@@ -13189,7 +13211,8 @@ class LanMessengerApp:
                 return
             peer_id = sel[0]
             _current_peer[0] = peer_id
-            query = search_var.get().strip()
+            raw_q2 = search_var.get().strip()
+            query = '' if raw_q2 == _sh_ph else raw_q2
             d_from, d_to, ok = _validate_dates()
             if not ok:
                 return
@@ -14137,8 +14160,7 @@ class LanMessengerApp:
         if not uid:                        # nenhum contato selecionado?
             messagebox.showinfo(_t('send_file_btn'), _t('file_select_contact'))  # avisa
             return
-        fp = filedialog.askopenfilename(title='Enviar arquivo')
-        if fp:
+        for fp in filedialog.askopenfilenames(title='Enviar arquivo'):
             self._start_file_send(uid, fp)
 
     # Inicia envio de arquivo: cria entrada na janela Transferencias de Arquivos.
