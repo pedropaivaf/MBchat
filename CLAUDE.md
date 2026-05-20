@@ -388,6 +388,55 @@ Commit: `a3a0363` — branch main, aguardando validação e release pelo usuári
 - Após validação: `git commit` de qualquer ajuste + `python build.py --version 1.8.18 --release`
 - Notas de release humanizadas para o sino do app
 
+## Transferencia de Arquivos — Fixes de file_port + Persistencia da Lista (commit fd9961e)
+
+### Fix file_port dinamico (network.py + messenger.py)
+
+**Problema:** `FileSender` sempre conectava em `peer_ip:50102` (hardcoded `TCP_PORT+1`). Se a porta 50102 estiver ocupada na maquina do destinatario, o `FileReceiver` faz bind em porta fallback (50112, 50122...) e o sender conecta num port errado → "Connection refused" imediato → status "Erro".
+
+**Causa raiz confirmada em producao:** cassiana.dalton (192.168.0.111) — `TcpTestSucceeded: False` na porta 50102, firewall bloqueando inbound TCP 50102.
+
+**Fix implementado:**
+1. `network.py _make_packet`: adiciona `'file_port': getattr(self, 'file_port', TCP_PORT+1)` ao announce UDP
+2. `network.py _handle_packet` MT_ANNOUNCE e MT_PEER_LIST: armazena `file_port` no `peer_info` em memoria
+3. `messenger.py start()`: inicia `_file_receiver` ANTES do discovery, seta `discovery.file_port = receiver.port`
+4. `messenger.py send_file()`: usa `discovery.peers[uid].get('file_port', TCP_PORT+1)` em vez de hardcode
+5. `network.py FileSender._send`: `sock.connect((ip, self.peer_port))` — `peer_port` ja e a porta de arquivo (sem +1)
+
+**Backward compat:** peers com versao antiga nao enviam `file_port` → fallback para `TCP_PORT+1 = 50102`.
+
+### Persistencia da janela Ferramentas > Transferencia de Arquivos
+
+**Problema:** `_transfer_history` era lista em memoria — ao fechar e reabrir o app a lista ficava em branco. Arquivos recebidos nunca eram salvos no DB (so enviados eram).
+
+**Fix implementado:**
+- `database.py`: `get_file_transfers(own_user_id)` e `clear_file_transfers()`
+- `messenger.py _on_file_request`: salva arquivo RECEBIDO no DB via `save_file_transfer()` antes de chamar callback
+- `gui.py _load_transfer_history_from_db()`: carrega registros do DB em `_transfer_history` no `_deferred_init`. Status `pending` (app fechou antes de completar) vira `error`.
+- `gui.py FileTransfersWindow._clear_all()`: chama `db.clear_file_transfers()` alem de limpar memoria
+- `gui.py _open_folder_selected()` + `_open_entry_file()`: usa `subprocess.Popen(['explorer', '/select,', normpath])` para abrir Explorer com arquivo marcado (antes abria so a pasta)
+- `gui.py _add_entry_widget`: `<Double-Button-1>` chama `_open_entry_file` — duplo clique abre no Explorer
+
+### Fix permanente de firewall no instalador (installer.iss)
+
+**Problema:** `PrivilegesRequired=lowest` = instalador sem admin = nao conseguia criar regras de firewall = alguns PCs ficavam sem as regras (Cassiana foi um caso real).
+
+**Fix:** `PrivilegesRequired=admin` + secao `[Run]` com 4 entradas `netsh` que criam as regras silenciosamente durante a instalacao. `[UninstallRun]` remove as regras ao desinstalar.
+
+**Auto-update NAO afetado:** updater.py baixa zip e substitui arquivos via PowerShell — nunca usa o instalador .exe para updates.
+
+**Para diagnosticar/fixar PC com porta bloqueada remotamente (admin de dominio):**
+```powershell
+# Testa conectividade
+Test-NetConnection -ComputerName IP_DO_PC -Port 50102
+
+# Se TcpTestSucceeded: False — fix via schtasks (nao precisa WinRM)
+schtasks /create /s IP_DO_PC /tn "FixMBChat" /tr "cmd /c netsh advfirewall firewall delete rule name=""MBChat"" & netsh advfirewall firewall add rule name=""MBChat TCP In"" dir=in action=allow protocol=TCP localport=50101,50102 profile=any & netsh advfirewall firewall add rule name=""MBChat UDP In"" dir=in action=allow protocol=UDP localport=50100 profile=any" /sc once /st 00:00 /ru SYSTEM /f
+schtasks /run /s IP_DO_PC /tn "FixMBChat"
+Start-Sleep 5
+schtasks /delete /s IP_DO_PC /tn "FixMBChat" /f
+```
+
 ## Conectividade VPN Tailscale e Fixes de GUI (v1.8.8 - v1.8.11)
 
 1. **Proxy de Descoberta VPN (Announce Relay)**: 

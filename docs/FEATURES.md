@@ -23,6 +23,9 @@
 - Ponto-a-ponto e para grupos (ate 100MB, chunks 256KB)
 - Dialogo com progresso em MB, velocidade, estado visual
 - Drag and Drop via windnd
+- **file_port dinamico**: porta do FileReceiver anunciada no UDP announce — funciona mesmo se 50102 estiver ocupada na maquina do destinatario (fallback automatico p/ 50112/50122)
+- **Lista persistente**: Ferramentas > Transferencia de Arquivos mantém historico entre sessoes (banco SQLite). Enviados E recebidos persistem. "Apagar Lista" limpa banco.
+- **Abrir no Explorer**: botao "Mostrar a Pasta" e duplo clique abrem Explorer com o arquivo ja selecionado (`explorer /select,`)
 
 ## Interface
 - 3 temas visuais fixos (Classico, Night Mode, MB Contabilidade) + **temas customizaveis** (v1.5.0) via Preferencias > Aparencia > Tema > "Criar tema personalizado..." — editor de 40+ tokens com preview ao vivo, persiste em `%APPDATA%\.mbchat\user_themes.json`. UI flat design.
