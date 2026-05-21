@@ -477,3 +477,4 @@ Problemas resolvidos:
 - **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transferência.
 - **Scroll Wheel Global:** O scroll na tela de transferências agora escuta globalmente a janela via self.bind('<MouseWheel>') ao invés do Canvas.
 - **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
+- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transferências por nome do arquivo ou do contato.

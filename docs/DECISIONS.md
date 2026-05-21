@@ -173,3 +173,4 @@ v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `
 ## Refinamentos UI de Transferências de Arquivos
 - **Mousewheel e Filtros:** Melhorias UX implementadas na v1.8.23 para possibilitar a navegação via scroll sem necessidade de hover em componentes e painel de segmentação nativo entre Recebidos e Enviados, em gui.py.
 - **Prevenção contra Bug do Explorer:** O explorador de arquivos do Windows abortava a seleção (/select,) de arquivos com espaço devido ao uso inseguro de subprocess do Python. Isso foi padronizado em todas as rotinas visuais de duplo-clique.
+- **Busca de Transferências:** Barra de busca em tempo real na aba de Transferências. Foi implementada varrendo o histórico em RAM ao invés de DB querries repetidas para evitar lentidão.
