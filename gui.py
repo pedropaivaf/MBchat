@@ -5948,7 +5948,7 @@ class ChatWindow(tk.Toplevel):
 
             def _do_send(lid=local_id, cnt=content, rid=reply_to_id):
                 ok, _ = self.messenger.send_message(self.peer_id, cnt, rid)
-                self.root.after(0, lambda: self._update_msg_status(lid, ok))
+                self.after(0, lambda: self._update_msg_status(lid, ok))
 
             threading.Thread(target=_do_send, daemon=True).start()
         if pending_img:
