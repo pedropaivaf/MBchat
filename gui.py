@@ -2967,6 +2967,23 @@ class FileTransfersWindow(tk.Toplevel):
                                command=self._remove_selected)
         btn_remove.pack(side='left')
 
+        self._filter_var = tk.StringVar(value='all')
+        
+        filter_frame = tk.Frame(tb_inner, bg='#e8ecf1')
+        filter_frame.pack(side='right', padx=4)
+
+        def _set_filter(f):
+            self._filter_var.set(f)
+            self._apply_filter_ui()
+            self._reload_entries()
+
+        self._btn_f_all = tk.Button(filter_frame, text='Todos', font=('Segoe UI', 8, 'bold'), bg='#d0d7e1', fg='#1a202c', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('all'))
+        self._btn_f_all.pack(side='left', padx=1)
+        self._btn_f_recv = tk.Button(filter_frame, text='Recebidos', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('receive'))
+        self._btn_f_recv.pack(side='left', padx=1)
+        self._btn_f_send = tk.Button(filter_frame, text='Enviados', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('send'))
+        self._btn_f_send.pack(side='left', padx=1)
+
         # Scrollable list
         list_frame = tk.Frame(self, bg='#ffffff')
         list_frame.pack(fill='both', expand=True, padx=0, pady=0)
@@ -2988,9 +3005,9 @@ class FileTransfersWindow(tk.Toplevel):
         self._inner.bind('<Configure>',
                          lambda e: self._canvas.configure(
                              scrollregion=self._canvas.bbox('all')))
-        self._canvas.bind('<MouseWheel>',
-                          lambda e: self._canvas.yview_scroll(
-                              -1 * (e.delta // 120), 'units'))
+        
+        # Mousewheel em toda a janela para o scroll
+        self.bind('<MouseWheel>', lambda e: self._canvas.yview_scroll(-1 * (e.delta // 120), 'units'))
 
         # Bottom bar
         bottom = tk.Frame(self, bg='#f5f7fa')
@@ -3012,8 +3029,24 @@ class FileTransfersWindow(tk.Toplevel):
 
     # Carrega transferencias da lista do app.
     def _load_entries(self):
+        f = self._filter_var.get()
         for entry in self.app._transfer_history:
-            self._add_entry_widget(entry)
+            if f == 'all' or entry.get('direction') == f:
+                self._add_entry_widget(entry)
+
+    def _apply_filter_ui(self):
+        f = self._filter_var.get()
+        for btn, name in [(self._btn_f_all, 'all'), (self._btn_f_recv, 'receive'), (self._btn_f_send, 'send')]:
+            if name == f:
+                btn.config(bg='#d0d7e1', font=('Segoe UI', 8, 'bold'), fg='#1a202c')
+            else:
+                btn.config(bg='#e8ecf1', font=('Segoe UI', 8, 'normal'), fg='#4a5568')
+
+    def _reload_entries(self):
+        for row in self._rows.values():
+            row.destroy()
+        self._rows.clear()
+        self._load_entries()
 
     def _add_entry_widget(self, entry):
         fid = entry['file_id']
