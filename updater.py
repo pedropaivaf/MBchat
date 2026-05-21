@@ -234,11 +234,8 @@ Log "Cleanup OK"
 
 # Lanca o app via CreateProcess (herda env do pai)
 Log "Lancando app..."
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = "{target_exe}"
-$psi.UseShellExecute = $false
-[System.Diagnostics.Process]::Start($psi) | Out-Null
-Log "App lancado via CreateProcess"
+Start-Process -FilePath "{target_exe}" -ErrorAction SilentlyContinue
+Log "App lancado via Start-Process"
 
 # Remove este script
 Start-Sleep -Seconds 2
