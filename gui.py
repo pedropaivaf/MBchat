@@ -5290,7 +5290,13 @@ class ChatWindow(tk.Toplevel):
                 time_tag = 'peer_bubble_time'
                 msg_tag = 'peer_bubble'
             self.chat_text.insert('end', f'{sender}', name_tag)
-            self.chat_text.insert('end', f'  {ts}\n', time_tag)
+            self.chat_text.insert('end', f'  {ts}', time_tag)
+            if is_mine and msg_id:
+                status_tag = f'status_{msg_id}'
+                self.chat_text.insert('end', ' ·', (status_tag,))
+                self.chat_text.tag_config(status_tag, foreground='#94a3b8',
+                                          font=('Segoe UI', 8))
+            self.chat_text.insert('end', '\n', time_tag)
             body_start = self.chat_text.index('end-1c')
             if is_forwarded:
                 self.chat_text.insert('end', '\u21AA Encaminhado\n',
@@ -5936,13 +5942,32 @@ class ChatWindow(tk.Toplevel):
         self.entry.delete('1.0', 'end')
         self._entry_img_map.clear()
         if content:
+            local_id = str(uuid.uuid4())
             self._append_message(self.messenger.display_name, content, True,
-                                 reply_to=reply_to_id)
-            threading.Thread(target=self.messenger.send_message,
-                             args=(self.peer_id, content, reply_to_id),
-                             daemon=True).start()
+                                 msg_id=local_id, reply_to=reply_to_id)
+
+            def _do_send(lid=local_id, cnt=content, rid=reply_to_id):
+                ok, _ = self.messenger.send_message(self.peer_id, cnt, rid)
+                self.root.after(0, lambda: self._update_msg_status(lid, ok))
+
+            threading.Thread(target=_do_send, daemon=True).start()
         if pending_img:
             self._send_clipboard_image(pending_img)
+
+    def _update_msg_status(self, local_id, ok):
+        if not self.winfo_exists():
+            return
+        tag = f'status_{local_id}'
+        ranges = self.chat_text.tag_ranges(tag)
+        if not ranges:
+            return
+        symbol = ' ✓' if ok else ' ⚠'
+        color  = '#94a3b8' if ok else '#f97316'
+        self.chat_text.config(state='normal')
+        self.chat_text.delete(ranges[0], ranges[1])
+        self.chat_text.insert(ranges[0], symbol, (tag,))
+        self.chat_text.tag_config(tag, foreground=color, font=('Segoe UI', 8))
+        self.chat_text.config(state='disabled')
 
     # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
     def _send_file(self):
@@ -15854,15 +15879,32 @@ class LanMessengerApp:
         def _bg():
             try:
                 if network.firewall_rules_present():
-                    return  # ja esta tudo certo
-                # Cooldown: nao perguntar de novo por 24h se o user dismissou
+                    # Marca versao checada mesmo quando regras estao ok
+                    try:
+                        self.messenger.db.set_setting(
+                            'firewall_last_checked_version', APP_VERSION)
+                    except Exception:
+                        pass
+                    return
+                # Verifica se e primeira abertura desta versao (ignora cooldown)
+                new_version = False
                 try:
-                    last = self.messenger.db.get_setting(
-                        'firewall_prompt_dismissed_at', '0')
-                    if time.time() - float(last or '0') < 86400:
-                        return
+                    last_ver = self.messenger.db.get_setting(
+                        'firewall_last_checked_version', '')
+                    new_version = (last_ver != APP_VERSION)
+                    self.messenger.db.set_setting(
+                        'firewall_last_checked_version', APP_VERSION)
                 except Exception:
                     pass
+                # Cooldown de 24h — ignorado se e uma versao nova
+                if not new_version:
+                    try:
+                        last = self.messenger.db.get_setting(
+                            'firewall_prompt_dismissed_at', '0')
+                        if time.time() - float(last or '0') < 86400:
+                            return
+                    except Exception:
+                        pass
                 self.root.after(0, self._prompt_firewall_fix)
             except Exception:
                 log.exception('_check_firewall_on_startup failed')
