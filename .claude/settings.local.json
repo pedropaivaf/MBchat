@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($logPath = \"$env:APPDATA\\\\.mbchat\\\\update.log\"; if \\(Test-Path $logPath\\) { Get-Content $logPath -Tail 30 } else { \"Log nao encontrado em $logPath\" })",
+      "PowerShell(Get-ChildItem \"$env:APPDATA\\\\.mbchat\\\\\" | Select-Object Name, LastWriteTime | Sort-Object LastWriteTime -Descending)",
+      "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\\\\Programs\\\\MBChat\" -ErrorAction SilentlyContinue | Select-Object Name, LastWriteTime | Sort-Object LastWriteTime -Descending | Select-Object -First 10)",
+      "PowerShell(Get-Process -Name \"python\",\"MBChat\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process | Where-Object { $_.Name -match \"python|MBChat\" } | Select-Object Name, Id)"
+    ]
+  }
+}
