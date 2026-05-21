@@ -169,3 +169,7 @@ v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `
 **ATENÃ‡ÃƒO ABSOLUTA PARA FUTURAS MODIFICAÃ‡Ã•ES:**
 - NUNCA reverter o parÃ¢metro --show na pipeline de relanÃ§amento do atualizador.
 - NUNCA trocar o Start-Process por mÃ©todos nativos em C# (System.Diagnostics) novamente, sob pena de reintroduzir "processos fantasmas" que falham ao reabrir em perfis padrÃ£o de usuÃ¡rio Windows.
+
+## Refinamentos UI de Transferências de Arquivos
+- **Mousewheel e Filtros:** Melhorias UX implementadas na v1.8.23 para possibilitar a navegação via scroll sem necessidade de hover em componentes e painel de segmentação nativo entre Recebidos e Enviados, em gui.py.
+- **Prevenção contra Bug do Explorer:** O explorador de arquivos do Windows abortava a seleção (/select,) de arquivos com espaço devido ao uso inseguro de subprocess do Python. Isso foi padronizado em todas as rotinas visuais de duplo-clique.

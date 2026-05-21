@@ -472,3 +472,8 @@ Problemas resolvidos:
 - NUNCA remover ou alterar a lÃ³gica de repasse do argumento --show no updater.py e em main() do gui.py. Ã‰ ele quem garante a continuidade de UX.
 - NUNCA usar [System.Diagnostics.Process] no updater.py para relanÃ§ar o aplicativo. Mantenha Start-Process.
 - NUNCA forÃ§ar requests Ã  API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.
+
+## Transferência de Arquivos (v1.8.23+)
+- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transferência.
+- **Scroll Wheel Global:** O scroll na tela de transferências agora escuta globalmente a janela via self.bind('<MouseWheel>') ao invés do Canvas.
+- **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
