@@ -2967,6 +2967,20 @@ class FileTransfersWindow(tk.Toplevel):
                                command=self._remove_selected)
         btn_remove.pack(side='left')
 
+        # Barra de Pesquisa
+        self._search_var = tk.StringVar()
+        search_bg = '#ffffff'
+        search_frame = tk.Frame(tb_inner, bg=search_bg, bd=0)
+        search_frame.pack(side='left', padx=(15, 0), fill='y', pady=1)
+
+        lbl_search = tk.Label(search_frame, text='\U0001f50d', bg=search_bg, fg='#a0aec0', font=('Segoe UI', 9))
+        lbl_search.pack(side='left', padx=(6, 2))
+        
+        entry_search = tk.Entry(search_frame, textvariable=self._search_var, bg=search_bg, fg='#1a202c', bd=0, relief='flat', font=('Segoe UI', 9), width=22)
+        entry_search.pack(side='left', padx=(0, 6), pady=4)
+        
+        self._search_var.trace_add('write', lambda *args: self._reload_entries())
+
         self._filter_var = tk.StringVar(value='all')
         
         filter_frame = tk.Frame(tb_inner, bg='#e8ecf1')
@@ -3030,8 +3044,15 @@ class FileTransfersWindow(tk.Toplevel):
     # Carrega transferencias da lista do app.
     def _load_entries(self):
         f = self._filter_var.get()
+        q = self._search_var.get().lower().strip()
         for entry in self.app._transfer_history:
-            if f == 'all' or entry.get('direction') == f:
+            match_f = (f == 'all' or entry.get('direction') == f)
+            match_q = True
+            if q:
+                name = entry.get('filename', '').lower()
+                peer = entry.get('peer_name', '').lower()
+                match_q = (q in name or q in peer)
+            if match_f and match_q:
                 self._add_entry_widget(entry)
 
     def _apply_filter_ui(self):
