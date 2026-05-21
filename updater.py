@@ -232,14 +232,6 @@ Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
 Log "Cleanup OK"
 
-# Recria regras de firewall pos-update (silencioso, sem admin pode falhar — ok)
-Log "Recriando regras de firewall..."
-netsh advfirewall firewall delete rule name="MBChat UDP In" 2>$null | Out-Null
-netsh advfirewall firewall delete rule name="MBChat TCP In" 2>$null | Out-Null
-netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any 2>$null | Out-Null
-netsh advfirewall firewall add rule name="MBChat TCP In" dir=in action=allow protocol=TCP localport=50101,50102,50199 profile=any 2>$null | Out-Null
-Log "Firewall OK (ou sem permissao — app vai pedir na abertura)"
-
 # Lanca o app via CreateProcess (herda env do pai)
 Log "Lancando app..."
 $psi = New-Object System.Diagnostics.ProcessStartInfo
