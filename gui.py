@@ -16046,33 +16046,38 @@ class LanMessengerApp:
         except Exception:
             pass
 
-    # Executa o download e apply do update.
     def _do_update(self, version):
         win = tk.Toplevel(self.root)
-        win.title('Atualizando MB Chat')
-        win.resizable(False, False)
+        win.title('MB Chat - Atualização')
+        win.overrideredirect(True)
+        win.configure(bg='#ffffff', highlightbackground='#e2e8f0', highlightcolor='#e2e8f0', highlightthickness=1)
+        _center_window(win, 340, 160)
         win.attributes('-topmost', True)
-        _center_window(win, 320, 140)
         win.grab_set()
+
+        tk.Label(win, text='🚀 Atualizando o MB Chat', font=('Segoe UI', 12, 'bold'), bg='#ffffff', fg='#0f172a').pack(pady=(20, 5))
+        tk.Label(win, text=f'Baixando versão {version}...', font=('Segoe UI', 9), bg='#ffffff', fg='#64748b').pack(pady=(0, 15))
         
-        tk.Label(win, text=f'Baixando versão {version}...', font=('Segoe UI', 10, 'bold')).pack(pady=(20, 5))
-        from tkinter import ttk
-        pb = ttk.Progressbar(win, orient='horizontal', length=260, mode='determinate')
-        pb.pack(pady=5)
-        lbl_pct = tk.Label(win, text='Iniciando...', font=('Segoe UI', 8))
-        lbl_pct.pack()
+        canvas = tk.Canvas(win, width=280, height=8, bg='#f1f5f9', bd=0, highlightthickness=0)
+        canvas.pack()
+        bar_id = canvas.create_rectangle(0, 0, 0, 8, fill='#3b82f6', outline='')
+        
+        lbl_pct = tk.Label(win, text='Iniciando...', font=('Segoe UI', 8, 'bold'), bg='#ffffff', fg='#3b82f6')
+        lbl_pct.pack(pady=(10, 0))
 
         def _progress(copied, total):
             if total > 0:
                 pct = int((copied / total) * 100)
-                self.root.after(0, lambda: pb.config(value=pct))
-                self.root.after(0, lambda: lbl_pct.config(text=f'{pct}%  ({copied//1024} KB de {total//1024} KB)'))
+                fill_width = int((copied / total) * 280)
+                self.root.after(0, lambda fw=fill_width: canvas.coords(bar_id, 0, 0, fw, 8))
+                self.root.after(0, lambda p=pct: lbl_pct.config(text=f'{p}%  -  {copied//1024} KB / {total//1024} KB'))
 
         def _download():
             path = updater.download_update(_progress)
             if path:
                 self.root.after(0, lambda: lbl_pct.config(text='Instalando, por favor aguarde...'))
-                self.root.after(500, lambda: self._apply_and_restart(path))
+                self.root.after(0, lambda: canvas.itemconfig(bar_id, fill='#10b981'))
+                self.root.after(800, lambda: self._apply_and_restart(path))
             else:
                 self.root.after(0, win.destroy)
                 self.root.after(0, lambda: messagebox.showerror(
