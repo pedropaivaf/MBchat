@@ -193,7 +193,7 @@ def _open_file_location(filepath):
     try:
         if os.path.isfile(filepath):
             import subprocess
-            subprocess.Popen(['explorer', '/select,', os.path.normpath(filepath)])
+            subprocess.Popen(f'explorer /select,"{os.path.normpath(filepath)}"')
         else:
             folder = os.path.dirname(filepath)
             if os.path.isdir(folder):
@@ -2899,11 +2899,11 @@ class FileTransferDialog(tk.Toplevel):
         try:
             import subprocess
             if os.path.exists(filepath):
-                subprocess.Popen(['explorer', '/select,', filepath])
+                subprocess.Popen(f'explorer /select,"{os.path.normpath(filepath)}"')
             else:
                 folder = os.path.dirname(filepath)
                 if os.path.isdir(folder):
-                    subprocess.Popen(['explorer', folder])
+                    os.startfile(folder)
         except Exception:
             log.exception('Erro ao abrir pasta')
 
@@ -3114,7 +3114,7 @@ class FileTransfersWindow(tk.Toplevel):
             # Lista vazia ou sem selecao: abre a pasta de downloads diretamente
             download_dir = self.app.messenger.db.get_setting(
                 'download_dir',
-                os.path.join(os.path.expanduser('~'), 'MB_Chat_Files'))
+                os.path.join(os.path.expanduser('~'), 'Documents', 'MBFiles'))
             try:
                 os.makedirs(download_dir, exist_ok=True)
                 os.startfile(download_dir)
@@ -3133,7 +3133,7 @@ class FileTransfersWindow(tk.Toplevel):
             return
         if os.path.isfile(fp):
             try:
-                subprocess.Popen(['explorer', '/select,', os.path.normpath(fp)])
+                subprocess.Popen(f'explorer /select,"{os.path.normpath(fp)}"')
                 return
             except Exception:
                 pass
@@ -6730,8 +6730,8 @@ class ChatWindow(tk.Toplevel):
                 os.startfile(image_path)
             except Exception:
                 try:
-                    import subprocess
-                    subprocess.Popen(['explorer', image_path])
+                    import os
+                    os.startfile(image_path)
                 except Exception:
                     log.exception('Erro ao abrir imagem')
         threading.Thread(target=_open, daemon=True).start()
@@ -9252,8 +9252,8 @@ class GroupChatWindow(tk.Toplevel):
                 os.startfile(image_path)
             except Exception:
                 try:
-                    import subprocess
-                    subprocess.Popen(['explorer', image_path])
+                    import os
+                    os.startfile(image_path)
                 except Exception:
                     log.exception('Erro ao abrir imagem')
         threading.Thread(target=_open, daemon=True).start()

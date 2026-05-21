@@ -177,7 +177,7 @@ class Messenger:
         # Receptor de arquivos: salva arquivos recebidos
         downloads = self.db.get_setting('download_dir',
                                         os.path.join(os.path.expanduser('~'),
-                                                     'MB_Chat_Files'))
+                                                     'Documents', 'MBFiles'))
         self._file_receiver = FileReceiver(
             downloads,
             on_incoming=self._on_file_incoming_internal,
