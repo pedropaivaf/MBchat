@@ -3123,12 +3123,26 @@ class FileTransfersWindow(tk.Toplevel):
             return
         fp = row._entry.get('filepath', '')
         if not fp:
+            fname = row._entry.get('filename', '')
+            if fname and row._entry.get('direction') == 'receive':
+                download_dir = self.app.messenger.db.get_setting(
+                    'download_dir',
+                    os.path.join(os.path.expanduser('~'), 'Documents', 'MBFiles'))
+                fp = os.path.join(download_dir, fname)
+        if not fp:
             return
         self._open_entry_file(row)
 
     # Abre Explorer selecionando o arquivo. Se arquivo nao existe, abre a pasta.
     def _open_entry_file(self, row):
         fp = row._entry.get('filepath', '')
+        if not fp:
+            fname = row._entry.get('filename', '')
+            if fname and row._entry.get('direction') == 'receive':
+                download_dir = self.app.messenger.db.get_setting(
+                    'download_dir',
+                    os.path.join(os.path.expanduser('~'), 'Documents', 'MBFiles'))
+                fp = os.path.join(download_dir, fname)
         if not fp:
             return
         if os.path.isfile(fp):

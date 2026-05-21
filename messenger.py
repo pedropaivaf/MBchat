@@ -1119,7 +1119,7 @@ class Messenger:
 
     # Callback de conclusao — atualiza banco e notifica GUI
     def _on_file_complete_internal(self, file_id, filepath=''):
-        self.db.update_file_transfer(file_id, status='completed', progress=100)
+        self.db.update_file_transfer(file_id, status='completed', progress=100, filepath=filepath)
         if self.on_file_complete:
             self.on_file_complete(file_id, filepath)
 
