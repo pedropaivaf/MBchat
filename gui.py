@@ -3021,7 +3021,11 @@ class FileTransfersWindow(tk.Toplevel):
             return
 
         row = tk.Frame(self._inner, bg='#ffffff', cursor='hand2')
-        row.pack(fill='x', padx=0, pady=0)
+        children = self._inner.winfo_children()
+        if children:
+            row.pack(fill='x', padx=0, pady=0, before=children[0])
+        else:
+            row.pack(fill='x', padx=0, pady=0)
         row._entry = entry
         row._selected = False
         self._rows[fid] = row
