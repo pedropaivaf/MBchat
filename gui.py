@@ -16051,19 +16051,24 @@ class LanMessengerApp:
         win.title('MB Chat - Atualização')
         win.overrideredirect(True)
         win.configure(bg='#ffffff', highlightbackground='#e2e8f0', highlightcolor='#e2e8f0', highlightthickness=1)
-        _center_window(win, 340, 160)
+        _center_window(win, 360, 190)
         win.attributes('-topmost', True)
         win.grab_set()
 
         tk.Label(win, text='🚀 Atualizando o MB Chat', font=('Segoe UI', 12, 'bold'), bg='#ffffff', fg='#0f172a').pack(pady=(20, 5))
-        tk.Label(win, text=f'Baixando versão {version}...', font=('Segoe UI', 9), bg='#ffffff', fg='#64748b').pack(pady=(0, 15))
+        lbl_sub = tk.Label(win, text=f'Baixando versão {version}...', font=('Segoe UI', 9), bg='#ffffff', fg='#64748b')
+        lbl_sub.pack(pady=(0, 10))
         
         canvas = tk.Canvas(win, width=280, height=8, bg='#f1f5f9', bd=0, highlightthickness=0)
-        canvas.pack()
+        canvas.pack(pady=5)
         bar_id = canvas.create_rectangle(0, 0, 0, 8, fill='#3b82f6', outline='')
         
         lbl_pct = tk.Label(win, text='Iniciando...', font=('Segoe UI', 8, 'bold'), bg='#ffffff', fg='#3b82f6')
-        lbl_pct.pack(pady=(10, 0))
+        lbl_pct.pack(pady=(5, 0))
+
+        lbl_warn = tk.Label(win, text='💡 A instalação está sendo preparada,\naguarde o carregamento...', 
+                            font=('Segoe UI', 8), bg='#ffffff', fg='#94a3b8', justify='center')
+        lbl_warn.pack(pady=(10, 10))
 
         def _progress(copied, total):
             if total > 0:
@@ -16072,12 +16077,24 @@ class LanMessengerApp:
                 self.root.after(0, lambda fw=fill_width: canvas.coords(bar_id, 0, 0, fw, 8))
                 self.root.after(0, lambda p=pct: lbl_pct.config(text=f'{p}%  -  {copied//1024} KB / {total//1024} KB'))
 
+        def _on_ok_click(path):
+            lbl_pct.config(text='Reiniciando... O app fechará em breve.')
+            btn_ok.config(state='disabled')
+            self.root.after(500, lambda: self._apply_and_restart(path, show_ui=True))
+
+        btn_ok = tk.Button(win, text='OK', font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white', 
+                           relief='flat', bd=0, padx=20, pady=5, cursor='hand2')
+
         def _download():
             path = updater.download_update(_progress)
             if path:
-                self.root.after(0, lambda: lbl_pct.config(text='Instalando, por favor aguarde...'))
+                self.root.after(0, lambda: lbl_sub.config(text='Download concluído!'))
+                self.root.after(0, lambda: lbl_pct.config(text='Pronto para instalar.', fg='#10b981'))
                 self.root.after(0, lambda: canvas.itemconfig(bar_id, fill='#10b981'))
-                self.root.after(800, lambda: self._apply_and_restart(path))
+                self.root.after(0, lambda: lbl_warn.pack_forget())
+                
+                self.root.after(0, lambda: btn_ok.config(command=lambda p=path: _on_ok_click(p)))
+                self.root.after(0, lambda: btn_ok.pack(pady=(5, 10)))
             else:
                 self.root.after(0, win.destroy)
                 self.root.after(0, lambda: messagebox.showerror(
@@ -16085,8 +16102,8 @@ class LanMessengerApp:
         threading.Thread(target=_download, daemon=True).start()
 
     # Aplica o update e encerra o app. Batch reabre via explorer.exe.
-    def _apply_and_restart(self, new_exe_path):
-        updater.apply_update(new_exe_path)
+    def _apply_and_restart(self, new_exe_path, show_ui=False):
+        updater.apply_update(new_exe_path, show_ui=show_ui)
         os._exit(0)
 
     # Exibe dialog 'MB Chat' com informacoes do aplicativo.
@@ -17870,6 +17887,12 @@ def main():
         show_main = app.messenger.db.get_setting('show_main_on_start', '1') == '1'
     except Exception:
         show_main = False
+        
+    for arg in sys.argv[1:]:
+        if arg == '--show':
+            show_main = True
+            break
+            
     if not show_main:
         app.root.withdraw()
         

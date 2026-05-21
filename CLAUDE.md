@@ -452,3 +452,23 @@ schtasks /delete /s IP_DO_PC /tn "FixMBChat" /f
 3. **Correções de Usabilidade (Dropdown Sino)**:
    - **Bug do Badge Vazio:** O `_bell_badge` (crachá vermelho de notificações) não estava propagando cliques, causando um bug onde clicar exatamente no número "1" ignorava o evento, impedindo a abertura do pop-up. Corrigido adicionando binding de `<Button-1>` ao próprio label do crachá.
    - **Instant FocusOut:** A janela Toplevel do dropdown (`overrideredirect`) apresentava um problema em que o evento residual do clique do mouse causava uma perda de foco prematura (`<FocusOut>`), fazendo o pop-up se fechar milissegundos após abrir. Foi resolvido retardando a inserção da rotina de `<FocusOut>` no ciclo de eventos usando `.after()`.
+
+## Arquitetura do Atualizador e Fixes Críticos (v1.8.22 - v1.8.23)
+
+Problemas resolvidos:
+1. **GitHub API Rate Limit**: PCs rodando a checagem em background a cada 30min esgotavam o limite de 60 req/h (HTTP 403 Forbidden). Isso "cegava" o botão Atualizar de funcionar.
+   - **Fix**: Se a variável self._pending_update estiver preenchida (ativada por outro peer na rede avisando que há versão nova), a checagem em background via API é **silenciada**. O limite de IP fica intacto para quando o usuário clicar no botão Atualizar.
+
+2. **Permissões do PowerShell (UAC)**: O script PowerShell update.ps1 que o Python gerava tentava rodar o app novo via [System.Diagnostics.Process]::Start. Sem direitos de administrador, o app falhava silenciosamente e não reabria.
+   - **Fix**: O script update.ps1 foi mudado para utilizar o cmdlet nativo Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue. Isso roda de forma 100% lisa no nível do usuário atual.
+
+3. **UX da Atualização (Barra de Progresso e Botão OK)**: O app simplesmente sumia da tela por vários segundos enquanto baixava a versão nova, gerando confusão.
+   - **Fix**: Criada janela de atualização (progress bar borderless moderna) desenhada via Canvas em gui.py. 
+   - Ao bater 100%, a janela não fecha o app imediatamente. Ela exibe um botão "OK".
+   - Quando o usuário clica em "OK", o update.ps1 é executado injetando a flag --show.
+   - O novo MBChat.exe liga, lê o sys.argv, enxerga o --show e invoca pp.root.deiconify() + app.root.lift() para forçar a UI na tela (sobrescrevendo a rotina padrão de iniciar na bandeja).
+
+**Regras estritas para não quebrar o instalador novamente**:
+- NUNCA remover ou alterar a lógica de repasse do argumento --show no updater.py e em main() do gui.py. É ele quem garante a continuidade de UX.
+- NUNCA usar [System.Diagnostics.Process] no updater.py para relançar o aplicativo. Mantenha Start-Process.
+- NUNCA forçar requests à API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.

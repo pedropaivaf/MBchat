@@ -168,8 +168,8 @@ def apply_update(staging_dir):
     target_exe = _get_long_path(sys.executable)
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
-    long_temp = _get_long_path(os.environ.get('TEMP', os.environ.get('TMP', '')))
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
+    args = '"--show"' if show_ui else '""'
 
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
@@ -232,10 +232,10 @@ Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
 Log "Cleanup OK"
 
-# Lanca o app via CreateProcess (herda env do pai)
+# Lanca o app via Start-Process
 Log "Lancando app..."
-Start-Process -FilePath "{target_exe}" -ErrorAction SilentlyContinue
-Log "App lancado via Start-Process"
+Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue
+Log "App lancado via Start-Process com args: {args}"
 
 # Remove este script
 Start-Sleep -Seconds 2

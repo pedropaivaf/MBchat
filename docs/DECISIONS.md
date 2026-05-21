@@ -146,3 +146,26 @@ Quando mensagem chega com app no tray, `_surface_chat_from_tray()` cria janela o
 v1.4.54: para o clique no toast dispatchar o `launch`, Windows exige AUMID registrado via atalho Start Menu. `_ensure_start_menu_shortcut()` cria atalho em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\MB Chat.lnk` com `System.AppUserModel.ID = APP_AUMID` via `IPropertyStore`. Roda so em frozen, idempotente.
 
 v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `_open_from_notification(peer)` substitui `_restore_and_open` para notificacoes.
+
+## Decisão Técnica: Refatoração do Atualizador e Correções (v1.8.22 - v1.8.23)
+
+### O Problema
+1. O atualizador bloqueava devido ao **Rate Limit da API do GitHub** (60 req/h). O app rodava um timer a cada 30 min, consumindo o limite rapidamente em redes grandes com vários PCs saindo pelo mesmo IP.
+2. A reinstalação falhava em alguns PCs devido à falta de **permissões UAC** ao usar [System.Diagnostics.Process]::Start dentro do script PowerShell do atualizador, impedindo que o novo processo subisse.
+3. A experiência do usuário era ruim: a tela congelava, fechava, demorava vários segundos e não exibia nenhum sinal visual, gerando pânico e duplos cliques desnecessários.
+
+### A Solução Implementada
+
+1. **GitHub API (Mitigação do Limite):** Em gui.py, no loop de polling de atualizações em background, adicionou-se a regra de que se self._pending_update for True, o polling é pulado. Como o MB Chat tem um recurso P2P que "espalha" o aviso de atualização via rede local de forma instantânea (UDP), o primeiro PC a perceber a versão nova notifica todos os outros e desliga as checagens em background em massa na rede toda, economizando os requests do IP.
+
+2. **Substituição por Start-Process:** No updater.py, o script do PowerShell foi adaptado para usar o cmdlet Start-Process, que é nativo e menos suscetível a ser bloqueado por não possuir a janela de Prompt Interativa aberta quando usado com -WindowStyle Hidden e CreationFlags.
+
+3. **UX Aprimorada e "Restart Visível" (--show):** 
+   - A atualização agora exibe uma barra de progresso customizada via Canvas no tkinter.
+   - O término da cópia pausa a janela exibindo o botão "OK".
+   - Ao clicar em "OK", o update.ps1 é gerado e repassa o argumento --show para o novo MBChat.exe.
+   - O entry-point main() do app novo, se deparando com --show, anula o comportamento padrão de esconder o app na bandeja e o traz forçadamente para deiconify() e lift(), mantendo a continuidade lógica para o usuário.
+
+**ATENÇÃO ABSOLUTA PARA FUTURAS MODIFICAÇÕES:**
+- NUNCA reverter o parâmetro --show na pipeline de relançamento do atualizador.
+- NUNCA trocar o Start-Process por métodos nativos em C# (System.Diagnostics) novamente, sob pena de reintroduzir "processos fantasmas" que falham ao reabrir em perfis padrão de usuário Windows.
