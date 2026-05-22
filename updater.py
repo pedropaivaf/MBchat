@@ -232,6 +232,29 @@ Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
 Log "Cleanup OK"
 
+# Remove executaveis antigos soltos para evitar conflito de atalhos e versoes
+$userDesktop = [Environment]::GetFolderPath("Desktop")
+$userAppData = [Environment]::GetFolderPath("LocalApplicationData")
+$roamingAppData = [Environment]::GetFolderPath("ApplicationData")
+
+$oldExes = @(
+    Join-Path $userDesktop "MBChat.exe",
+    Join-Path $userAppData "Programs\MBChat.exe",
+    Join-Path $roamingAppData "MBChat\MBChat.exe",
+    Join-Path $roamingAppData "MBChat_new.exe"
+)
+
+foreach ($oldExe in $oldExes) {{
+    if ((Test-Path $oldExe) -and ($oldExe -ne "{target_exe}")) {{
+        try {{
+            Remove-Item -Path $oldExe -Force -ErrorAction Stop
+            Log "Removido executavel antigo: $oldExe"
+        }} catch {{
+            Log "Nao foi possivel remover $oldExe: $_"
+        }}
+    }}
+}}
+
 # Lanca o app via Start-Process
 Log "Lancando app..."
 Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue

@@ -28,6 +28,13 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 Name: "desktopicon"; Description: "Criar atalho na Area de Trabalho"
 Name: "autostart"; Description: "Iniciar MB Chat com o Windows"
 
+[InstallDelete]
+Type: files; Name: "{userdesktop}\MBChat.exe"
+Type: files; Name: "{userappdata}\MBChat\MBChat.exe"
+Type: files; Name: "{localappdata}\Programs\MBChat.exe"
+Type: filesandordirs; Name: "{userappdata}\MBChat\_internal"
+Type: filesandordirs; Name: "{userdesktop}\_internal"
+
 [Files]
 Source: "dist\MBChat\MBChat.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\MBChat\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
