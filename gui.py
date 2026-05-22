@@ -17756,7 +17756,7 @@ def _setup_autostart():
 # Linux: remove o arquivo .desktop de autostart.
 # macOS: remove o arquivo .plist do LaunchAgents.
 def _remove_autostart():
-    if platform.system() == 'Windows':  # remove chave do Registro do Windows
+    if platform.system() == 'Windows':  # remove chave do Registro do Windows e atalho da pasta Startup
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
@@ -17764,6 +17764,15 @@ def _remove_autostart():
                 0, winreg.KEY_SET_VALUE)
             winreg.DeleteValue(key, 'MBChat')
             winreg.CloseKey(key)
+        except Exception:
+            pass
+        
+        try:
+            startup_lnk = os.path.join(
+                os.environ.get('APPDATA', ''),
+                'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'MB Chat.lnk')
+            if os.path.exists(startup_lnk):
+                os.remove(startup_lnk)
         except Exception:
             pass
     elif platform.system() == 'Linux':
