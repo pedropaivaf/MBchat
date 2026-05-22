@@ -16120,12 +16120,11 @@ class LanMessengerApp:
 
     def _do_update(self, version):
         win = tk.Toplevel(self.root)
+        win.withdraw()
         win.title('MB Chat - Atualização')
         win.overrideredirect(True)
         win.configure(bg='#ffffff', highlightbackground='#e2e8f0', highlightcolor='#e2e8f0', highlightthickness=1)
-        _center_window(win, 360, 190)
         win.attributes('-topmost', True)
-        win.grab_set()
 
         tk.Label(win, text='🚀 Atualizando o MB Chat', font=('Segoe UI', 12, 'bold'), bg='#ffffff', fg='#0f172a').pack(pady=(20, 5))
         lbl_sub = tk.Label(win, text=f'Baixando versão {version}...', font=('Segoe UI', 9), bg='#ffffff', fg='#64748b')
@@ -16141,6 +16140,19 @@ class LanMessengerApp:
         lbl_warn = tk.Label(win, text='💡 A instalação está sendo preparada,\naguarde o carregamento...', 
                             font=('Segoe UI', 8), bg='#ffffff', fg='#94a3b8', justify='center')
         lbl_warn.pack(pady=(10, 10))
+
+        try:
+            win.update_idletasks()
+            sx = win.winfo_screenwidth()
+            sy = win.winfo_screenheight()
+            x = (sx - 360) // 2
+            y = (sy - 190) // 2
+            win.geometry(f'360x190+{max(0, x)}+{max(0, y)}')
+        except Exception:
+            win.geometry('360x190')
+        win.deiconify()
+        win.grab_set()
+
 
         def _progress(copied, total):
             if total > 0:
