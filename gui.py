@@ -16647,20 +16647,33 @@ class LanMessengerApp:
         self._update_bell_badge(n)
 
     def _on_newer_version(self, peer_version):
-        if not self._pending_update or self._pending_update.get('version') != peer_version:
-            self._pending_update = {'version': peer_version, 'notes': 'Nova atualização disponível na rede!'}
-            self._refresh_bell_badge()
+        def parse_v(v):
+            try: return tuple(int(x) for x in str(v).strip().lstrip('v').split('.'))
+            except Exception: return (0, 0, 0)
+
+        my_v = parse_v(APP_VERSION)
+        peer_v = parse_v(peer_version)
+        if peer_v <= my_v:
+            return
+
+        current_pend = self._pending_update.get('version', '0.0.0') if self._pending_update else '0.0.0'
+        if peer_v <= parse_v(current_pend):
+            return
+
+        self._pending_update = {'version': peer_version, 'notes': 'Nova atualização disponível na rede!'}
+        self._refresh_bell_badge()
+        try:
+            shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
+        except Exception:
+            shown_for = ''
+            
+        if parse_v(peer_version) > parse_v(shown_for):
+            self._show_toast_generic('Atualização Disponível',
+                                     f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
             try:
-                shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
+                self.messenger.db.set_setting('update_toast_shown_for', peer_version)
             except Exception:
-                shown_for = ''
-            if shown_for != peer_version:
-                self._show_toast_generic('Atualização Disponível',
-                                         f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
-                try:
-                    self.messenger.db.set_setting('update_toast_shown_for', peer_version)
-                except Exception:
-                    pass
+                pass
 
     def _open_bell_dropdown(self):
         # Re-check em background ao abrir o sino (se não há update pendente)
