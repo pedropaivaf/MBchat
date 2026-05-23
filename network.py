@@ -221,6 +221,7 @@ MT_MEETING_DECLINE  = 'meeting_decline'   # TCP: convidado recusou reunião
 MT_MEETING_CANCEL   = 'meeting_cancel'    # TCP: criador cancelou reunião
 MT_MEETING_SYNC_REQ = 'meeting_sync_req'  # TCP: pedido de sync de reservas ao reconectar
 MT_MEETING_SYNC_RES = 'meeting_sync_res'  # TCP: dump de bookings como resposta ao sync
+MT_MEETING_EDIT     = 'meeting_edit'      # TCP: criador alterou a reuniao
 
 
 # Detecta IP local da maquina na rede.

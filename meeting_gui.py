@@ -31,6 +31,83 @@ TIME_START = 7    # 07:00
 TIME_END   = 20   # 20:00
 PX_PER_MIN = 2    # 1 minuto = 2 pixels no canvas
 TIME_AXIS_W = 48  # largura do eixo de horas
+CYAN       = '#00d2ff'
+
+class FlatTimePicker(tk.Frame):
+    def __init__(self, master, textvariable, values, width=10, font=FONT_SM):
+        super().__init__(master, bg='#ffffff', highlightbackground='#d0d5dd', highlightthickness=1)
+        self._var = textvariable
+        self._values = values
+        self._font = font
+        
+        self._lbl = tk.Label(self, textvariable=self._var, bg='#ffffff', fg='#1a202c', font=font, anchor='w', width=width)
+        self._lbl.pack(side='left', fill='both', expand=True, padx=4, pady=2)
+        
+        self._btn = tk.Label(self, text='▼', bg='#ffffff', fg='#4a5568', font=('Segoe UI', 7))
+        self._btn.pack(side='right', padx=4)
+        
+        for w in (self, self._lbl, self._btn):
+            w.bind('<Button-1>', self._open_popup)
+            
+        self._popup = None
+        
+    def _open_popup(self, event=None):
+        if self._popup:
+            return
+        
+        self.event_generate("<<Click>>")
+            
+        self._popup = tk.Toplevel(self)
+        self._popup.wm_overrideredirect(True)
+        self._popup.configure(bg='#d0d5dd', bd=1, relief='solid')
+        
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height()
+        w = self.winfo_width()
+        self._popup.geometry(f'{w}x140+{x}+{y}')
+        
+        frame = tk.Frame(self._popup, bg='#ffffff')
+        frame.pack(fill='both', expand=True, padx=1, pady=1)
+        
+        sb = ttk.Scrollbar(frame, orient='vertical', style='Clean.Vertical.TScrollbar')
+        sb.pack(side='right', fill='y')
+        
+        lb = tk.Listbox(frame, bg='#ffffff', fg='#1a202c', font=self._font,
+                        relief='flat', bd=0, highlightthickness=0, yscrollcommand=sb.set, 
+                        selectbackground='#e2e8f0', selectforeground='#0f172a', selectborderwidth=0)
+        lb.pack(side='left', fill='both', expand=True)
+        sb.config(command=lb.yview)
+        
+        for v in self._values:
+            lb.insert('end', v)
+            
+        sel = self._var.get()
+        if sel in self._values:
+            idx = self._values.index(sel)
+            lb.selection_set(idx)
+            lb.see(idx)
+            
+        def _on_select(e):
+            if lb.curselection():
+                self._var.set(lb.get(lb.curselection()[0]))
+                self.event_generate("<<Selected>>")
+            self._close_popup()
+            
+        lb.bind('<ButtonRelease-1>', _on_select)
+        
+        def _on_focus_out(e):
+            if self._popup:
+                foc = str(self._popup.focus_get())
+                if not foc.startswith(str(self._popup)):
+                    self._close_popup()
+                
+        self._popup.bind('<FocusOut>', _on_focus_out)
+        lb.focus_set()
+        
+    def _close_popup(self):
+        if self._popup:
+            self._popup.destroy()
+            self._popup = None
 
 
 class MeetingWindow(tk.Toplevel):
@@ -53,8 +130,9 @@ class MeetingWindow(tk.Toplevel):
         self._selected_participants = []  # [(uid, display_name)]
         self._room_var = tk.IntVar(value=1)
         self._start_var = tk.StringVar(value=self._next_time_slot(0))
-        self._end_var   = tk.StringVar(value=self._next_time_slot(1))
+        self._end_var   = tk.StringVar(value='')
         self._title_var = tk.StringVar()
+        self._open_details = {}
 
         self._build()
         self._center()
@@ -104,8 +182,9 @@ class MeetingWindow(tk.Toplevel):
     # ========================================
 
     def _build_calendar(self, parent):
-        self._cal_frame = tk.Frame(parent, bg=BG_WIN)
+        self._cal_frame = tk.Frame(parent, bg=BG_WIN, width=280, height=210)
         self._cal_frame.pack(fill='x', padx=8, pady=8)
+        self._cal_frame.pack_propagate(False)
         self._draw_calendar()
 
         # Legenda
@@ -150,31 +229,59 @@ class MeetingWindow(tk.Toplevel):
         # Cabeçalho dias da semana
         day_hdr = tk.Frame(self._cal_frame, bg=BG_WIN)
         day_hdr.pack(fill='x')
-        for d in ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']:
+        for i in range(7):
+            day_hdr.columnconfigure(i, weight=1, uniform='col')
+        
+        for i, d in enumerate(['D', 'S', 'T', 'Q', 'Q', 'S', 'S']):
             tk.Label(day_hdr, text=d, font=FONT_SM, bg=BG_WIN,
-                     fg=FG_MUTED).pack(side='left', expand=True, fill='x')
+                     fg=FG_MUTED).grid(row=0, column=i, sticky='nsew')
 
         # Grid de dias
         today = datetime.today()
+        calendar.setfirstweekday(calendar.SUNDAY)
         cal = calendar.monthcalendar(self._cal_year, self._cal_month)
+        
+        _, last_day = calendar.monthrange(self._cal_year, self._cal_month)
+        st_ts = datetime(self._cal_year, self._cal_month, 1).timestamp()
+        en_ts = datetime(self._cal_year, self._cal_month, last_day, 23, 59, 59).timestamp()
+        bookings = self.messenger.db.get_bookings(st_ts, en_ts)
+        day_status = {}
+        for b in bookings:
+            d = datetime.fromtimestamp(b['start_ts']).day
+            st = b.get('status', 'pending')
+            if st != 'cancelled':
+                day_status.setdefault(d, []).append(st)
+
         for week in cal:
             row = tk.Frame(self._cal_frame, bg=BG_WIN)
             row.pack(fill='x')
-            for day in week:
+            for i in range(7):
+                row.columnconfigure(i, weight=1, uniform='col')
+                
+            for i, day in enumerate(week):
                 if day == 0:
                     tk.Label(row, text='', bg=BG_WIN,
-                             font=FONT_SM).pack(side='left', expand=True, fill='x')
+                             font=FONT_SM).grid(row=0, column=i, sticky='nsew')
                     continue
                 dt = datetime(self._cal_year, self._cal_month, day)
                 is_today    = (dt.date() == today.date())
                 is_selected = (dt.date() == self._selected_date.date()) and getattr(self, '_explicit_selection', False)
                 bg  = NAVY   if is_selected else (ACCENT if is_today else BG_WIN)
                 fg  = 'white' if (is_selected or is_today) else FG_BLACK
-                btn = tk.Label(row, text=str(day), font=FONT_SM,
-                               bg=bg, fg=fg, cursor='hand2', relief='flat')
-                btn.pack(side='left', pady=2, ipady=2, expand=True, fill='both')
-                btn.bind('<Button-1>',
-                         lambda e, d=dt: self._select_day(d))
+                
+                c = tk.Canvas(row, bg=bg, highlightthickness=0, bd=0, cursor='hand2', height=20)
+                c.grid(row=0, column=i, sticky='nsew', pady=2, padx=2)
+                c.bind('<Button-1>', lambda e, d=dt: self._select_day(d))
+                
+                c.create_text(0, 0, text=str(day), font=FONT_SM, fill=fg, anchor='center', tags='num')
+                if day in day_status:
+                    c.create_text(0, 0, text='●', font=('Segoe UI', 6), fill='#38bdf8', anchor='center', tags='dot')
+                    
+                def _on_resize(e, cv=c):
+                    w, h = e.width, e.height
+                    cv.coords('num', w/2, h/2 + 2)
+                    cv.coords('dot', w/2, h/2 - 6)
+                c.bind('<Configure>', _on_resize)
 
     def _prev_month(self):
         if self._cal_month == 1:
@@ -201,7 +308,7 @@ class MeetingWindow(tk.Toplevel):
         self.refresh_timegrid()
         # Atualiza label de data no formulário
         try:
-            self._date_lbl.config(text=dt.strftime('%d/%m/%Y'))
+            self._date_var.set(dt.strftime('%d/%m/%Y'))
         except Exception:
             pass
 
@@ -446,28 +553,40 @@ class MeetingWindow(tk.Toplevel):
                 'local_only': COLOR_LOCAL,
             }.get(status, COLOR_PENDING)
 
+            bg_color = '#f8fafc'
+
             rect_id = cv.create_rectangle(x0, y0, x1, y1,
-                                          fill=color, outline='white',
+                                          fill=bg_color, outline='#cbd5e1',
                                           width=1)
+            stripe_w = 4
+            stripe_id = cv.create_rectangle(x0, y0, x0 + stripe_w, y1,
+                                            fill=color, outline=color, width=0)
+            
             h_block = y1 - y0
-            if h_block >= 52:
-                label = (f'Título: {b["title"]}'
-                         f'\nHorário: {start_dt.strftime("%H:%M")}–{end_dt.strftime("%H:%M")}'
-                         f'\nParticipante(s): {b["creator_name"]}')
-            elif h_block >= 28:
-                label = f'{b["title"]}\nHorário: {start_dt.strftime("%H:%M")}–{end_dt.strftime("%H:%M")}'
+            items_to_bind = [rect_id, stripe_id]
+            pad_x = x0 + stripe_w + 6
+
+            text_color = '#1e293b'
+            time_color = '#475569'
+
+            creator_first = b["creator_name"].split()[0] if b.get("creator_name") else "Desconhecido"
+            if h_block >= 50:
+                t1 = cv.create_text(pad_x, y0 + 6, text=b['title'], font=('Segoe UI', 10, 'bold'), fill=text_color, anchor='nw', width=col_w-stripe_w-12)
+                t2 = cv.create_text(pad_x, y0 + 24, text=f'🕒 {start_dt.strftime("%H:%M")}–{end_dt.strftime("%H:%M")}   •   👤 {creator_first}', font=('Segoe UI', 9), fill=time_color, anchor='nw', width=col_w-stripe_w-12)
+                items_to_bind.extend([t1, t2])
+            elif h_block >= 35:
+                t1 = cv.create_text(pad_x, y0 + 4, text=b['title'], font=('Segoe UI', 9, 'bold'), fill=text_color, anchor='nw', width=col_w-stripe_w-12)
+                t2 = cv.create_text(pad_x, y0 + 20, text=f'🕒 {start_dt.strftime("%H:%M")}–{end_dt.strftime("%H:%M")}  •  👤 {creator_first}', font=('Segoe UI', 8), fill=time_color, anchor='nw')
+                items_to_bind.extend([t1, t2])
             else:
-                label = b['title']
-            txt_id = cv.create_text(
-                (x0 + x1) // 2, (y0 + y1) // 2,
-                text=label, font=FONT_SM, fill='white',
-                width=col_w - 8, anchor='center')
+                t1 = cv.create_text(pad_x, y0 + max(2, (h_block-18)//2), text=f"{b['title']}  •  👤 {creator_first}", font=('Segoe UI', 8, 'bold'), fill=text_color, anchor='nw', width=col_w-stripe_w-12)
+                items_to_bind.append(t1)
 
             bid = b['booking_id']
-            cv.tag_bind(rect_id, '<Button-1>',
-                        lambda e, b=bid: self._show_booking_detail(b))
-            cv.tag_bind(txt_id, '<Button-1>',
-                        lambda e, b=bid: self._show_booking_detail(b))
+            for item in items_to_bind:
+                cv.tag_bind(item, '<Button-1>', lambda e, b=bid: self._show_booking_detail(b))
+                cv.tag_bind(item, '<Enter>', lambda e: cv.config(cursor='hand2'))
+                cv.tag_bind(item, '<Leave>', lambda e: cv.config(cursor=''))
 
         # Linha vermelha: "agora" (se for o dia de hoje)
         today = datetime.today()
@@ -605,42 +724,30 @@ class MeetingWindow(tk.Toplevel):
         
         tk.Entry(title_inner, textvariable=self._title_var, font=FONT, bg='#ffffff', fg=FG_BLACK, relief='flat', bd=0, insertbackground=FG_BLACK).pack(fill='x', ipady=3, padx=4)
 
-        # Estilo moderno para Combobox
-        style = ttk.Style()
-        style.configure('Modern.TCombobox',
-                        background='#ffffff',
-                        fieldbackground='#ffffff',
-                        foreground='#1a202c',
-                        bordercolor='#d0d5dd',
-                        lightcolor='#ffffff',
-                        darkcolor='#ffffff',
-                        arrowcolor='#4a5568',
-                        relief='flat',
-                        padding=2)
-        style.map('Modern.TCombobox',
-                  fieldbackground=[('readonly', '#ffffff')],
-                  background=[('readonly', '#ffffff')],
-                  bordercolor=[('readonly', '#d0d5dd')])
-
         # Sala
         tk.Label(lf, text='Sala:', font=FONT_SM, bg=BG_WIN,
                  fg=FG_GRAY).grid(row=1, column=0, sticky='w', pady=4)
         rooms = self.messenger.db.get_rooms()
         room_names = [r['name'] for r in rooms]
         self._room_name_var = tk.StringVar(value=room_names[0] if room_names else '')
-        self._room_menu = ttk.Combobox(lf, textvariable=self._room_name_var,
-                                       values=room_names, state='readonly',
-                                       width=24, font=FONT_SM, style='Modern.TCombobox')
-        self._room_menu.grid(row=1, column=1, sticky='ew', pady=4, padx=(4, 0))
+        self._room_menu = FlatTimePicker(lf, textvariable=self._room_name_var, values=room_names, width=22, font=FONT_SM)
+        self._room_menu.grid(row=1, column=1, sticky='w', pady=4, padx=(4, 0))
         self._room_map = {r['name']: r['id'] for r in rooms}
 
-        # Data (label — segue calendário)
+        # Data
         tk.Label(lf, text='Data:', font=FONT_SM, bg=BG_WIN,
                  fg=FG_GRAY).grid(row=2, column=0, sticky='w', pady=4)
-        self._date_lbl = tk.Label(
-            lf, text=self._selected_date.strftime('%d/%m/%Y'),
-            font=FONT, bg=BG_WIN, fg=FG_BLACK)
-        self._date_lbl.grid(row=2, column=1, sticky='w', pady=4, padx=(4, 0))
+                 
+        import datetime as _dt
+        today = _dt.date.today()
+        date_options = [(today + _dt.timedelta(days=i)).strftime('%d/%m/%Y') for i in range(30)]
+        cur_date_str = self._selected_date.strftime('%d/%m/%Y')
+        if cur_date_str not in date_options:
+            date_options.insert(0, cur_date_str)
+            
+        self._date_var = tk.StringVar(value=cur_date_str)
+        self._date_menu = FlatTimePicker(lf, textvariable=self._date_var, values=date_options, width=12, font=FONT_SM)
+        self._date_menu.grid(row=2, column=1, sticky='w', pady=4, padx=(4, 0))
 
         # Início / Fim
         time_slots = [f'{h:02d}:{m:02d}'
@@ -652,28 +759,37 @@ class MeetingWindow(tk.Toplevel):
 
         tk.Label(lf, text='Início:', font=FONT_SM, bg=BG_WIN,
                  fg=FG_GRAY).grid(row=3, column=0, sticky='w', pady=4)
-        cb_start = ttk.Combobox(lf, textvariable=self._start_var, values=time_slots,
-                                state='readonly', width=10, font=FONT_SM, style='Modern.TCombobox')
+        cb_start = FlatTimePicker(lf, textvariable=self._start_var, values=time_slots, width=10, font=FONT_SM)
         cb_start.grid(row=3, column=1, sticky='w', pady=4, padx=(4, 0))
 
         tk.Label(lf, text='Fim:', font=FONT_SM, bg=BG_WIN,
                  fg=FG_GRAY).grid(row=4, column=0, sticky='w', pady=4)
-        cb_end = ttk.Combobox(lf, textvariable=self._end_var, values=end_slots,
-                              state='readonly', width=10, font=FONT_SM, style='Modern.TCombobox')
+        cb_end = FlatTimePicker(lf, textvariable=self._end_var, values=end_slots, width=10, font=FONT_SM)
         cb_end.grid(row=4, column=1, sticky='w', pady=4, padx=(4, 0))
 
-        # Ao abrir o dropdown, posiciona na seleção atual (mostra horário próximo no topo)
-        def _scroll_combo_to_selection(cb, var, slots):
-            try:
-                idx = slots.index(var.get())
-                cb.current(idx)
-            except (ValueError, Exception):
-                pass
-        cb_start.bind('<<ComboboxSelected>>', lambda e: None)
-        cb_start.bind('<ButtonPress>', lambda e: _scroll_combo_to_selection(
-            cb_start, self._start_var, time_slots))
-        cb_end.bind('<ButtonPress>', lambda e: _scroll_combo_to_selection(
-            cb_end, self._end_var, end_slots))
+        # Preenche o fim com 1h a mais quando clicado vazio
+        def _fill_end_if_empty(e):
+            if not self._end_var.get():
+                start_str = self._start_var.get()
+                if start_str:
+                    try:
+                        h, m = map(int, start_str.split(':'))
+                        slot = (h * 60 + m) + 60
+                        if slot > TIME_END * 60:
+                            slot = TIME_END * 60
+                        self._end_var.set(f'{slot//60:02d}:{slot%60:02d}')
+                        # update listbox selection in the popup if it's already created
+                        if cb_end._popup:
+                            sel = self._end_var.get()
+                            if sel in cb_end._values:
+                                idx = cb_end._values.index(sel)
+                                lb = cb_end._popup.winfo_children()[0].winfo_children()[0]
+                                lb.selection_clear(0, 'end')
+                                lb.selection_set(idx)
+                                lb.see(idx)
+                    except:
+                        pass
+        cb_end.bind('<<Click>>', _fill_end_if_empty)
 
         # Validação
         self._form_err = tk.Label(lf, text='', font=FONT_SM, bg=BG_WIN,
@@ -991,14 +1107,16 @@ class MeetingWindow(tk.Toplevel):
             return
 
         try:
+            d, m, y = map(int, self._date_var.get().split('/'))
             sh, sm = map(int, self._start_var.get().split(':'))
             eh, em = map(int, self._end_var.get().split(':'))
         except Exception:
-            self._form_err.config(text='Horário inválido.')
+            self._form_err.config(text='Data ou horário inválido.')
             return
 
-        start_dt = self._selected_date.replace(hour=sh, minute=sm, second=0)
-        end_dt   = self._selected_date.replace(hour=eh, minute=em, second=0)
+        base_dt = self._selected_date.replace(year=y, month=m, day=d, hour=0, minute=0, second=0, microsecond=0)
+        start_dt = base_dt.replace(hour=sh, minute=sm, second=0)
+        end_dt   = base_dt.replace(hour=eh, minute=em, second=0)
         start_ts = start_dt.timestamp()
         end_ts   = end_dt.timestamp()
 
@@ -1014,6 +1132,10 @@ class MeetingWindow(tk.Toplevel):
 
         self._form_err.config(text='')
         participant_uids = [uid for uid, _ in self._selected_participants]
+        if not participant_uids:
+            self._form_err.config(text='É necessário adicionar ao menos 1 participante.')
+            return
+            
         result = self.messenger.create_meeting(
             room_id, title, start_ts, end_ts, participant_uids)
 
@@ -1034,6 +1156,13 @@ class MeetingWindow(tk.Toplevel):
     # ========================================
 
     def _show_booking_detail(self, booking_id):
+        if booking_id in self._open_details:
+            existing_win = self._open_details[booking_id]
+            if existing_win.winfo_exists():
+                existing_win.lift()
+                existing_win.focus_force()
+                return
+
         booking = self.messenger.db.get_booking(booking_id)
         if not booking:
             return
@@ -1044,13 +1173,15 @@ class MeetingWindow(tk.Toplevel):
         editable   = is_creator and booking.get('status') not in ('cancelled',)
 
         win = tk.Toplevel(self)
+        self._open_details[booking_id] = win
+        win.bind('<Destroy>', lambda e: self._open_details.pop(booking_id, None) if str(e.widget) == str(win) else None)
         win.title('Detalhes da Reunião')
         win.configure(bg=BG_WIN)
         win.resizable(True, True)
         try:
-            self.app._center_window(win, 480, 520)
+            self.app._center_window(win, 480, 620)
         except Exception:
-            win.geometry('480x520')
+            win.geometry('480x620')
 
         # Header
         tk.Label(win, text='Detalhes da Reunião', font=FONT_HDR,
@@ -1059,43 +1190,63 @@ class MeetingWindow(tk.Toplevel):
         body = tk.Frame(win, bg=BG_WIN)
         body.pack(fill='both', expand=True, padx=16, pady=10)
         body.columnconfigure(1, weight=1)
+        body.columnconfigure(3, weight=1)
 
         start_dt = datetime.fromtimestamp(booking['start_ts'])
         end_dt   = datetime.fromtimestamp(booking['end_ts'])
 
         # ── Campos editáveis ──────────────────────────────────
-        def _lbl(text, row):
+        def _lbl(text, row, col=0):
+            padx = (16, 8) if col > 0 else (0, 8)
             tk.Label(body, text=text, font=FONT_SM, bg=BG_WIN,
                      fg=FG_MUTED, anchor='w').grid(
-                row=row, column=0, sticky='w', pady=3, padx=(0, 8))
+                row=row, column=col, sticky='w', pady=3, padx=padx)
 
-        # Título
-        _lbl('Título:', 0)
+        # Row 0: Título (L) | Sala (R)
+        _lbl('Título:', 0, 0)
         _title_var = tk.StringVar(value=booking['title'])
-        title_entry = tk.Entry(body, textvariable=_title_var, font=FONT,
+        title_entry = tk.Entry(body, textvariable=_title_var, font=FONT_B,
                                bg='#ffffff' if editable else BG_WIN,
                                fg=FG_BLACK, relief='solid' if editable else 'flat',
                                bd=1 if editable else 0,
-                               state='normal' if editable else 'readonly')
+                               state='normal' if editable else 'readonly', width=20)
         title_entry.grid(row=0, column=1, sticky='ew', pady=3)
 
-        # Sala
-        _lbl('Sala:', 1)
+        _lbl('Sala:', 0, 2)
         room_names  = [r['name'] for r in rooms]
         _room_var   = tk.StringVar(value=room_map.get(booking['room_id'], ''))
-        room_combo  = ttk.Combobox(body, textvariable=_room_var,
-                                   values=room_names, font=FONT,
-                                   state='readonly' if editable else 'disabled',
-                                   width=22)
-        room_combo.grid(row=1, column=1, sticky='w', pady=3)
+        if editable:
+            room_combo = FlatTimePicker(body, textvariable=_room_var, values=room_names, width=18, font=FONT)
+        else:
+            room_combo = tk.Entry(body, textvariable=_room_var, font=FONT, bg=BG_WIN, fg=FG_BLACK, relief='flat', bd=0, state='readonly', width=18)
+        room_combo.grid(row=0, column=3, sticky='ew', pady=3)
 
-        # Data
-        _lbl('Data:', 2)
-        tk.Label(body, text=start_dt.strftime('%d/%m/%Y'),
+        # Row 1: Data (L) | Criador (R)
+        _lbl('Data:', 1, 0)
+        import datetime as _dt
+        base_date = start_dt.date()
+        date_options = []
+        today = _dt.date.today()
+        for i in range(30):
+            d = today + _dt.timedelta(days=i)
+            date_options.append(d.strftime('%d/%m/%Y'))
+        cur_date_str = base_date.strftime('%d/%m/%Y')
+        if cur_date_str not in date_options:
+            date_options.insert(0, cur_date_str)
+
+        _date_var = tk.StringVar(value=cur_date_str)
+        if editable:
+            date_combo = FlatTimePicker(body, textvariable=_date_var, values=date_options, width=12, font=FONT)
+        else:
+            date_combo = tk.Entry(body, textvariable=_date_var, font=FONT, bg=BG_WIN, fg=FG_BLACK, relief='flat', bd=0, state='readonly', width=12)
+        date_combo.grid(row=1, column=1, sticky='w', pady=3)
+
+        _lbl('Criador:', 1, 2)
+        tk.Label(body, text=booking['creator_name'],
                  font=FONT, bg=BG_WIN, fg=FG_BLACK, anchor='w').grid(
-            row=2, column=1, sticky='w', pady=3)
+            row=1, column=3, sticky='w', pady=3)
 
-        # Horários
+        # Row 2: Início (L) | Fim (R)
         time_slots = [f'{h:02d}:{m:02d}'
                       for h in range(TIME_START, TIME_END)
                       for m in (0, 30)]
@@ -1103,25 +1254,37 @@ class MeetingWindow(tk.Toplevel):
                       for h in range(TIME_START, TIME_END + 1)
                       for m in (0, 30)][1:]
 
-        _lbl('Início:', 3)
+        _lbl('Início:', 2, 0)
         _start_var = tk.StringVar(value=start_dt.strftime('%H:%M'))
-        ttk.Combobox(body, textvariable=_start_var, values=time_slots,
-                     font=FONT, state='readonly' if editable else 'disabled',
-                     width=10).grid(row=3, column=1, sticky='w', pady=3)
+        FlatTimePicker(body, textvariable=_start_var, values=time_slots, width=10, font=FONT).grid(row=2, column=1, sticky='w', pady=3)
 
-        _lbl('Fim:', 4)
+        _lbl('Fim:', 2, 2)
         _end_var = tk.StringVar(value=end_dt.strftime('%H:%M'))
-        ttk.Combobox(body, textvariable=_end_var, values=end_slots,
-                     font=FONT, state='readonly' if editable else 'disabled',
-                     width=10).grid(row=4, column=1, sticky='w', pady=3)
+        cb_end = FlatTimePicker(body, textvariable=_end_var, values=end_slots, width=10, font=FONT)
+        cb_end.grid(row=2, column=3, sticky='w', pady=3)
+        
+        def _edit_fill_end(e):
+            if not _end_var.get():
+                try:
+                    h, m = map(int, _start_var.get().split(':'))
+                    slot = (h * 60 + m) + 60
+                    if slot > TIME_END * 60:
+                        slot = TIME_END * 60
+                    _end_var.set(f'{slot//60:02d}:{slot%60:02d}')
+                    if cb_end._popup:
+                        sel = _end_var.get()
+                        if sel in cb_end._values:
+                            idx = cb_end._values.index(sel)
+                            lb = cb_end._popup.winfo_children()[0].winfo_children()[0]
+                            lb.selection_clear(0, 'end')
+                            lb.selection_set(idx)
+                            lb.see(idx)
+                except:
+                    pass
+        cb_end.bind('<<Click>>', _edit_fill_end)
 
-        # Criador + Status
-        _lbl('Criador:', 5)
-        tk.Label(body, text=booking['creator_name'],
-                 font=FONT, bg=BG_WIN, fg=FG_BLACK, anchor='w').grid(
-            row=5, column=1, sticky='w', pady=3)
-
-        _lbl('Status:', 6)
+        # Row 3: Status (L) | Cancelar Reunião (R)
+        _lbl('Status:', 3, 0)
         STATUS_PT = {'pending': 'Pendente', 'confirmed': 'Confirmado',
                      'cancelled': 'Cancelado', 'local_only': 'Convite não enviado'}
         STATUS_INFO = {'local_only': ' (participantes estavam offline ao criar)'}
@@ -1131,15 +1294,28 @@ class MeetingWindow(tk.Toplevel):
         st_txt = STATUS_PT.get(st, st.capitalize()) + STATUS_INFO.get(st, '')
         tk.Label(body, text=st_txt, font=FONT_B, bg=BG_WIN,
                  fg=STATUS_COL.get(st, FG_BLACK), anchor='w').grid(
-            row=6, column=1, sticky='w', pady=3)
+            row=3, column=1, sticky='w', pady=3)
+
+        if editable:
+            def _cancel():
+                if messagebox.askyesno('Cancelar Reunião', 'Cancelar esta reunião para todos?', parent=win):
+                    self.messenger.cancel_meeting(booking_id)
+                    win.destroy()
+                    self.refresh_timegrid()
+                    self._refresh_invites_panel()
+                    
+            tk.Button(body, text='Cancelar Reunião', font=FONT_SM,
+                      bg='#fee2e2', fg='#dc2626', relief='flat', bd=0,
+                      padx=10, pady=2, cursor='hand2',
+                      command=_cancel).grid(row=3, column=3, sticky='w', pady=3)
 
         # ── Separador ────────────────────────────────────────
         tk.Frame(body, bg=BORDER, height=1).grid(
-            row=7, column=0, columnspan=2, sticky='ew', pady=(8, 4))
+            row=8, column=0, columnspan=4, sticky='ew', pady=(8, 4))
 
         # ── Cabeçalho participantes ───────────────────────────
         parts_hdr = tk.Frame(body, bg=BG_WIN)
-        parts_hdr.grid(row=8, column=0, columnspan=2, sticky='ew', pady=(0, 4))
+        parts_hdr.grid(row=9, column=0, columnspan=4, sticky='ew', pady=(0, 4))
         parts_hdr.columnconfigure(0, weight=1)
         self._parts_count_lbl = tk.Label(parts_hdr, text='', font=FONT_B,
                                          bg=BG_WIN, fg=FG_BLACK)
@@ -1147,11 +1323,10 @@ class MeetingWindow(tk.Toplevel):
 
         # ── Lista de participantes (scrollável) ───────────────
         part_outer = tk.Frame(body, bg=BG_WIN)
-        part_outer.grid(row=9, column=0, columnspan=2, sticky='nsew', pady=(0, 4))
-        body.rowconfigure(9, weight=1)
-
+        part_outer.grid(row=10, column=0, columnspan=4, sticky='ew', pady=(0, 4))
+        
         part_canvas = tk.Canvas(part_outer, bg=BG_WIN,
-                                highlightthickness=0, bd=0, height=180)
+                                highlightthickness=0, bd=0, height=210)
         part_inner  = tk.Frame(part_canvas, bg=BG_WIN)
         part_sb     = tk.Canvas(part_outer, width=6, bg=BG_WIN,
                                 highlightthickness=0, bd=0)
@@ -1166,15 +1341,23 @@ class MeetingWindow(tk.Toplevel):
         part_canvas.bind('<MouseWheel>',
                          lambda e: part_canvas.yview_scroll(
                              int(-1*(e.delta/120)), 'units'))
+        
+        # Scrollbar interaction
+        part_sb_state = {'drag': False, 'dy': 0}
+        part_sb.bind('<Button-1>', lambda e: part_sb_state.update({'drag': True, 'dy': e.y}))
+        part_sb.bind('<B1-Motion>', lambda e: (
+            part_canvas.yview_moveto(max(0.0, part_canvas.yview()[0] + (e.y - part_sb_state['dy']) / max(part_sb.winfo_height(), 1)))
+            or part_sb_state.update({'dy': e.y})))
+        part_sb.bind('<ButtonRelease-1>', lambda e: part_sb_state.update({'drag': False}))
         part_sb.bind('<Configure>', lambda e: None)
 
         def _sb_show(lo, hi):
             lo, hi = float(lo), float(hi)
             if lo <= 0 and hi >= 1:
-                part_sb.pack_forget()
+                part_sb.place_forget()
                 return
             if not part_sb.winfo_ismapped():
-                part_sb.pack(side='right', fill='y')
+                part_sb.place(relx=1.0, rely=0, relheight=1.0, anchor='ne')
             h = part_sb.winfo_height()
             if h < 2:
                 return
@@ -1198,7 +1381,7 @@ class MeetingWindow(tk.Toplevel):
             current_parts = self.messenger.db.get_booking_participants(booking_id)
             self._parts_count_lbl.config(
                 text=f'Participantes ({len(current_parts)})')
-            for p in sorted(current_parts, key=_sort_key):
+            for idx, p in enumerate(sorted(current_parts, key=_sort_key)):
                 resp = p['response']
                 icon = {'accepted': '✓', 'declined': '✗',
                         'pending': '⏳'}.get(resp, '⏳')
@@ -1211,20 +1394,30 @@ class MeetingWindow(tk.Toplevel):
                 if is_creator_p:
                     name += ' (criador)'
 
+                part_inner.columnconfigure(0, weight=1)
+                part_inner.columnconfigure(1, weight=1)
+                
                 prow = tk.Frame(part_inner, bg=bgc,
                                 highlightthickness=1, highlightbackground=BORDER)
-                prow.pack(fill='x', pady=1, padx=2)
+                prow.grid(row=idx // 2, column=idx % 2, sticky='ew', padx=2, pady=1)
+                
+                # Ícone (esquerda)
                 tk.Label(prow, text=icon, font=FONT, bg=bgc, fg=fgc,
                          width=2).pack(side='left', padx=(4, 2), pady=4)
-                tk.Label(prow, text=name, font=FONT, bg=bgc,
-                         fg=FG_BLACK, anchor='w').pack(side='left', pady=4,
-                                                       fill='x', expand=True)
-                resp_txt = {'accepted': 'Confirmado', 'declined': 'Recusou',
-                            'pending': 'Pendente'}.get(resp, '')
-                tk.Label(prow, text=resp_txt, font=('Segoe UI', 7),
-                         bg=bgc, fg=fgc).pack(side='right', padx=(4, 8))
+                
+                # Botão remover (direita)
+                if editable and not is_creator_p:
+                    uid_p = p['uid']
+                    def _remove(u=uid_p):
+                        self.messenger.remove_participant(booking_id, u)
+                        _render_part_list()
+                    tk.Button(prow, text='X', font=('Segoe UI', 8, 'bold'),
+                              bg=bgc, fg='#ef4444', relief='flat', bd=0,
+                              activebackground='#fee2e2', activeforeground='#b91c1c',
+                              cursor='hand2', command=_remove).pack(
+                        side='right', padx=(0, 4))
 
-                # Botão re-convidar (só criador, só quem recusou)
+                # Botão re-convidar (direita)
                 if editable and not is_creator_p and resp == 'declined':
                     uid_p = p['uid']
                     def _reinvite(u=uid_p):
@@ -1234,17 +1427,22 @@ class MeetingWindow(tk.Toplevel):
                               bg='#eff6ff', fg=NAVY, relief='flat', bd=0,
                               padx=6, pady=1, cursor='hand2',
                               command=_reinvite).pack(side='right', padx=(0, 4))
+                
+                # Status (direita)
+                resp_txt = {'accepted': 'Confirmado', 'declined': 'Recusou',
+                            'pending': 'Pendente'}.get(resp, '')
+                tk.Label(prow, text=resp_txt, font=('Segoe UI', 7),
+                         bg=bgc, fg=fgc).pack(side='right', padx=(4, 8))
 
-                # Botão remover (só criador, não pode remover a si mesmo)
-                if editable and not is_creator_p:
-                    uid_p = p['uid']
-                    def _remove(u=uid_p):
-                        self.messenger.remove_participant(booking_id, u)
-                        _render_part_list()
-                    tk.Button(prow, text='✕', font=('Segoe UI', 7),
-                              bg=bgc, fg='#ef4444', relief='flat', bd=0,
-                              cursor='hand2', command=_remove).pack(
-                        side='right', padx=(0, 2))
+                # Nome (esquerda, expande e recorta se muito grande)
+                tk.Label(prow, text=name, font=FONT, bg=bgc,
+                         fg=FG_BLACK, anchor='w').pack(side='left', fill='x', expand=True, pady=4)
+
+            def _bind_mousewheel(w):
+                w.bind('<MouseWheel>', lambda e: part_canvas.yview_scroll(int(-1*(e.delta/120)), 'units'))
+                for child in w.winfo_children():
+                    _bind_mousewheel(child)
+            _bind_mousewheel(part_inner)
 
         _render_part_list()
 
@@ -1368,7 +1566,7 @@ class MeetingWindow(tk.Toplevel):
             tk.Button(body, text='+ Adicionar participante', font=FONT_SM,
                       bg=BG_WIN, fg=NAVY, relief='flat', bd=0,
                       cursor='hand2', command=_open_add_picker).grid(
-                row=10, column=0, columnspan=2, sticky='w', pady=(2, 0))
+                row=11, column=0, columnspan=4, sticky='w', pady=(2, 0))
 
         # ── Erro ─────────────────────────────────────────────
         err_lbl = tk.Label(win, text='', font=FONT_SM,
@@ -1391,12 +1589,13 @@ class MeetingWindow(tk.Toplevel):
                     err_lbl.config(text='Selecione uma sala válida.')
                     return
                 try:
+                    d, m, y = map(int, _date_var.get().split('/'))
                     sh, sm = map(int, _start_var.get().split(':'))
                     eh, em = map(int, _end_var.get().split(':'))
                 except Exception:
-                    err_lbl.config(text='Horário inválido.')
+                    err_lbl.config(text='Data ou horário inválido.')
                     return
-                base = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                base = start_dt.replace(year=y, month=m, day=d, hour=0, minute=0, second=0, microsecond=0)
                 new_start = base.replace(hour=sh, minute=sm).timestamp()
                 new_end   = base.replace(hour=eh, minute=em).timestamp()
                 if new_end <= new_start:
@@ -1418,19 +1617,6 @@ class MeetingWindow(tk.Toplevel):
                       padx=10, pady=5, cursor='hand2',
                       command=_save).pack(side='left', padx=(0, 8))
 
-            def _cancel():
-                if messagebox.askyesno('Cancelar Reunião',
-                                       'Cancelar esta reunião para todos?',
-                                       parent=win):
-                    self.messenger.cancel_meeting(booking_id)
-                    win.destroy()
-                    self.refresh_timegrid()
-                    self._refresh_invites_panel()
-
-            tk.Button(btn_bar, text='Cancelar Reunião', font=FONT_SM,
-                      bg='#ef4444', fg='white', relief='flat', bd=0,
-                      padx=10, pady=5, cursor='hand2',
-                      command=_cancel).pack(side='left')
 
         tk.Button(btn_bar, text='Fechar', font=FONT_SM,
                   bg='#e2e8f0', fg=FG_GRAY, relief='flat', bd=0,

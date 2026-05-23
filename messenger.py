@@ -30,7 +30,7 @@ from network import (
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
     MT_REMINDER_COMPLETED,
     MT_MEETING_INVITE, MT_MEETING_ACCEPT, MT_MEETING_DECLINE,
-    MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES,
+    MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES, MT_MEETING_EDIT,
     TCP_PORT
 )
 from database import Database  # Banco de dados local
@@ -70,6 +70,7 @@ class Messenger:
                  on_reminder_cancel=None, on_reminder_completed=None,
                  on_meeting_invite=None, on_meeting_response=None,
                  on_meeting_cancel=None, on_meeting_sync=None,
+                 on_meeting_edit=None,
                  on_group_kick=None, on_group_admin_set=None,
                  on_group_deleted=None):
         self.db = Database()  # Conexao com banco de dados local
@@ -781,6 +782,9 @@ class Messenger:
             if booking_id and responder_uid:
                 self.db.update_booking_participant_response(
                     booking_id, responder_uid, 'declined')
+                if self.db.get_booking_confirmed_count(booking_id) < 2:
+                    self.db.update_booking_status(booking_id, 'pending')
+                self._broadcast_booking_update(booking_id)
                 if self.on_meeting_response:
                     self.on_meeting_response({
                         'booking_id': booking_id,
@@ -825,6 +829,27 @@ class Messenger:
                         'bookings': bookings,
                         'participants': participants,
                     })
+            except Exception:
+                pass
+
+        # --- Reunião editada (data/hora) ---
+        elif msg_type == MT_MEETING_EDIT:
+            try:
+                for b in (msg.get('bookings') or []):
+                    bid = b.get('booking_id')
+                    if not bid:
+                        continue
+                    self.db.save_booking(
+                        bid, b['room_id'], b['title'],
+                        b['creator_uid'], b['creator_name'],
+                        b['start_ts'], b['end_ts'], b.get('status', 'pending'))
+                parts = msg.get('participants') or {}
+                for bid, plist in parts.items():
+                    for p in plist:
+                        self.db.save_booking_participant(
+                            bid, p['uid'], p['display_name'], p['response'])
+                if self.on_meeting_edit:
+                    self.on_meeting_edit(msg)
             except Exception:
                 pass
 
@@ -1885,7 +1910,7 @@ class Messenger:
         parts = self.db.get_booking_participants(booking_id)
         room_map = {r['id']: r['name'] for r in self.db.get_rooms()}
         payload = {
-            'type': MT_MEETING_SYNC_RES,
+            'type': MT_MEETING_EDIT,
             'from_user': self.user_id,
             'bookings': [dict(booking)],
         }
@@ -1902,6 +1927,8 @@ class Messenger:
 
     def remove_participant(self, booking_id, uid):
         self.db.remove_booking_participant(booking_id, uid)
+        if self.db.get_booking_confirmed_count(booking_id) < 2:
+            self.db.update_booking_status(booking_id, 'pending')
         contact = self.db.get_contact(uid)
         if contact:
             try:

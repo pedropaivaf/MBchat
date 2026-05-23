@@ -43,6 +43,14 @@ Substituto moderno do LAN Messenger (C++), reescrito em Python. Executavel stand
 - Envio para grupo (envia individualmente para cada membro)
 - Aceitar/recusar transferencias recebidas
 
+### Calendario e Reunioes
+- Agendamento de reunioes e compromissos com hora de inicio e fim
+- Selecao de Salas de Reuniao integradas
+- Convite para multiplos participantes com controle de status (Confirmado, Pendente, Recusado)
+- Visualizacao semanal inteligente em grade de tempo
+- Interface de detalhes da reuniao com layout limpo em duas colunas
+- Lista de participantes rolável por scroll do mouse com avatares e icones de status
+
 ### Interface
 - 3 temas visuais: Classico, Night Mode, MB Contabilidade
 - Design flat moderno com hover effects e bordas arredondadas (Windows 11+)

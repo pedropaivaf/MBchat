@@ -9736,6 +9736,7 @@ class LanMessengerApp:
             on_meeting_response=self._safe(self._on_meeting_response),
             on_meeting_cancel=self._safe(self._on_meeting_cancel),
             on_meeting_sync=self._safe(self._on_meeting_sync),
+            on_meeting_edit=self._safe(self._on_meeting_edit),
             on_group_kick=self._safe(self._on_group_kick),
             on_group_admin_set=self._safe(self._on_group_admin_set),
             on_group_deleted=self._safe(self._on_group_deleted),
@@ -10104,6 +10105,7 @@ class LanMessengerApp:
 
         # Sino de convites de reunião e notificação de update
         self._bell_pending_invites = []
+        self._bell_alerts = []
         self._pending_update = None  # {'version': str, 'notes': str} quando há update disponível
         self._bell_frame = tk.Frame(user_inner, bg=NAVY, cursor='hand2')
         self._bell_frame.pack(side='right', padx=(0, 4))
@@ -15392,6 +15394,10 @@ class LanMessengerApp:
         sel_date = [now.year, now.month, now.day]
         sel_hour = [now.hour]
         sel_min = [now.minute]
+        
+        default_time = now + timedelta(minutes=5)
+        h_val = tk.StringVar(value=f'{default_time.hour:02d}')
+        m_val = tk.StringVar(value=f'{default_time.minute:02d}')
 
         def _set_quick(minutes=0, days=0, hour=9, minute=0):
             fresh_now = datetime.now()  # hora fresca ao clicar
@@ -15405,10 +15411,8 @@ class LanMessengerApp:
             sel_hour[0] = target.hour
             sel_min[0] = target.minute
             _refresh_cal()
-            hour_spin.delete(0, 'end')
-            hour_spin.insert(0, f'{target.hour:02d}')
-            min_spin.delete(0, 'end')
-            min_spin.insert(0, f'{target.minute:02d}')
+            h_val.set(f'{target.hour:02d}')
+            m_val.set(f'{target.minute:02d}')
 
         for label, kw in [('15 min', dict(minutes=15)), ('30 min', dict(minutes=30)),
                            ('1h', dict(minutes=60)), ('2h', dict(minutes=120)),
@@ -15526,9 +15530,7 @@ class LanMessengerApp:
         tk.Label(time_frame, text='HORÁRIO:', font=('Segoe UI', 8, 'bold'),
                  bg='#ffffff', fg='#64748b').pack(side='left')
         
-        default_time = now + timedelta(minutes=5)
-        h_val = tk.StringVar(value=f'{default_time.hour:02d}')
-        m_val = tk.StringVar(value=f'{default_time.minute:02d}')
+        # h_val and m_val already defined at the top
 
         hour_cb = ttk.Combobox(time_frame, textvariable=h_val, values=[f'{i:02d}' for i in range(24)],
                                width=3, font=('Segoe UI', 12, 'bold'), state='readonly', justify='center', style='Modern.TCombobox', height=24)
@@ -16866,7 +16868,8 @@ class LanMessengerApp:
     def _refresh_bell_badge(self):
         n = (len(self._bell_pending_invites)
              + getattr(self, '_bell_pending_reminder_count', 0)
-             + (1 if self._pending_update else 0))
+             + (1 if self._pending_update else 0)
+             + len(getattr(self, '_bell_alerts', [])))
         self._update_bell_badge(n)
 
     def _on_newer_version(self, peer_version):
@@ -16975,7 +16978,34 @@ class LanMessengerApp:
             if pending or reminder_count:
                 tk.Frame(inner, bg='#e2e8f0', height=1).pack(fill='x')
 
-        if not pending and not reminder_count and not upd:
+        alerts = getattr(self, '_bell_alerts', [])
+        
+        if alerts:
+            for al in alerts:
+                card = tk.Frame(inner, bg='#fef2f2' if al.get('type')=='cancel' else '#eff6ff',
+                                highlightthickness=1, highlightbackground='#e2e8f0')
+                card.pack(fill='x', padx=8, pady=(8, 0))
+                
+                tk.Label(card, text=al['title'], font=('Segoe UI', 9, 'bold'),
+                         bg=card['bg'], fg='#1e293b', anchor='w').pack(anchor='w', padx=8, pady=(6, 0))
+                tk.Label(card, text=al['msg'], font=('Segoe UI', 8),
+                         bg=card['bg'], fg='#475569', anchor='w', justify='left',
+                         wraplength=220).pack(anchor='w', padx=8, pady=(2, 4))
+                
+                def _dismiss(a=al):
+                    if a in self._bell_alerts:
+                        self._bell_alerts.remove(a)
+                    self._refresh_bell_badge()
+                    popup.destroy()
+                    self._open_bell_dropdown()
+                    
+                tk.Button(card, text='OK', font=('Segoe UI', 7, 'bold'),
+                          bg='#e2e8f0', fg='#1e293b', relief='flat', bd=0, padx=12, pady=3,
+                          cursor='hand2', command=_dismiss).pack(anchor='e', padx=8, pady=(0, 6))
+                          
+            tk.Frame(inner, bg='#e2e8f0', height=1).pack(fill='x', pady=(8,0))
+
+        if not pending and not reminder_count and not upd and not alerts:
             tk.Label(inner, text='Nenhum convite pendente',
                      font=('Segoe UI', 9), bg='#ffffff', fg='#6b7280',
                      padx=16, pady=12).pack()
@@ -17173,8 +17203,30 @@ class LanMessengerApp:
                 detail = f'cancelada por {cancelled_by}.'
             else:
                 detail = 'cancelada pelo organizador.'
-            import tkinter.messagebox as _mb
-            _mb.showinfo('Reunião cancelada', f'A reunião "{title}" foi {detail}')
+            alert = {
+                'type': 'cancel',
+                'title': f'Reunião Cancelada: {title}',
+                'msg': f'A reunião foi {detail}'
+            }
+            if not hasattr(self, '_bell_alerts'):
+                self._bell_alerts = []
+            self._bell_alerts.append(alert)
+            self._refresh_bell_badge()
+            
+            if HAS_WINOTIFY:
+                from winotify import Notification, audio as wn_audio
+                toast = Notification(app_id=APP_AUMID,
+                                     title='\U0001f4c5 ' + alert['title'],
+                                     msg=alert['msg'],
+                                     duration='short',
+                                     launch='mbchat://open/__meetings__')
+                try:
+                    toast.add_actions(label='Abrir Calendário', launch='mbchat://open/__meetings__')
+                except Exception:
+                    pass
+                toast.set_audio(wn_audio.Default, loop=False)
+                toast.show()
+                
         except Exception:
             pass
 
@@ -17184,6 +17236,46 @@ class LanMessengerApp:
                 self._meeting_window.refresh_timegrid()
             except Exception:
                 pass
+
+    def _on_meeting_edit(self, msg):
+        try:
+            import datetime as _dt
+            bookings = msg.get('bookings') or []
+            if not bookings:
+                return
+            b = bookings[0]
+            title = b.get('title', 'Reunião')
+            s_ts = b.get('start_ts', 0)
+            dt_s = _dt.datetime.fromtimestamp(s_ts).strftime('%d/%m às %H:%M')
+            
+            alert = {
+                'type': 'edit',
+                'title': f'Reunião Reagendada: {title}',
+                'msg': f'Foi reagendada para {dt_s} por {msg.get("display_name", "")}'
+            }
+            if not hasattr(self, '_bell_alerts'):
+                self._bell_alerts = []
+            self._bell_alerts.append(alert)
+            self._refresh_bell_badge()
+            
+            if HAS_WINOTIFY:
+                from winotify import Notification, audio as wn_audio
+                toast = Notification(app_id=APP_AUMID,
+                                     title='\U0001f4c5 ' + alert['title'],
+                                     msg=alert['msg'],
+                                     duration='short',
+                                     launch='mbchat://open/__meetings__')
+                try:
+                    toast.add_actions(label='Abrir Calendário', launch='mbchat://open/__meetings__')
+                except Exception:
+                    pass
+                toast.set_audio(wn_audio.Default, loop=False)
+                toast.show()
+            
+            if hasattr(self, '_meeting_window') and self._meeting_window.winfo_exists():
+                self._meeting_window.refresh_timegrid()
+        except Exception:
+            pass
 
     # ── fim Módulo Agendar > Reunião ─────────────────────────────────────────
 
