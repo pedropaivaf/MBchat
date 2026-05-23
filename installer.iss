@@ -49,12 +49,14 @@ Name: "{userstartup}\MB Chat"; Filename: "{app}\MBChat.exe"; Parameters: "--sile
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat TCP In"""; Flags: runhidden; StatusMsg: "Configurando firewall..."
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MBChat TCP In"" dir=in action=allow protocol=TCP localport=50101,50102 profile=any"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MBChat TCP In Dynamic"" dir=in action=allow protocol=TCP localport=50060-50130 profile=any"; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""MBChat UDP In"" dir=in action=allow protocol=UDP localport=50100 profile=any"; Flags: runhidden
 Filename: "{app}\MBChat.exe"; Description: "Abrir MB Chat"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/f /im MBChat.exe"; Flags: runhidden; RunOnceId: "KillApp"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat TCP In"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat TCP In Dynamic"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""MBChat UDP In"""; Flags: runhidden
 
 [UninstallDelete]

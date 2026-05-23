@@ -478,3 +478,6 @@ Problemas resolvidos:
 - **Scroll Wheel Global:** O scroll na tela de transferências agora escuta globalmente a janela via self.bind('<MouseWheel>') ao invés do Canvas.
 - **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
 - **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transferências por nome do arquivo ou do contato.
+
+## Regra de Versionamento
+Ao desenvolver localmente, use o sufixo '-dev' na versao em version.py (ex: 1.8.23-dev). Isso impede que a rede P2P notifique erroneamente uma atualizacao aos outros usuarios durante a sua fase de teste. No momento do build/lancamento final da release, retire esse sufixo.

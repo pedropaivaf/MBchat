@@ -227,7 +227,7 @@ LANGS = {
         'menu_tools': 'Ferramentas',
         'menu_help': 'Sobre',
         'menu_change_name': 'Alterar nome...',
-        'menu_preferences': 'Preferências...',
+        'menu_preferences': 'Preferências',
         'menu_quit': 'Sair',
         'menu_history': 'Histórico de mensagens',
         'menu_transfers': 'Transferência de arquivos',
@@ -275,7 +275,7 @@ LANGS = {
         'menu_tools': 'Tools',
         'menu_help': 'About',
         'menu_change_name': 'Change name...',
-        'menu_preferences': 'Preferences...',
+        'menu_preferences': 'Preferences',
         'menu_quit': 'Quit',
         'menu_history': 'Message history',
         'menu_transfers': 'File transfers',
@@ -541,6 +541,33 @@ class _Tooltip:
 # Chamado uma única vez na inicialização antes de criar qualquer janela.
 def _setup_scrollbar_style():
     style = ttk.Style()
+    
+    root = tk._default_root
+    if root:
+        root.option_add('*TCombobox*Listbox.font', ('Segoe UI', 10))
+        root.option_add('*TCombobox*Listbox.background', '#ffffff')
+        root.option_add('*TCombobox*Listbox.foreground', '#0f172a')
+        root.option_add('*TCombobox*Listbox.selectBackground', '#e2e8f0')
+        root.option_add('*TCombobox*Listbox.selectForeground', '#0f172a')
+        root.option_add('*TCombobox*Listbox.relief', 'flat')
+        root.option_add('*TCombobox*Listbox.borderwidth', 0)
+
+    # --- Estilo moderno para Combobox ---
+    style.configure('Modern.TCombobox',
+                    background='#ffffff',
+                    fieldbackground='#ffffff',
+                    foreground='#1a202c',
+                    bordercolor='#cbd5e1',
+                    lightcolor='#ffffff',
+                    darkcolor='#ffffff',
+                    arrowcolor='#475569',
+                    relief='flat',
+                    padding=2)
+    style.map('Modern.TCombobox',
+              fieldbackground=[('readonly', '#ffffff')],
+              background=[('readonly', '#ffffff')],
+              bordercolor=[('readonly', '#94a3b8')])
+              
     # --- Scrollbar vertical minimalista (sem setas, thumb de 6px) ---
     style.configure('Clean.Vertical.TScrollbar',
                     background='#cbd5e0', troughcolor='#f5f7fa',
@@ -1445,6 +1472,7 @@ class PreferencesWindow(tk.Toplevel):
         self.grab_set()             # Modal: bloqueia interação com outras janelas
         self.configure(bg=BG_WINDOW)
         self.bind('<Escape>', lambda e: self.destroy())
+        self.focus_force()
 
         _center_window(self, 580, 450)
         _apply_rounded_corners(self)
@@ -1489,6 +1517,16 @@ class PreferencesWindow(tk.Toplevel):
             btn.pack(fill='x')
             _add_hover(btn, self._sidebar_bg, self._sidebar_hover)
             self.cat_buttons.append(btn)
+
+        btn_quit = tk.Button(left, text='  Sair do Aplicativo', font=FONT, anchor='w',
+                             bg=self._sidebar_bg, fg='#ef4444',
+                             relief='flat', bd=0,
+                             padx=8, pady=12, cursor='hand2',
+                             activebackground='#fee2e2',
+                             activeforeground='#b91c1c',
+                             command=self.app._quit)
+        btn_quit.pack(side='bottom', fill='x')
+        _add_hover(btn_quit, self._sidebar_bg, '#fee2e2')
 
         # Settings vars
         self._init_vars()
@@ -1665,25 +1703,19 @@ class PreferencesWindow(tk.Toplevel):
         cls = widget.winfo_class()
         try:
             if cls == 'Label':
-                widget.configure(fg=FG_BLACK)
-            elif cls == 'Labelframe':
-                widget.configure(fg=FG_BLACK, bg=BG_WINDOW)
-            elif cls == 'Checkbutton':
-                widget.configure(fg=FG_BLACK, bg=BG_WINDOW,
-                                 selectcolor=BG_WHITE,
-                                 activebackground=BG_WINDOW,
-                                 activeforeground=FG_BLACK)
-            elif cls == 'Radiobutton':
-                widget.configure(fg=FG_BLACK, bg=BG_WINDOW,
-                                 selectcolor=BG_WHITE,
-                                 activebackground=BG_WINDOW,
-                                 activeforeground=FG_BLACK)
+                widget.configure(bg=BG_WINDOW, fg=FG_BLACK)
             elif cls == 'Frame':
                 widget.configure(bg=BG_WINDOW)
+            elif cls in ('Checkbutton', 'Radiobutton'):
+                widget.configure(bg=BG_WINDOW, fg=FG_BLACK, activebackground=BG_WINDOW, 
+                                 highlightthickness=0, bd=0, selectcolor=BG_WINDOW)
             elif cls == 'Entry':
-                widget.configure(bg=BG_WHITE, fg=FG_BLACK,
-                                 insertbackground=FG_BLACK,
-                                 disabledbackground=BG_WINDOW)
+                widget.configure(bg='#f8fafc', fg='#0f172a',
+                                 insertbackground='#0f172a', relief='solid', bd=1, highlightthickness=0)
+            elif cls == 'Labelframe':
+                widget.configure(bg=BG_WINDOW, relief='flat', bd=0, highlightthickness=0, fg='#475569')
+            elif cls == 'TCombobox':
+                widget.configure(style='Modern.TCombobox')
         except tk.TclError:
             pass
         for c in widget.winfo_children():
@@ -1808,7 +1840,7 @@ class PreferencesWindow(tk.Toplevel):
         tk.Label(dept_row, text='Selecionar:', font=FONT,
                  bg=BG_WINDOW).pack(side='left')
         self._dept_combo = ttk.Combobox(dept_row, font=FONT, width=18,
-                                         state='readonly',
+                                         state='readonly', height=12,
                                          values=['(Nenhum)', 'Administrativo',
                                                  'CS', 'Comercial', 'Contábil',
                                                  'Fiscal', 'Marketing', 'Pessoal',
@@ -2450,6 +2482,7 @@ class AccountWindow(tk.Toplevel):
         self.transient(app.root)
         self.grab_set()
         self.bind('<Escape>', lambda e: self.destroy())
+        self.focus_force()
 
         # Paleta moderna
         NAVY = '#0f2a5c'
@@ -2499,10 +2532,8 @@ class AccountWindow(tk.Toplevel):
                  bg=CARD, fg=MUTED).pack(anchor='w')
         name_ent = tk.Entry(ncol, font=('Segoe UI', 10),
                             textvariable=self.var_display_name,
-                            relief='solid', bd=1, bg='#ffffff',
-                            highlightthickness=1,
-                            highlightbackground='#cbd5e1',
-                            highlightcolor=ACCENT)
+                            relief='solid', bd=1, bg='#f8fafc',
+                            highlightthickness=0)
         name_ent.pack(fill='x', pady=(4, 0), ipady=3)
 
         # Coluna setor
@@ -2512,6 +2543,7 @@ class AccountWindow(tk.Toplevel):
                  bg=CARD, fg=MUTED).pack(anchor='w')
         self._dept_combo = ttk.Combobox(
             dcol, font=('Segoe UI', 10), state='readonly',
+            style='Modern.TCombobox', height=12,
             values=['(Nenhum)', 'Administrativo', 'CS', 'Comercial',
                     'Contábil', 'Fiscal', 'Marketing', 'Pessoal',
                     'Processos', 'Recepção', 'TI'])
@@ -2938,6 +2970,7 @@ class FileTransfersWindow(tk.Toplevel):
         self.configure(bg='#f5f7fa')
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self.bind('<Escape>', lambda e: self._on_close())
+        self.focus_force()
 
         ico = _get_icon_path()
         if ico:
@@ -2969,14 +3002,23 @@ class FileTransfersWindow(tk.Toplevel):
 
         # Barra de Pesquisa
         self._search_var = tk.StringVar()
-        search_bg = '#ffffff'
-        search_frame = tk.Frame(tb_inner, bg=search_bg, bd=0)
-        search_frame.pack(side='left', padx=(15, 0), fill='y', pady=1)
-
-        lbl_search = tk.Label(search_frame, text='\U0001f50d', bg=search_bg, fg='#a0aec0', font=('Segoe UI', 9))
-        lbl_search.pack(side='left', padx=(6, 2))
         
-        entry_search = tk.Entry(search_frame, textvariable=self._search_var, bg=search_bg, fg='#1a202c', bd=0, relief='flat', font=('Segoe UI', 9), width=22)
+        search_wrapper = tk.Frame(tb_inner, bg='#e8ecf1')
+        search_wrapper.pack(side='left', padx=(15, 0), fill='y', pady=2)
+        
+        search_border = tk.Frame(search_wrapper, bg='#d0d5dd', bd=0, highlightthickness=0)
+        search_border.pack(fill='y')
+        
+        search_inner = tk.Frame(search_border, bg='#ffffff', bd=0, highlightthickness=0)
+        search_inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+        self._ft_search_icon = _create_mdl2_icon_static('\uE721', size=14, color='#a0aec0')
+        if self._ft_search_icon:
+            tk.Label(search_inner, image=self._ft_search_icon, bg='#ffffff').pack(side='left', padx=(6, 2))
+        else:
+            tk.Label(search_inner, text='\u2315', font=('Segoe UI', 9), bg='#ffffff', fg='#a0aec0').pack(side='left', padx=(6, 2))
+        
+        entry_search = tk.Entry(search_inner, textvariable=self._search_var, bg='#ffffff', fg='#1a202c', bd=0, relief='flat', font=('Segoe UI', 9), width=18, insertbackground='#1a202c')
         entry_search.pack(side='left', padx=(0, 6), pady=4)
         
         self._search_var.trace_add('write', lambda *args: self._reload_entries())
@@ -2984,18 +3026,18 @@ class FileTransfersWindow(tk.Toplevel):
         self._filter_var = tk.StringVar(value='all')
         
         filter_frame = tk.Frame(tb_inner, bg='#e8ecf1')
-        filter_frame.pack(side='right', padx=4)
+        filter_frame.pack(side='right', padx=(10, 4))
 
         def _set_filter(f):
             self._filter_var.set(f)
             self._apply_filter_ui()
             self._reload_entries()
 
-        self._btn_f_all = tk.Button(filter_frame, text='Todos', font=('Segoe UI', 8, 'bold'), bg='#d0d7e1', fg='#1a202c', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('all'))
+        self._btn_f_all = tk.Button(filter_frame, text='Todos', font=('Segoe UI', 8, 'bold'), bg='#d0d7e1', fg='#1a202c', relief='flat', bd=0, cursor='hand2', padx=10, command=lambda: _set_filter('all'))
         self._btn_f_all.pack(side='left', padx=1)
-        self._btn_f_recv = tk.Button(filter_frame, text='Recebidos', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('receive'))
+        self._btn_f_recv = tk.Button(filter_frame, text='Recebidos', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=10, command=lambda: _set_filter('receive'))
         self._btn_f_recv.pack(side='left', padx=1)
-        self._btn_f_send = tk.Button(filter_frame, text='Enviados', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=8, command=lambda: _set_filter('send'))
+        self._btn_f_send = tk.Button(filter_frame, text='Enviados', font=('Segoe UI', 8), bg='#e8ecf1', fg='#4a5568', relief='flat', bd=0, cursor='hand2', padx=10, command=lambda: _set_filter('send'))
         self._btn_f_send.pack(side='left', padx=1)
 
         # Scrollable list
@@ -3004,24 +3046,100 @@ class FileTransfersWindow(tk.Toplevel):
 
         self._canvas = tk.Canvas(list_frame, bg='#ffffff',
                                   highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient='vertical',
-                                   command=self._canvas.yview)
-        self._canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side='right', fill='y')
-        self._canvas.pack(fill='both', expand=True)
+        
+        # Custom Scrollbar (minimalist)
+        sb_canvas = tk.Canvas(list_frame, width=6, highlightthickness=0, bd=0, bg='#ffffff')
+        sb_state = {'lo': 0.0, 'hi': 1.0, 'dragging': False, 'drag_y': 0, 'wide': False, 'thin': 6, 'wide_w': 10}
+        
+        def _sb_redraw():
+            sb_canvas.delete('all')
+            h = sb_canvas.winfo_height()
+            w = sb_canvas.winfo_width()
+            if h < 2 or w < 2: return
+            y1 = max(int(sb_state['lo'] * h), 0)
+            y2 = min(int(sb_state['hi'] * h), h)
+            if y2 - y1 < 20:
+                mid = (y1 + y2) // 2
+                y1, y2 = max(mid - 10, 0), min(mid + 10, h)
+            color = '#94a3b8' if sb_state['wide'] else '#cbd5e1'
+            r = max((w - 2) // 2, 1)
+            pad = 1
+            sb_canvas.create_oval(pad, y1, w - pad, y1 + 2 * r, fill=color, outline='')
+            sb_canvas.create_oval(pad, y2 - 2 * r, w - pad, y2, fill=color, outline='')
+            if y2 - 2 * r > y1 + r:
+                sb_canvas.create_rectangle(pad, y1 + r, w - pad, y2 - r, fill=color, outline='')
+                
+        def _sb_set(lo, hi):
+            lo, hi = float(lo), float(hi)
+            sb_state['lo'], sb_state['hi'] = lo, hi
+            if lo <= 0.0 and hi >= 1.0:
+                sb_canvas.pack_forget()
+            else:
+                if not sb_canvas.winfo_ismapped():
+                    sb_canvas.pack(side='right', fill='y')
+                _sb_redraw()
+                
+        def _sb_enter(e):
+            sb_state['wide'] = True
+            sb_canvas.configure(width=sb_state['wide_w'])
+            _sb_redraw()
+            
+        def _sb_leave(e):
+            if not sb_state['dragging']:
+                sb_state['wide'] = False
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+                
+        def _sb_press(e):
+            sb_state['dragging'] = True
+            sb_state['drag_y'] = e.y
+            h = sb_canvas.winfo_height()
+            if h > 0:
+                click_frac = e.y / h
+                if click_frac < sb_state['lo'] or click_frac > sb_state['hi']:
+                    span = sb_state['hi'] - sb_state['lo']
+                    self._canvas.yview_moveto(max(0.0, click_frac - span / 2))
+                    
+        def _sb_drag(e):
+            if not sb_state['dragging']: return
+            h = sb_canvas.winfo_height()
+            if h < 1: return
+            dy = (e.y - sb_state['drag_y']) / h
+            sb_state['drag_y'] = e.y
+            self._canvas.yview_moveto(max(0.0, min(1.0, sb_state['lo'] + dy)))
+            
+        def _sb_release(e):
+            sb_state['dragging'] = False
+            if not sb_state['wide']:
+                sb_canvas.configure(width=sb_state['thin'])
+                _sb_redraw()
+                
+        sb_canvas.bind('<Enter>', _sb_enter)
+        sb_canvas.bind('<Leave>', _sb_leave)
+        sb_canvas.bind('<Button-1>', _sb_press)
+        sb_canvas.bind('<B1-Motion>', _sb_drag)
+        sb_canvas.bind('<ButtonRelease-1>', _sb_release)
+        sb_canvas.bind('<Configure>', lambda e: _sb_redraw())
+        
+        self._canvas.configure(yscrollcommand=_sb_set)
+        self._canvas.pack(side='left', fill='both', expand=True)
 
         self._inner = tk.Frame(self._canvas, bg='#ffffff')
-        self._win_id = self._canvas.create_window((0, 0), window=self._inner,
-                                                    anchor='nw')
-        self._canvas.bind('<Configure>',
-                          lambda e: self._canvas.itemconfig(self._win_id,
-                                                             width=e.width))
-        self._inner.bind('<Configure>',
-                         lambda e: self._canvas.configure(
-                             scrollregion=self._canvas.bbox('all')))
+        self._win_id = self._canvas.create_window((0, 0), window=self._inner, anchor='nw')
+        self._canvas.bind('<Configure>', lambda e: self._canvas.itemconfig(self._win_id, width=e.width))
         
-        # Mousewheel em toda a janela para o scroll
-        self.bind('<MouseWheel>', lambda e: self._canvas.yview_scroll(-1 * (e.delta // 120), 'units'))
+        def _update_scrollregion(e=None):
+            bbox = self._canvas.bbox('all')
+            if bbox:
+                self._canvas.configure(scrollregion=bbox)
+                try: self._canvas.yview_moveto(max(0.0, self._canvas.yview()[0]))
+                except Exception: pass
+        self._inner.bind('<Configure>', _update_scrollregion)
+        
+        def _on_mousewheel(e):
+            if sb_state['lo'] <= 0.0 and sb_state['hi'] >= 1.0: return
+            self._canvas.yview_scroll(-1 * (e.delta // 120), 'units')
+        self.bind('<MouseWheel>', _on_mousewheel)
 
         # Bottom bar
         bottom = tk.Frame(self, bg='#f5f7fa')
@@ -9514,6 +9632,41 @@ class LanMessengerApp:
         # Carrega grupos fixos salvos no DB
         self._load_saved_groups()
 
+        # Restaurar janelas de chat abertas na sessao anterior (Update persistence)
+        try:
+            import json
+            saved_chats_str = self.messenger.db.get_setting('open_chats_on_exit', '')
+            if saved_chats_str:
+                open_chats = json.loads(saved_chats_str)
+                for uid, info in open_chats.items():
+                    state = info.get('state', 'normal')
+                    is_group = info.get('is_group', False)
+                    try:
+                        if is_group:
+                            # Tenta abrir o grupo; _open_group so cria se estiver em _groups,
+                            # que foi carregado por _load_saved_groups
+                            gw = self._open_group(uid, surface_only=True)
+                            if gw:
+                                if state == 'iconic':
+                                    gw.iconify()
+                                elif state == 'zoomed':
+                                    try: gw.state('zoomed')
+                                    except Exception: pass
+                        else:
+                            cw = self._open_chat(uid, surface_only=True)
+                            if cw:
+                                if state == 'iconic':
+                                    cw.iconify()
+                                elif state == 'zoomed':
+                                    try: cw.state('zoomed')
+                                    except Exception: pass
+                    except Exception as e:
+                        log.warning(f'Erro ao restaurar chat {uid}: {e}')
+                # Limpa a flag apos restaurar para nao repetir em caso de crash
+                self.messenger.db.set_setting('open_chats_on_exit', '')
+        except Exception as e:
+            log.warning(f'Falha ao restaurar sessoes de chat: {e}')
+
         # Inicia tray icon para notificacoes
         if HAS_TRAY and HAS_PIL:
             self.root.after(50, self._start_tray)
@@ -9630,18 +9783,11 @@ class LanMessengerApp:
     # Atualiza textos da UI apos mudanca de idioma.
     def _rebuild_ui_language(self):
         # Rebuild menu bar
-        menubar = tk.Menu(self.root, font=FONT)
+        menubar = tk.Menu(self.root, font=FONT, cursor='hand2')
 
-        m1 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m1.add_command(label=_t('menu_change_name'), command=self._change_name)
-        m1.add_separator()
-        m1.add_command(label=_t('menu_preferences'),
-                       command=self._show_preferences)
-        m1.add_separator()
-        m1.add_command(label=_t('menu_quit'), command=self._quit)
-        menubar.add_cascade(label=_t('menu_messenger'), menu=m1)
+        menubar.add_command(label=_t('menu_preferences'), command=self._show_preferences)
 
-        m2 = tk.Menu(menubar, tearoff=0, font=FONT)
+        m2 = tk.Menu(menubar, tearoff=0, font=FONT, cursor='hand2')
         m2.add_command(label=_t('menu_history'),
                        command=self._show_all_history)
         m2.add_command(label=_t('menu_transfers'),
@@ -9880,15 +10026,9 @@ class LanMessengerApp:
 
     def _build_ui(self):
         # Menu Bar
-        menubar = tk.Menu(self.root, font=FONT)
+        menubar = tk.Menu(self.root, font=FONT, cursor='hand2')
 
-        m1 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m1.add_command(label=_t('menu_change_name'), command=self._change_name)
-        m1.add_separator()
-        m1.add_command(label=_t('menu_preferences'), command=self._show_preferences)
-        m1.add_separator()
-        m1.add_command(label=_t('menu_quit'), command=self._quit)
-        menubar.add_cascade(label=_t('menu_messenger'), menu=m1)
+        menubar.add_command(label=_t('menu_preferences'), command=self._show_preferences)
 
         m2 = tk.Menu(menubar, tearoff=0, font=FONT)
         m2.add_command(label=_t('menu_history'), command=self._show_all_history)
@@ -12288,22 +12428,52 @@ class LanMessengerApp:
         left_frame = tk.Frame(main, bg=panel_bg)
         
         # Seletor de Modo (Contatos vs Grupos)
-        mode_frame = tk.Frame(left_frame, bg=panel_bg)
+        mode_frame = tk.Frame(left_frame, bg='#e2e8f0', bd=0)
         mode_frame.pack(fill='x', padx=10, pady=(8, 4))
         mode_var = tk.StringVar(value='Contatos')
-        mode_combo = ttk.Combobox(mode_frame, textvariable=mode_var, 
-                                  values=('Contatos', 'Grupos'), state='readonly', font=('Segoe UI', 9))
-        mode_combo.pack(fill='x')
+        
+        btn_contatos = tk.Button(mode_frame, text='Contatos', font=('Segoe UI', 9, 'bold'), bg='#ffffff', fg='#1a202c', relief='flat', bd=0, cursor='hand2', pady=2)
+        btn_contatos.pack(side='left', fill='x', expand=True, padx=1, pady=1)
+        btn_grupos = tk.Button(mode_frame, text='Grupos', font=('Segoe UI', 9), bg='#e2e8f0', fg='#4a5568', relief='flat', bd=0, cursor='hand2', pady=2)
+        btn_grupos.pack(side='left', fill='x', expand=True, padx=(0, 1), pady=1)
+        
+        # We need a lambda to delay the call to _run_refresh which is defined later
+        self._history_refresh_cb = None
+        def _set_mode(m):
+            mode_var.set(m)
+            if m == 'Contatos':
+                btn_contatos.config(bg='#ffffff', fg='#1a202c', font=('Segoe UI', 9, 'bold'))
+                btn_grupos.config(bg='#e2e8f0', fg='#4a5568', font=('Segoe UI', 9))
+            else:
+                btn_grupos.config(bg='#ffffff', fg='#1a202c', font=('Segoe UI', 9, 'bold'))
+                btn_contatos.config(bg='#e2e8f0', fg='#4a5568', font=('Segoe UI', 9))
+            if self._history_refresh_cb:
+                self._history_refresh_cb()
+                
+        btn_contatos.config(command=lambda: _set_mode('Contatos'))
+        btn_grupos.config(command=lambda: _set_mode('Grupos'))
         
         tk.Label(left_frame, text='Nome da pessoa', font=('Segoe UI', 9, 'bold'),
                  bg=panel_bg, fg=fg_text, anchor='w').pack(fill='x', padx=10, pady=(4, 2))
 
-        name_search_frame = tk.Frame(left_frame, bg=panel_bg)
-        name_search_frame.pack(fill='x', padx=10, pady=(0, 4))
+        name_search_wrapper = tk.Frame(left_frame, bg=panel_bg)
+        name_search_wrapper.pack(fill='x', padx=10, pady=(0, 4))
+        
+        name_search_border = tk.Frame(name_search_wrapper, bg='#d0d5dd', bd=0, highlightthickness=0)
+        name_search_border.pack(fill='x')
+        name_search_inner = tk.Frame(name_search_border, bg='#ffffff', bd=0, highlightthickness=0)
+        name_search_inner.pack(fill='x', padx=1, pady=1)
+
+        self._history_name_search_icon = _create_mdl2_icon_static('\uE721', size=14, color='#a0aec0')
+        if self._history_name_search_icon:
+            tk.Label(name_search_inner, image=self._history_name_search_icon, bg='#ffffff').pack(side='left', padx=(6, 2))
+        else:
+            tk.Label(name_search_inner, text='\u2315', font=('Segoe UI', 9), bg='#ffffff', fg='#a0aec0').pack(side='left', padx=(6, 2))
+            
         name_search_var = tk.StringVar()
-        name_search_entry = tk.Entry(name_search_frame, textvariable=name_search_var,
-                                      font=('Segoe UI', 9))
-        name_search_entry.pack(fill='x')
+        name_search_entry = tk.Entry(name_search_inner, textvariable=name_search_var,
+                                      font=('Segoe UI', 9), bg='#ffffff', fg='#1a202c', bd=0, relief='flat', insertbackground='#1a202c')
+        name_search_entry.pack(side='left', fill='x', expand=True, ipady=3, padx=2)
         _name_ph = 'Digite o nome...'
         name_search_entry.insert(0, _name_ph)
         name_search_entry.config(fg='#999999')
@@ -12792,7 +12962,7 @@ class LanMessengerApp:
             _render_messages(peer_id, msgs, query)
 
         contacts_tree.bind('<<TreeviewSelect>>', _on_select)
-        mode_combo.bind('<<ComboboxSelected>>', lambda e: _run_refresh())
+        self._history_refresh_cb = _run_refresh
         search_var.trace_add('write', _schedule_refresh)
         name_search_var.trace_add('write', _schedule_refresh)
         # Fallback: bind KeyRelease tambem (trace_add em textvariable pode nao disparar em alguns
@@ -14140,12 +14310,14 @@ class LanMessengerApp:
             except Exception:
                 pass
         win = tk.Toplevel(self.root)
+        win.withdraw()  # Esconde enquanto monta para evitar flash no topo esquerdo
         win.title('Lembretes')
         # Sem transient: precisa do botao proprio na taskbar pra flash funcionar
         win.configure(bg='#ffffff')
         _center_window(win, 440, 450)
         _apply_rounded_corners(win)
         win.bind('<Escape>', lambda e: win.destroy())
+        win.focus_force()
         # WS_EX_APPWINDOW pra forcar entrada propria na taskbar (essencial pro flash)
         try:
             self._force_taskbar_entry(win)
@@ -14315,6 +14487,9 @@ class LanMessengerApp:
                 self._reminders_window = None
         win.bind('<Destroy>', _on_win_destroy)
         self._refresh_reminders_list(list_frame)
+        
+        win.focus_force()
+        win.deiconify()
 
     def _refresh_reminders_list(self, parent):
         for w in parent.winfo_children():
@@ -14716,11 +14891,14 @@ class LanMessengerApp:
         state = {'date': initial_date}
         frame = tk.Frame(parent, bg='#ffffff')
         entry_var = tk.StringVar(value=initial_date.strftime('%d/%m/%Y'))
-        entry = tk.Entry(frame, textvariable=entry_var, width=12,
+        entry_border = tk.Frame(frame, bg='#cbd5e1', bd=0)
+        entry_border.pack(side='left')
+        entry_inner = tk.Frame(entry_border, bg='#f7fafc', bd=0)
+        entry_inner.pack(padx=1, pady=1)
+        entry = tk.Entry(entry_inner, textvariable=entry_var, width=12,
                           font=('Segoe UI', 10), relief='flat', bg='#f7fafc',
-                          justify='center', state='readonly', readonlybackground='#f7fafc',
-                          highlightthickness=1, highlightbackground='#cbd5e1')
-        entry.pack(side='left', ipady=3)
+                          justify='center', state='readonly', readonlybackground='#f7fafc', bd=0)
+        entry.pack(side='left', ipady=3, padx=2)
 
         popup_ref = {'win': None}
 
@@ -14898,8 +15076,15 @@ class LanMessengerApp:
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 580, 540 if invited_uids else 500)
+        _center_window(dlg, 540, 410 if invited_uids else 380)
         _apply_rounded_corners(dlg)
+        
+        dlg.option_add('*TCombobox*Listbox.font', ('Segoe UI', 10))
+        dlg.option_add('*TCombobox*Listbox.background', '#ffffff')
+        dlg.option_add('*TCombobox*Listbox.foreground', '#0f172a')
+        dlg.option_add('*TCombobox*Listbox.selectBackground', '#e2e8f0')
+        dlg.option_add('*TCombobox*Listbox.selectForeground', '#0f172a')
+        dlg.option_add('*TCombobox*Listbox.relief', 'flat')
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
         hdr = tk.Frame(dlg, bg='#7c3aed')
@@ -14927,74 +15112,64 @@ class LanMessengerApp:
 
         # Linha 1: Titulo + Horario (lado a lado, Horario proximo)
         row1 = tk.Frame(body, bg='#ffffff')
-        row1.pack(fill='x', pady=(0, 10))
+        row1.pack(fill='x', pady=(0, 6))
 
         col_title = tk.Frame(row1, bg='#ffffff')
-        col_title.pack(side='left', fill='x', expand=True)
-        tk.Label(col_title, text='Título', font=('Segoe UI', 9, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(anchor='w')
-        txt_entry = tk.Entry(col_title, font=('Segoe UI', 11), relief='flat',
-                             bg='#f7fafc', highlightthickness=1,
-                             highlightbackground='#cbd5e1',
-                             highlightcolor='#7c3aed', width=28)
-        txt_entry.pack(anchor='w', pady=(3, 0), ipady=5, fill='x', expand=False)
+        col_title.pack(fill='x')
+        tk.Label(col_title, text='TÍTULO', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
+        txt_inner = tk.Frame(col_title, bg='#f1f5f9', bd=0)
+        txt_inner.pack(anchor='w', fill='x')
+        txt_entry = tk.Entry(txt_inner, font=('Segoe UI', 11), relief='flat', bd=0, bg='#f1f5f9', fg='#0f172a', insertbackground='#0f172a')
+        txt_entry.pack(fill='x', ipady=6, padx=8)
         txt_entry.focus_set()
 
-        col_time = tk.Frame(row1, bg='#ffffff')
-        col_time.pack(side='left', padx=(16, 0), anchor='n')
-        tk.Label(col_time, text='Horário', font=('Segoe UI', 9, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(anchor='center')
+        row1_b = tk.Frame(body, bg='#ffffff')
+        row1_b.pack(fill='x', pady=(0, 10))
+        
+        col_time = tk.Frame(row1_b, bg='#ffffff')
+        col_time.pack(side='left', anchor='n')
+        tk.Label(col_time, text='HORÁRIO', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
         time_row = tk.Frame(col_time, bg='#ffffff')
-        time_row.pack(anchor='center', pady=(3, 0))
+        time_row.pack(anchor='w')
         h_var = tk.StringVar(value=f'{now.hour:02d}')
         m_var = tk.StringVar(value=f'{now.minute:02d}')
-        hs = tk.Spinbox(time_row, from_=0, to=23, textvariable=h_var,
-                        width=3, font=('Segoe UI', 13, 'bold'), format='%02.0f',
-                        relief='flat', bg='#f7fafc', justify='center',
-                        highlightthickness=1, highlightbackground='#cbd5e1')
-        hs.pack(side='left', ipady=2)
+        hour_cb = ttk.Combobox(time_row, textvariable=h_var, values=[f'{i:02d}' for i in range(24)],
+                               width=3, font=('Segoe UI', 12, 'bold'), state='readonly', justify='center', style='Modern.TCombobox', height=24)
+        hour_cb.pack(side='left', padx=2)
         tk.Label(time_row, text=':', font=('Segoe UI', 14, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(side='left', padx=5)
-        ms = tk.Spinbox(time_row, from_=0, to=59, textvariable=m_var,
-                        width=3, font=('Segoe UI', 13, 'bold'), format='%02.0f',
-                        relief='flat', bg='#f7fafc', justify='center',
-                        highlightthickness=1, highlightbackground='#cbd5e1',
-                        increment=1)
-        ms.pack(side='left', ipady=2)
+                 bg='#ffffff', fg='#64748b').pack(side='left', padx=1)
+        min_cb = ttk.Combobox(time_row, textvariable=m_var, values=[f'{i:02d}' for i in range(0, 60, 5)],
+                              width=3, font=('Segoe UI', 12, 'bold'), state='normal', justify='center', style='Modern.TCombobox', height=12)
+        min_cb.pack(side='left', padx=2)
 
-        # Linha 2: Padrao + A cada N (lado a lado)
-        tk.Label(body, text='Padrão', font=('Segoe UI', 9, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(anchor='w')
-        row2 = tk.Frame(body, bg='#ffffff')
-        row2.pack(fill='x', pady=(3, 8))
+        col_pat = tk.Frame(row1_b, bg='#ffffff')
+        col_pat.pack(side='left', padx=(16, 0), anchor='n')
+        tk.Label(col_pat, text='REPETIR', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
+                 
+        pat_row = tk.Frame(col_pat, bg='#ffffff')
+        pat_row.pack(anchor='w')
+
+        tk.Label(pat_row, text='A cada', font=('Segoe UI', 10),
+                 bg='#ffffff', fg='#1a202c').pack(side='left', padx=(0, 6))
+                 
+        interval_var = tk.StringVar(value='1')
+        int_cb = ttk.Combobox(pat_row, textvariable=interval_var, values=['1', '2', '3', '4', '5', '6', '7', '10', '14', '15', '20', '30', '60', '90'],
+                              width=3, font=('Segoe UI', 10), state='normal', justify='center', style='Modern.TCombobox', height=14)
+        int_cb.pack(side='left')
 
         pat_var = tk.StringVar(value='daily')
-        pat_col = tk.Frame(row2, bg='#ffffff')
-        pat_col.pack(side='left')
-        for label, val in [('Diário', 'daily'), ('Semanal', 'weekly'),
-                            ('Mensal', 'monthly'), ('Anual', 'yearly')]:
-            tk.Radiobutton(pat_col, text=label, variable=pat_var, value=val,
-                           font=('Segoe UI', 10), bg='#ffffff',
-                           activebackground='#ffffff',
-                           command=lambda: _refresh_pattern()).pack(side='left', padx=(0, 8))
-
-        int_row = tk.Frame(row2, bg='#ffffff')
-        int_row.pack(side='left', padx=(14, 0))
-        tk.Label(int_row, text='A cada', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#374151').pack(side='left')
-        interval_var = tk.StringVar(value='1')
-        int_spin = tk.Spinbox(int_row, from_=1, to=99, textvariable=interval_var,
-                              width=3, font=('Segoe UI', 10), justify='center',
-                              relief='flat', bg='#f7fafc',
-                              highlightthickness=1, highlightbackground='#cbd5e1')
-        int_spin.pack(side='left', padx=6)
-        unit_lbl = tk.Label(int_row, text='dia(s)', font=('Segoe UI', 10),
-                            bg='#ffffff', fg='#374151')
-        unit_lbl.pack(side='left')
+        vis_unit_var = tk.StringVar(value='dias')
+        
+        unit_cb = ttk.Combobox(pat_row, textvariable=vis_unit_var, values=['dias', 'semanas', 'meses', 'anos'],
+                               width=9, font=('Segoe UI', 10), state='readonly', justify='left', style='Modern.TCombobox', height=4)
+        unit_cb.pack(side='left', padx=(6, 0))
 
         # Dias da semana (so aparece em "weekly")
-        wd_label = tk.Label(body, text='Dias da semana', font=('Segoe UI', 9, 'bold'),
-                            bg='#ffffff', fg='#374151')
+        wd_label = tk.Label(body, text='DIAS DA SEMANA', font=('Segoe UI', 8, 'bold'),
+                            bg='#ffffff', fg='#64748b')
         wd_frame = tk.Frame(body, bg='#ffffff')
         WEEK_LABELS = [('Seg', 0), ('Ter', 1), ('Qua', 2), ('Qui', 3),
                         ('Sex', 4), ('Sáb', 5), ('Dom', 6)]
@@ -15016,57 +15191,68 @@ class LanMessengerApp:
 
         col_start = tk.Frame(row3, bg='#ffffff')
         col_start.pack(side='left', anchor='n')
-        tk.Label(col_start, text='Começa em', font=('Segoe UI', 9, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(anchor='w')
+        tk.Label(col_start, text='COMEÇA EM', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
         start_picker = self._create_date_picker(col_start, now)
         start_picker['frame'].pack(anchor='w', pady=(3, 0))
 
         col_end = tk.Frame(row3, bg='#ffffff')
-        col_end.pack(side='left', anchor='n', padx=(20, 0), fill='x', expand=True)
-        tk.Label(col_end, text='Término', font=('Segoe UI', 9, 'bold'),
-                 bg='#ffffff', fg='#374151').pack(anchor='w')
-        end_var = tk.StringVar(value='never')
-        end_frame = tk.Frame(col_end, bg='#ffffff')
-        end_frame.pack(anchor='w', pady=(3, 0), fill='x')
+        col_end.pack(side='right', anchor='ne', padx=(20, 0))
+        tk.Label(col_end, text='TERMINAR', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
+                 
+        end_row = tk.Frame(col_end, bg='#ffffff')
+        end_row.pack(anchor='w', pady=(3, 0), fill='x')
 
-        def _refresh_pattern():
-            p = pat_var.get()
-            unit_lbl.config(text={'daily': 'dia(s)', 'weekly': 'semana(s)',
-                                   'monthly': 'mês(es)', 'yearly': 'ano(s)'}[p])
-            if p == 'weekly':
+        end_var = tk.StringVar(value='never')
+        vis_end_var = tk.StringVar(value='Nunca')
+        
+        end_cb = ttk.Combobox(end_row, textvariable=vis_end_var, values=['Nunca', 'Em uma data', 'Após repetições'],
+                              width=15, font=('Segoe UI', 10), state='readonly', justify='left', style='Modern.TCombobox', height=3)
+        end_cb.pack(side='left')
+        
+        opt_frame = tk.Frame(end_row, bg='#ffffff')
+        opt_frame.pack(side='left', padx=(6, 0))
+        
+        count_var = tk.StringVar(value='10')
+        count_cb = ttk.Combobox(opt_frame, textvariable=count_var, values=['1', '2', '3', '4', '5', '10', '12', '15', '20', '30', '50', '100'],
+                                width=4, font=('Segoe UI', 9), state='normal', justify='center', style='Modern.TCombobox', height=12)
+        count_lbl = tk.Label(opt_frame, text='vezes', font=('Segoe UI', 9), bg='#ffffff', fg='#475569')
+                                
+        end_picker = self._create_date_picker(opt_frame, now + timedelta(days=60))
+        
+        def _on_end_change(*args):
+            e = vis_end_var.get()
+            count_cb.pack_forget()
+            count_lbl.pack_forget()
+            end_picker['frame'].pack_forget()
+            
+            if e == 'Nunca':
+                end_var.set('never')
+            elif e == 'Após repetições':
+                end_var.set('count')
+                count_cb.pack(side='left')
+                count_lbl.pack(side='left', padx=(4, 0))
+            elif e == 'Em uma data':
+                end_var.set('date')
+                end_picker['frame'].pack(side='left')
+
+        vis_end_var.trace('w', _on_end_change)
+        
+        def _on_unit_change(*args):
+            u = vis_unit_var.get()
+            pat_var.set({'dias': 'daily', 'semanas': 'weekly', 'meses': 'monthly', 'anos': 'yearly'}.get(u, 'daily'))
+            if u == 'semanas':
                 wd_label.pack(anchor='w', pady=(2, 2), before=sep)
                 wd_frame.pack(anchor='w', pady=(0, 6), before=sep)
             else:
                 wd_label.pack_forget()
                 wd_frame.pack_forget()
-
-        _refresh_pattern()
-
-        tk.Radiobutton(end_frame, text='Sem data de término',
-                       variable=end_var, value='never',
-                       font=('Segoe UI', 9), bg='#ffffff',
-                       activebackground='#ffffff').grid(row=0, column=0, sticky='w', columnspan=2, pady=0)
-
-        tk.Radiobutton(end_frame, text='Após',
-                       variable=end_var, value='count',
-                       font=('Segoe UI', 9), bg='#ffffff',
-                       activebackground='#ffffff').grid(row=1, column=0, sticky='w', pady=0)
-        count_row = tk.Frame(end_frame, bg='#ffffff')
-        count_row.grid(row=1, column=1, sticky='w', padx=(4, 0))
-        count_var = tk.StringVar(value='10')
-        tk.Spinbox(count_row, from_=1, to=999, textvariable=count_var,
-                   width=4, font=('Segoe UI', 9), justify='center',
-                   relief='flat', bg='#f7fafc',
-                   highlightthickness=1, highlightbackground='#cbd5e1').pack(side='left')
-        tk.Label(count_row, text='ocorrências', font=('Segoe UI', 9),
-                 bg='#ffffff', fg='#374151').pack(side='left', padx=(4, 0))
-
-        tk.Radiobutton(end_frame, text='Em',
-                       variable=end_var, value='date',
-                       font=('Segoe UI', 9), bg='#ffffff',
-                       activebackground='#ffffff').grid(row=2, column=0, sticky='w', pady=0)
-        end_picker = self._create_date_picker(end_frame, now + timedelta(days=60))
-        end_picker['frame'].grid(row=2, column=1, padx=(4, 0), sticky='w')
+                
+        vis_unit_var.trace('w', _on_unit_change)
+        
+        _on_unit_change()
+        _on_end_change()
 
         lbl_err = tk.Label(body, text='', font=('Segoe UI', 8),
                            bg='#ffffff', fg='#ef4444')
@@ -15162,6 +15348,13 @@ class LanMessengerApp:
         dlg.configure(bg='#ffffff')
         _center_window(dlg, 380, 520 if invited_uids else 480)
         _apply_rounded_corners(dlg)
+        
+        dlg.option_add('*TCombobox*Listbox.font', ('Segoe UI', 10))
+        dlg.option_add('*TCombobox*Listbox.background', '#ffffff')
+        dlg.option_add('*TCombobox*Listbox.foreground', '#0f172a')
+        dlg.option_add('*TCombobox*Listbox.selectBackground', '#e2e8f0')
+        dlg.option_add('*TCombobox*Listbox.selectForeground', '#0f172a')
+        dlg.option_add('*TCombobox*Listbox.relief', 'flat')
         dlg.bind('<Escape>', lambda e: dlg.destroy())
 
         # Header
@@ -15181,17 +15374,17 @@ class LanMessengerApp:
                      wraplength=340, justify='left'
                      ).pack(anchor='w', pady=(0, 6))
 
-        tk.Label(body, text='Título:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
-        txt_entry = tk.Entry(body, font=('Segoe UI', 10), relief='flat',
-                              bg='#f7fafc', highlightthickness=1,
-                              highlightbackground='#cbd5e1')
-        txt_entry.pack(fill='x')
+        tk.Label(body, text='TÍTULO', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 2))
+        txt_inner = tk.Frame(body, bg='#f1f5f9', bd=0)
+        txt_inner.pack(anchor='w', fill='x')
+        txt_entry = tk.Entry(txt_inner, font=('Segoe UI', 11), relief='flat', bd=0, bg='#f1f5f9', fg='#0f172a', width=28, insertbackground='#0f172a')
+        txt_entry.pack(fill='x', ipady=6, padx=8)
         txt_entry.focus_set()
 
         # Atalhos rapidos
-        tk.Label(body, text='Atalhos:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(10, 4))
+        tk.Label(body, text='ATALHOS', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(10, 2))
         quick_frame = tk.Frame(body, bg='#ffffff')
         quick_frame.pack(fill='x', pady=(0, 6))
         now = datetime.now()  # hora atual ao abrir o dialogo
@@ -15231,8 +15424,8 @@ class LanMessengerApp:
         tk.Frame(body, bg='#e2e8f0', height=1).pack(fill='x', pady=8)
 
         # Calendario
-        tk.Label(body, text='Data e Hora:', font=('Segoe UI', 10, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(anchor='w', pady=(0, 4))
+        tk.Label(body, text='DATA E HORA', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(anchor='w', pady=(0, 4))
 
         cal_state = [now.year, now.month]  # ano, mes exibido no calendario
 
@@ -15257,22 +15450,25 @@ class LanMessengerApp:
         btn_next.pack(side='right')
 
         # Grid de dias
-        grid_frame = tk.Frame(cal_frame, bg='#ffffff')
-        grid_frame.pack(fill='x', pady=(2, 0))
+        grid_wrapper = tk.Frame(cal_frame, bg='#ffffff')
+        grid_wrapper.pack(fill='x', pady=(6, 0))
+        grid_frame = tk.Frame(grid_wrapper, bg='#ffffff')
+        grid_frame.pack(anchor='center')  # Centraliza o calendario
+        
         # Cabecalho dias da semana
         for i, d in enumerate(['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']):
             fg = '#ef4444' if i >= 5 else '#64748b'
-            tk.Label(grid_frame, text=d, font=('Segoe UI', 8), width=4,
-                     bg='#ffffff', fg=fg).grid(row=0, column=i)
+            tk.Label(grid_frame, text=d, font=('Segoe UI', 9, 'bold'), width=5,
+                     bg='#ffffff', fg=fg).grid(row=0, column=i, pady=(0, 4))
         day_buttons = []
         for r in range(6):
             row_btns = []
             for c in range(7):
-                b = tk.Button(grid_frame, text='', font=('Segoe UI', 9),
-                              width=3, relief='flat', bd=0, bg='#ffffff',
+                b = tk.Button(grid_frame, text='', font=('Segoe UI', 10),
+                              width=4, relief='flat', bd=0, bg='#ffffff',
                               fg='#1a202c', cursor='hand2',
                               command=lambda rr=r, cc=c: _select_day(rr, cc))
-                b.grid(row=r + 1, column=c, pady=1)
+                b.grid(row=r + 1, column=c, pady=2, padx=2)
                 row_btns.append(b)
             day_buttons.append(row_btns)
 
@@ -15324,30 +15520,26 @@ class LanMessengerApp:
 
         _refresh_cal()
 
-        # Hora: HH : MM spinboxes
+        # Hora: HH : MM comboboxes
         time_frame = tk.Frame(body, bg='#ffffff')
-        time_frame.pack(fill='x', pady=(8, 0))
-        tk.Label(time_frame, text='Hora:', font=('Segoe UI', 10),
-                 bg='#ffffff', fg='#1a202c').pack(side='left')
-        hour_spin = tk.Spinbox(time_frame, from_=0, to=23, width=3, wrap=True,
-                                font=('Segoe UI', 11), format='%02.0f',
-                                relief='flat', bg='#f7fafc',
-                                highlightthickness=1, highlightbackground='#cbd5e1',
-                                justify='center')
-        hour_spin.pack(side='left', padx=(8, 0))
+        time_frame.pack(fill='x', pady=(12, 0))
+        tk.Label(time_frame, text='HORÁRIO:', font=('Segoe UI', 8, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(side='left')
+        
         default_time = now + timedelta(minutes=5)
-        hour_spin.delete(0, 'end')
-        hour_spin.insert(0, f'{default_time.hour:02d}')
-        tk.Label(time_frame, text=':', font=('Segoe UI', 11, 'bold'),
-                 bg='#ffffff', fg='#1a202c').pack(side='left', padx=2)
-        min_spin = tk.Spinbox(time_frame, from_=0, to=59, width=3, wrap=True,
-                               font=('Segoe UI', 11), format='%02.0f',
-                               relief='flat', bg='#f7fafc',
-                               highlightthickness=1, highlightbackground='#cbd5e1',
-                               justify='center', increment=1)
-        min_spin.pack(side='left')
-        min_spin.delete(0, 'end')
-        min_spin.insert(0, f'{default_time.minute:02d}')
+        h_val = tk.StringVar(value=f'{default_time.hour:02d}')
+        m_val = tk.StringVar(value=f'{default_time.minute:02d}')
+
+        hour_cb = ttk.Combobox(time_frame, textvariable=h_val, values=[f'{i:02d}' for i in range(24)],
+                               width=3, font=('Segoe UI', 12, 'bold'), state='readonly', justify='center', style='Modern.TCombobox', height=24)
+        hour_cb.pack(side='left', padx=(10, 2))
+        
+        tk.Label(time_frame, text=':', font=('Segoe UI', 14, 'bold'),
+                 bg='#ffffff', fg='#64748b').pack(side='left', padx=1)
+                 
+        min_cb = ttk.Combobox(time_frame, textvariable=m_val, values=[f'{i:02d}' for i in range(0, 60, 5)],
+                              width=3, font=('Segoe UI', 12, 'bold'), state='normal', justify='center', style='Modern.TCombobox', height=12)
+        min_cb.pack(side='left', padx=2)
 
         def _create():
             text = txt_entry.get().strip()
@@ -15356,8 +15548,8 @@ class LanMessengerApp:
                                         parent=dlg)
                 return
             try:
-                h = int(hour_spin.get())
-                m = int(min_spin.get())
+                h = int(h_val.get())
+                m = int(m_val.get())
                 dt = datetime(sel_date[0], sel_date[1], sel_date[2], h, m)
                 remind_at = dt.timestamp()
             except (ValueError, OverflowError):
@@ -15402,6 +15594,28 @@ class LanMessengerApp:
     def _show_update_bar(self, version, notes=''):
         self._pending_update = {'version': version, 'notes': notes}
         self._refresh_bell_badge()
+        # Inicia download silencioso em background
+        if not getattr(self, '_is_downloading_update', False):
+            self._is_downloading_update = True
+            import threading
+            def _download_bg():
+                import updater
+                if not updater.is_update_pending():
+                    # Tenta baixar silenciosamente
+                    share_path = ''
+                    try: share_path = self.messenger.db.get_setting('update_share_path', '')
+                    except Exception: pass
+                    staging = updater.download_update(share_path)
+                    if staging:
+                        updater.mark_update_ready(staging)
+                # Notifica a interface de que o update esta pronto para instalar
+                self.root.after(0, _on_ready)
+            def _on_ready():
+                self._update_ready_to_install = True
+                self._is_downloading_update = False
+                self._refresh_bell_badge()
+                
+            threading.Thread(target=_download_bg, daemon=True).start()
     # ============ AUTO-FIX DE FIREWALL (primeira execucao pos-update) ============
     # Dispara UAC e cria regras de firewall via netsh se ainda nao existem.
     # So roda em build frozen (PyInstaller), nunca em dev. Cooldown de 24h
@@ -15777,7 +15991,7 @@ class LanMessengerApp:
         txt = tk.Text(body, wrap='word', font=('Consolas', 9),
                       bg='#ffffff', fg='#1a202c', bd=1, relief='solid',
                       padx=8, pady=6)
-        sb = ttk.Scrollbar(body, command=txt.yview)
+        sb = ttk.Scrollbar(body, command=txt.yview, style='Clean.Vertical.TScrollbar')
         txt.configure(yscrollcommand=sb.set)
         sb.pack(side='right', fill='y')
         txt.pack(side='left', fill='both', expand=True)
@@ -15899,6 +16113,7 @@ class LanMessengerApp:
             except Exception: pass
 
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()  # Esconde enquanto monta para evitar flash
         dlg.title('Conectar fora da LAN (VPN)')
         _center_window(dlg, 560, 520)
         dlg.configure(bg='#f8fafc')
@@ -15987,7 +16202,7 @@ class LanMessengerApp:
         _update_status_label()
 
         form = tk.LabelFrame(body, text='Adicionar peer', font=('Segoe UI', 9, 'bold'),
-                             bg='#f8fafc', fg='#1a202c', padx=10, pady=8)
+                             bg='#f8fafc', fg='#475569', padx=10, pady=8, relief='flat', bd=0)
         form.pack(fill='x', pady=(0, 10))
 
         row1 = tk.Frame(form, bg='#f8fafc')
@@ -15995,7 +16210,7 @@ class LanMessengerApp:
         tk.Label(row1, text='IP do peer:', font=('Segoe UI', 9),
                  bg='#f8fafc', width=12, anchor='w').pack(side='left')
         var_ip = tk.StringVar()
-        ent_ip = tk.Entry(row1, textvariable=var_ip, font=('Consolas', 10), width=20)
+        ent_ip = tk.Entry(row1, textvariable=var_ip, font=('Consolas', 10), width=20, relief='solid', bd=1, bg='#ffffff', highlightthickness=0)
         ent_ip.pack(side='left', padx=(0, 6))
 
         row2 = tk.Frame(form, bg='#f8fafc')
@@ -16003,21 +16218,21 @@ class LanMessengerApp:
         tk.Label(row2, text='Nota:', font=('Segoe UI', 9),
                  bg='#f8fafc', width=12, anchor='w').pack(side='left')
         var_note = tk.StringVar()
-        tk.Entry(row2, textvariable=var_note, font=('Segoe UI', 9), width=36
+        tk.Entry(row2, textvariable=var_note, font=('Segoe UI', 9), width=36, relief='solid', bd=1, bg='#ffffff', highlightthickness=0
                  ).pack(side='left', fill='x', expand=True)
 
         list_frame = tk.LabelFrame(body, text='Peers cadastrados',
                                    font=('Segoe UI', 9, 'bold'),
-                                   bg='#f8fafc', fg='#1a202c', padx=8, pady=6)
+                                   bg='#f8fafc', fg='#475569', padx=8, pady=6, relief='flat', bd=0)
         list_frame.pack(fill='both', expand=True)
 
         cols = ('ip', 'note')
-        tree = ttk.Treeview(list_frame, columns=cols, show='headings', height=8)
+        tree = ttk.Treeview(list_frame, columns=cols, show='headings', height=8, style='Contacts.Treeview')
         tree.heading('ip', text='IP')
         tree.heading('note', text='Nota')
         tree.column('ip', width=140, anchor='w')
         tree.column('note', width=320, anchor='w')
-        sb = ttk.Scrollbar(list_frame, command=tree.yview)
+        sb = ttk.Scrollbar(list_frame, command=tree.yview, style='Clean.Vertical.TScrollbar')
         tree.configure(yscrollcommand=sb.set)
         sb.pack(side='right', fill='y')
         tree.pack(side='left', fill='both', expand=True)
@@ -16112,11 +16327,13 @@ class LanMessengerApp:
             ent_ip.focus_set()
         except Exception:
             pass
+
         try:
-            _center_window(dlg)
             _apply_rounded_corners(dlg)
         except Exception:
             pass
+            
+        dlg.deiconify()
 
     def _do_update(self, version):
         win = tk.Toplevel(self.root)
@@ -16180,9 +16397,15 @@ class LanMessengerApp:
                 self.root.after(0, lambda: btn_ok.config(command=lambda p=path: _on_ok_click(p)))
                 self.root.after(0, lambda: btn_ok.pack(pady=(5, 10)))
             else:
-                self.root.after(0, win.destroy)
-                self.root.after(0, lambda: messagebox.showerror(
-                    APP_NAME, _t('update_failed')))
+                import logging
+                log_upd = logging.getLogger('mbchat')
+                log_upd.error("Falha ao baixar atualização: arquivo não encontrado ou erro de rede (path is None).")
+                self.root.after(0, lambda: lbl_sub.config(text='Erro ao atualizar', fg='#ef4444'))
+                self.root.after(0, lambda: canvas.pack_forget())
+                self.root.after(0, lambda: lbl_pct.config(text=_t('update_failed'), fg='#ef4444'))
+                self.root.after(0, lambda: lbl_warn.config(text='A atualização não pôde ser concluída.\nVerifique a conexão ou aguarde a publicação oficial.', fg='#ef4444'))
+                self.root.after(0, lambda: btn_ok.config(text='Fechar', bg='#ef4444', command=win.destroy))
+                self.root.after(0, lambda: btn_ok.pack(pady=(5, 10)))
         threading.Thread(target=_download, daemon=True).start()
 
     # Aplica o update e encerra o app. Batch reabre via explorer.exe.
@@ -16648,7 +16871,7 @@ class LanMessengerApp:
 
     def _on_newer_version(self, peer_version):
         def parse_v(v):
-            try: return tuple(int(x) for x in str(v).strip().lstrip('v').split('.'))
+            try: return tuple(int(x) for x in str(v).strip().lstrip('v').split('-')[0].split('.'))
             except Exception: return (0, 0, 0)
 
         my_v = parse_v(APP_VERSION)
@@ -16660,8 +16883,7 @@ class LanMessengerApp:
         if peer_v <= parse_v(current_pend):
             return
 
-        self._pending_update = {'version': peer_version, 'notes': 'Nova atualização disponível na rede!'}
-        self._refresh_bell_badge()
+        self.root.after(0, lambda: self._show_update_bar(peer_version, 'Nova atualização disponível na rede!'))
         try:
             shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
         except Exception:
@@ -16731,15 +16953,20 @@ class LanMessengerApp:
                 tk.Label(upd_body, text=upd['notes'], font=('Segoe UI', 8),
                          bg='#eff6ff', fg='#334155', anchor='w', justify='left',
                          wraplength=250).pack(fill='x', pady=(3, 0))
-            def _do_update_from_bell(v=upd['version']):
-                self._pending_update = None
-                self._refresh_bell_badge()
-                popup.destroy()
-                self._do_update(v)
-            tk.Button(upd_body, text='⬇  Atualizar agora',
-                      font=('Segoe UI', 9, 'bold'), bg='#1e40af', fg='white',
-                      relief='flat', bd=0, padx=12, pady=5, cursor='hand2',
-                      command=_do_update_from_bell).pack(anchor='w', pady=(8, 0))
+            if getattr(self, '_update_ready_to_install', False):
+                def _do_restart():
+                    self._pending_update = None
+                    popup.destroy()
+                    self._quit()  # Aplica o update via _quit()
+                tk.Button(upd_body, text='🟢 Reiniciar para Atualizar',
+                          font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white',
+                          relief='flat', bd=0, padx=12, pady=5, cursor='hand2',
+                          command=_do_restart).pack(anchor='w', pady=(8, 0))
+            else:
+                tk.Label(upd_body, text='⏳ Baixando atualização...',
+                         font=('Segoe UI', 9, 'italic'), bg='#eff6ff', fg='#64748b',
+                         anchor='w').pack(anchor='w', pady=(8, 0))
+
             _later_lbl = tk.Label(upd_body, text='Mais tarde',
                                   font=('Segoe UI', 8), bg='#eff6ff', fg='#94a3b8',
                                   cursor='hand2')
@@ -17542,6 +17769,19 @@ class LanMessengerApp:
     # 4. Destroi a janela principal (encerra o mainloop)
     def _quit(self):
         self._stop_tray()                          # remove icone da bandeja do sistema
+        
+        # Salva janelas abertas para restaurar no proximo boot (Update persistence)
+        try:
+            import json
+            open_chats = {}
+            for uid, cw in self.chat_windows.items():
+                state = cw.state() if hasattr(cw, 'state') else 'normal'
+                is_group = hasattr(cw, 'group_id')
+                open_chats[uid] = {'state': state, 'is_group': is_group}
+            self.messenger.db.set_setting('open_chats_on_exit', json.dumps(open_chats))
+        except Exception as e:
+            log.warning(f'Falha ao salvar sessoes de chat: {e}')
+
         for w in list(self.chat_windows.values()):  # percorre copia da lista (evita mutar durante iteracao)
             try:
                 w.destroy()  # destroi janela de chat individual
@@ -17549,6 +17789,17 @@ class LanMessengerApp:
                 pass          # ignora erros se ja foi destruida
         self.messenger.stop()  # para threads de rede e fecha sockets UDP/TCP
         self.root.destroy()    # destroi janela principal e encerra mainloop
+        
+        # Se houver update baixado silenciosamente, aplica ele agora na saida
+        try:
+            import updater
+            pending = updater.is_update_pending()
+            if pending:
+                log.info("Aplicando update via PowerShell no encerramento...")
+                updater.apply_update(pending)
+        except Exception as e:
+            log.error(f"Falha ao acionar script de update no encerramento: {e}")
+            
         os._exit(0)  # forca o SO a remover o processo garantindo que nao haja zumbis
 
     # --- System Tray ---
@@ -17981,6 +18232,19 @@ def main():
     # Passamos da verificacao de instancia unica: somos a UNICA instancia legitima.
     # Vamos limpar processos MBChat.exe zumbis que possam ter ficado travados antes.
     _cleanup_zombie_processes()
+
+    # Se o computador foi reiniciado ou o usuario fechou o app ontem com update pronto,
+    # aplica de forma invisível agora ANTES de subir o Tcl/Tkinter.
+    try:
+        import updater
+        pending_update_dir = updater.is_update_pending()
+        if pending_update_dir:
+            log.info(f"Aplicando update pendente no boot: {pending_update_dir}")
+            updater.apply_update(pending_update_dir)
+            os._exit(0)
+    except Exception as e:
+        log.error(f"Erro ao verificar update_pending no boot: {e}")
+
 
     _register_url_protocol()  # registra mbchat:// no Registro do Windows
     _ensure_start_menu_shortcut()  # atalho com AUMID para toasts clicaveis

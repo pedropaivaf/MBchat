@@ -42,7 +42,7 @@ _UPDATE_DIR = _get_long_path(os.path.join(
 
 def _parse_version(v):
     try:
-        v = v.strip().lstrip('v')
+        v = v.strip().lstrip('v').split('-')[0]
         return tuple(int(x) for x in v.split('.'))
     except Exception:
         return (0, 0, 0)
@@ -169,7 +169,7 @@ def apply_update(staging_dir):
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
-    args = '"--show"' if show_ui else '""'
+    args = '""'
 
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
@@ -227,9 +227,10 @@ if ($fileCount -lt 50) {{
 }}
 Log "Sanity OK: $fileCount arquivos em _internal"
 
-# Limpa staging
+# Limpa staging e arquivo de pending
 Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'update_pending.txt')}" -Force -ErrorAction SilentlyContinue
 Log "Cleanup OK"
 
 # Remove executaveis antigos soltos para evitar conflito de atalhos e versoes
@@ -284,3 +285,27 @@ def check_update_async(callback):
         callback(has_update, ver, notes)
     t = threading.Thread(target=_run, daemon=True)
     t.start()
+
+
+def mark_update_ready(staging_dir):
+    # Salva o caminho do update para ser aplicado no proximo boot
+    pending_file = os.path.join(_UPDATE_DIR, 'update_pending.txt')
+    try:
+        with open(pending_file, 'w', encoding='utf-8') as f:
+            f.write(staging_dir)
+        log.info(f'Update marcado como pronto: {pending_file}')
+        return True
+    except Exception as e:
+        log.error(f'Falha ao marcar update: {e}')
+        return False
+
+def is_update_pending():
+    # Verifica se ha um update aguardando aplicacao
+    pending_file = os.path.join(_UPDATE_DIR, 'update_pending.txt')
+    if os.path.exists(pending_file):
+        try:
+            with open(pending_file, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception:
+            return None
+    return None

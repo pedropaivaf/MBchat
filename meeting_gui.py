@@ -47,6 +47,7 @@ class MeetingWindow(tk.Toplevel):
 
         self._selected_date = datetime.today().replace(
             hour=0, minute=0, second=0, microsecond=0)
+        self._explicit_selection = False
         self._cal_year  = self._selected_date.year
         self._cal_month = self._selected_date.month
         self._selected_participants = []  # [(uid, display_name)]
@@ -59,6 +60,8 @@ class MeetingWindow(tk.Toplevel):
         self._center()
         self.deiconify()
         self.lift()
+        self.bind('<Escape>', lambda e: self.destroy())
+        self.focus_force()
         self.refresh_timegrid()
         self._refresh_invites_panel()
         self._start_realtime_refresh()
@@ -75,32 +78,26 @@ class MeetingWindow(tk.Toplevel):
         tk.Label(hdr, text='📅  Reuniões', font=('Segoe UI', 12, 'bold'),
                  bg=NAVY, fg='white').pack(side='left', padx=14, pady=10)
 
-        # Body: 3 painéis
+        # Body: 2 painéis
         body = tk.Frame(self, bg=BG_WIN)
         body.pack(fill='both', expand=True)
 
-        # LEFT — mini calendário (210px)
-        left = tk.Frame(body, bg=BG_WIN, width=210)
-        left.pack(side='left', fill='y')
-        left.pack_propagate(False)
-        self._build_calendar(left)
+        # CENTER — timegrid (expansível, ocupa a esquerda/centro)
+        center = tk.Frame(body, bg=BG_WHITE)
+        center.pack(side='left', fill='both', expand=True)
+        self._build_timegrid(center)
 
         # Divisor vertical
         tk.Frame(body, bg=BORDER, width=1).pack(side='left', fill='y')
 
-        # RIGHT — convites + formulário (290px)
-        right = tk.Frame(body, bg=BG_WIN, width=290)
+        # RIGHT — calendário + formulário (320px)
+        right = tk.Frame(body, bg=BG_WIN, width=320)
         right.pack(side='right', fill='y')
         right.pack_propagate(False)
+        
+        # Build contents vertically
+        self._build_calendar(right)
         self._build_right_panel(right)
-
-        # Divisor vertical
-        tk.Frame(body, bg=BORDER, width=1).pack(side='right', fill='y')
-
-        # CENTER — timegrid (expansível)
-        center = tk.Frame(body, bg=BG_WHITE)
-        center.pack(side='left', fill='both', expand=True)
-        self._build_timegrid(center)
 
     # ========================================
     # MINI-CALENDÁRIO (left panel)
@@ -114,17 +111,20 @@ class MeetingWindow(tk.Toplevel):
         # Legenda
         leg = tk.Frame(parent, bg=BG_WIN)
         leg.pack(fill='x', padx=10, pady=(4, 0))
-        for color, label in [
+        items = [
             (COLOR_PENDING,   'pendente'),
             (COLOR_CONFIRMED, 'confirmado'),
             (COLOR_CANCELLED, 'cancelado'),
             (COLOR_LOCAL,     'convite não enviado'),
-        ]:
-            row = tk.Frame(leg, bg=BG_WIN)
-            row.pack(anchor='w', pady=1)
-            tk.Label(row, text='●', font=('Segoe UI', 10), bg=BG_WIN,
+        ]
+        for i, (color, label) in enumerate(items):
+            row_idx = i // 2
+            col_idx = i % 2
+            cell = tk.Frame(leg, bg=BG_WIN)
+            cell.grid(row=row_idx, column=col_idx, sticky='w', padx=(0, 10), pady=2)
+            tk.Label(cell, text='●', font=('Segoe UI', 10), bg=BG_WIN,
                      fg=color).pack(side='left')
-            tk.Label(row, text=label, font=FONT_SM, bg=BG_WIN,
+            tk.Label(cell, text=label, font=FONT_SM, bg=BG_WIN,
                      fg=FG_GRAY).pack(side='left', padx=(3, 0))
 
     def _draw_calendar(self):
@@ -152,7 +152,7 @@ class MeetingWindow(tk.Toplevel):
         day_hdr.pack(fill='x')
         for d in ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']:
             tk.Label(day_hdr, text=d, font=FONT_SM, bg=BG_WIN,
-                     fg=FG_MUTED, width=3).pack(side='left')
+                     fg=FG_MUTED).pack(side='left', expand=True, fill='x')
 
         # Grid de dias
         today = datetime.today()
@@ -162,17 +162,17 @@ class MeetingWindow(tk.Toplevel):
             row.pack(fill='x')
             for day in week:
                 if day == 0:
-                    tk.Label(row, text='', bg=BG_WIN, width=3,
-                             font=FONT_SM).pack(side='left')
+                    tk.Label(row, text='', bg=BG_WIN,
+                             font=FONT_SM).pack(side='left', expand=True, fill='x')
                     continue
                 dt = datetime(self._cal_year, self._cal_month, day)
                 is_today    = (dt.date() == today.date())
-                is_selected = (dt.date() == self._selected_date.date())
+                is_selected = (dt.date() == self._selected_date.date()) and getattr(self, '_explicit_selection', False)
                 bg  = NAVY   if is_selected else (ACCENT if is_today else BG_WIN)
                 fg  = 'white' if (is_selected or is_today) else FG_BLACK
-                btn = tk.Label(row, text=str(day), font=FONT_SM, width=3,
+                btn = tk.Label(row, text=str(day), font=FONT_SM,
                                bg=bg, fg=fg, cursor='hand2', relief='flat')
-                btn.pack(side='left', pady=1)
+                btn.pack(side='left', pady=2, ipady=2, expand=True, fill='both')
                 btn.bind('<Button-1>',
                          lambda e, d=dt: self._select_day(d))
 
@@ -193,6 +193,7 @@ class MeetingWindow(tk.Toplevel):
         self._draw_calendar()
 
     def _select_day(self, dt):
+        self._explicit_selection = True
         self._selected_date = dt
         self._cal_year  = dt.year
         self._cal_month = dt.month
@@ -390,11 +391,8 @@ class MeetingWindow(tk.Toplevel):
                  f'{months_pt[self._selected_date.month]} '
                  f'{self._selected_date.year}')
 
-        # Cabeçalho de salas
-        for i, room in enumerate(rooms):
-            x = TIME_AXIS_W + i * col_w + col_w // 2
-            cv.create_text(x, 10, text=room['name'], font=FONT_B,
-                           fill=NAVY, anchor='n')
+        # Linhas verticais separadoras de salas
+        for i in range(n_rooms):
             if i > 0:
                 cv.create_line(TIME_AXIS_W + i * col_w, 0,
                                TIME_AXIS_W + i * col_w, total_h,
@@ -584,35 +582,65 @@ class MeetingWindow(tk.Toplevel):
         self._invites_content.pack(fill='x')
 
         # --- Formulário Nova Reserva ---
-        lf = tk.LabelFrame(parent, text='Nova Reserva', font=FONT_SM,
-                           bg=BG_WIN, fg=NAVY, padx=8, pady=8)
-        lf.pack(fill='x', padx=8, pady=(0, 8))
+        form_wrapper = tk.Frame(parent, bg=BG_WIN)
+        form_wrapper.pack(fill='x', padx=8, pady=(0, 8))
+        tk.Label(form_wrapper, text='Nova Reserva', font=('Segoe UI', 9, 'bold'), bg=BG_WIN, fg=NAVY, anchor='w').pack(fill='x', pady=(0, 4))
+        
+        form_border = tk.Frame(form_wrapper, bg='#d0d5dd', bd=0, highlightthickness=0)
+        form_border.pack(fill='x')
+        lf = tk.Frame(form_border, bg=BG_WIN, padx=10, pady=10)
+        lf.pack(fill='x', padx=1, pady=1)
+        lf.columnconfigure(1, weight=1)
 
         # Título
         tk.Label(lf, text='Título:', font=FONT_SM, bg=BG_WIN,
-                 fg=FG_GRAY).grid(row=0, column=0, sticky='w', pady=2)
-        tk.Entry(lf, textvariable=self._title_var, font=FONT,
-                 width=22).grid(row=0, column=1, sticky='ew', pady=2)
+                 fg=FG_GRAY).grid(row=0, column=0, sticky='w', pady=4)
+        
+        title_wrapper = tk.Frame(lf, bg=BG_WIN)
+        title_wrapper.grid(row=0, column=1, sticky='ew', pady=4, padx=(4, 0))
+        title_border = tk.Frame(title_wrapper, bg='#d0d5dd', bd=0, highlightthickness=0)
+        title_border.pack(fill='x')
+        title_inner = tk.Frame(title_border, bg='#ffffff', bd=0, highlightthickness=0)
+        title_inner.pack(fill='x', padx=1, pady=1)
+        
+        tk.Entry(title_inner, textvariable=self._title_var, font=FONT, bg='#ffffff', fg=FG_BLACK, relief='flat', bd=0, insertbackground=FG_BLACK).pack(fill='x', ipady=3, padx=4)
+
+        # Estilo moderno para Combobox
+        style = ttk.Style()
+        style.configure('Modern.TCombobox',
+                        background='#ffffff',
+                        fieldbackground='#ffffff',
+                        foreground='#1a202c',
+                        bordercolor='#d0d5dd',
+                        lightcolor='#ffffff',
+                        darkcolor='#ffffff',
+                        arrowcolor='#4a5568',
+                        relief='flat',
+                        padding=2)
+        style.map('Modern.TCombobox',
+                  fieldbackground=[('readonly', '#ffffff')],
+                  background=[('readonly', '#ffffff')],
+                  bordercolor=[('readonly', '#d0d5dd')])
 
         # Sala
         tk.Label(lf, text='Sala:', font=FONT_SM, bg=BG_WIN,
-                 fg=FG_GRAY).grid(row=1, column=0, sticky='w', pady=2)
+                 fg=FG_GRAY).grid(row=1, column=0, sticky='w', pady=4)
         rooms = self.messenger.db.get_rooms()
         room_names = [r['name'] for r in rooms]
         self._room_name_var = tk.StringVar(value=room_names[0] if room_names else '')
         self._room_menu = ttk.Combobox(lf, textvariable=self._room_name_var,
                                        values=room_names, state='readonly',
-                                       width=24, font=FONT_SM)
-        self._room_menu.grid(row=1, column=1, sticky='ew', pady=2)
+                                       width=24, font=FONT_SM, style='Modern.TCombobox')
+        self._room_menu.grid(row=1, column=1, sticky='ew', pady=4, padx=(4, 0))
         self._room_map = {r['name']: r['id'] for r in rooms}
 
         # Data (label — segue calendário)
         tk.Label(lf, text='Data:', font=FONT_SM, bg=BG_WIN,
-                 fg=FG_GRAY).grid(row=2, column=0, sticky='w', pady=2)
+                 fg=FG_GRAY).grid(row=2, column=0, sticky='w', pady=4)
         self._date_lbl = tk.Label(
             lf, text=self._selected_date.strftime('%d/%m/%Y'),
             font=FONT, bg=BG_WIN, fg=FG_BLACK)
-        self._date_lbl.grid(row=2, column=1, sticky='w', pady=2)
+        self._date_lbl.grid(row=2, column=1, sticky='w', pady=4, padx=(4, 0))
 
         # Início / Fim
         time_slots = [f'{h:02d}:{m:02d}'
@@ -623,16 +651,16 @@ class MeetingWindow(tk.Toplevel):
                      for m in (0, 30)][1:]
 
         tk.Label(lf, text='Início:', font=FONT_SM, bg=BG_WIN,
-                 fg=FG_GRAY).grid(row=3, column=0, sticky='w', pady=2)
+                 fg=FG_GRAY).grid(row=3, column=0, sticky='w', pady=4)
         cb_start = ttk.Combobox(lf, textvariable=self._start_var, values=time_slots,
-                                state='readonly', width=10, font=FONT_SM)
-        cb_start.grid(row=3, column=1, sticky='w', pady=2)
+                                state='readonly', width=10, font=FONT_SM, style='Modern.TCombobox')
+        cb_start.grid(row=3, column=1, sticky='w', pady=4, padx=(4, 0))
 
         tk.Label(lf, text='Fim:', font=FONT_SM, bg=BG_WIN,
-                 fg=FG_GRAY).grid(row=4, column=0, sticky='w', pady=2)
+                 fg=FG_GRAY).grid(row=4, column=0, sticky='w', pady=4)
         cb_end = ttk.Combobox(lf, textvariable=self._end_var, values=end_slots,
-                              state='readonly', width=10, font=FONT_SM)
-        cb_end.grid(row=4, column=1, sticky='w', pady=2)
+                              state='readonly', width=10, font=FONT_SM, style='Modern.TCombobox')
+        cb_end.grid(row=4, column=1, sticky='w', pady=4, padx=(4, 0))
 
         # Ao abrir o dropdown, posiciona na seleção atual (mostra horário próximo no topo)
         def _scroll_combo_to_selection(cb, var, slots):
@@ -672,9 +700,9 @@ class MeetingWindow(tk.Toplevel):
         # Botão Criar
         tk.Button(parent, text='Criar Reunião', font=FONT_B,
                   bg=NAVY, fg='white', relief='flat', bd=0,
-                  padx=10, pady=6, cursor='hand2',
+                  padx=10, pady=8, cursor='hand2',
                   command=self._create_meeting
-                  ).pack(padx=12, pady=(0, 8), anchor='e')
+                  ).pack(fill='x', padx=8, pady=(0, 8))
 
     def _refresh_invites_panel(self):
         for w in self._invites_content.winfo_children():

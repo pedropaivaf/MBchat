@@ -94,7 +94,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Link clicável para mensagens de arquivos recebidos/enviados na janela de Histórico de Mensagens (`Ferramentas > Histórico de mensagens`), permitindo abrir a pasta correspondente no Windows Explorer com o clique esquerdo.
 
 ### Changed
-- Configurações de Conexão VPN / Conectar fora da LAN movidas para a aba **"Rede"** nas Preferências.
+- Preferências de Conexão VPN / Conectar fora da LAN movidas para a aba **"Rede"** nas Preferências.
 - Remoção de itens redundantes (VPN e teste de piscamento) do menu superior "Ferramentas" para uma interface mais limpa.
 - Alteração do texto do botão de seleção de pasta de transferência de "Procurar..." para "Selecionar".
 

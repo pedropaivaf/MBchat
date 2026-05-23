@@ -24,12 +24,14 @@ echo Removendo regras antigas...
 netsh advfirewall firewall delete rule name="MBChat" >nul 2>&1
 netsh advfirewall firewall delete rule name="MBChat UDP In" >nul 2>&1
 netsh advfirewall firewall delete rule name="MBChat TCP In" >nul 2>&1
+netsh advfirewall firewall delete rule name="MBChat TCP In Dynamic" >nul 2>&1
 netsh advfirewall firewall delete rule name="MBChat UDP Out" >nul 2>&1
 netsh advfirewall firewall delete rule name="MBChat TCP Out" >nul 2>&1
 
 echo Criando novas regras de entrada (inbound)...
 netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any
 netsh advfirewall firewall add rule name="MBChat TCP In" dir=in action=allow protocol=TCP localport=50101,50102,50199 profile=any
+netsh advfirewall firewall add rule name="MBChat TCP In Dynamic" dir=in action=allow protocol=TCP localport=50060-50130 profile=any
 
 echo Criando novas regras de saida (outbound)...
 netsh advfirewall firewall add rule name="MBChat UDP Out" dir=out action=allow protocol=UDP localport=50100,50110,50120 profile=any

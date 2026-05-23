@@ -154,12 +154,16 @@ def request_firewall_rules_elevated(exe_path=None):
             'netsh advfirewall firewall delete rule name="MBChat" >nul 2>&1 & '
             'netsh advfirewall firewall delete rule name="MBChat UDP In" >nul 2>&1 & '
             'netsh advfirewall firewall delete rule name="MBChat TCP In" >nul 2>&1 & '
+            'netsh advfirewall firewall delete rule name="MBChat TCP In Dynamic" >nul 2>&1 & '
             'netsh advfirewall firewall add rule name="MBChat UDP In" '
             'dir=in action=allow protocol=UDP '
             'localport=50100,50110,50120 profile=any >nul & '
             'netsh advfirewall firewall add rule name="MBChat TCP In" '
             'dir=in action=allow protocol=TCP '
-            'localport=50101,50102,50199 profile=any >nul'
+            'localport=50101,50102,50199 profile=any >nul & '
+            'netsh advfirewall firewall add rule name="MBChat TCP In Dynamic" '
+            'dir=in action=allow protocol=TCP '
+            'localport=50060-50130 profile=any >nul'
         )
         # ShellExecuteW com verb 'runas' dispara UAC. SW_HIDE=0 esconde janela cmd.
         r = ctypes.windll.shell32.ShellExecuteW(
