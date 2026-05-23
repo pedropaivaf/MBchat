@@ -240,7 +240,7 @@ LANGS = {
         'status_away': 'Ausente',
         'status_busy': 'Ocupado',
         'status_offline': 'Offline',
-        'note_placeholder': 'Digite uma nota',
+        'note_placeholder': '✎ Definir um status...',
         'group_general': '  Geral',
         'user_default': ' Usuário',
         'ctx_send_msg': 'Enviar mensagem',
@@ -288,7 +288,7 @@ LANGS = {
         'status_away': 'Away',
         'status_busy': 'Busy',
         'status_offline': 'Offline',
-        'note_placeholder': 'Type a note',
+        'note_placeholder': '✎ Set a status...',
         'group_general': '  General',
         'user_default': ' User',
         'ctx_send_msg': 'Send message',
@@ -9909,11 +9909,13 @@ class LanMessengerApp:
         if hasattr(self, 'avatar_canvas'):
             self.avatar_canvas.configure(bg=navy)
         if hasattr(self, 'note_entry'):
-            self.note_entry.configure(bg=navy_light, fg='#c8d6e5',
+            self.note_entry.configure(bg=navy, fg='#c8d6e5',
                                       insertbackground='#c8d6e5')
             try:
-                self.note_entry.master.configure(bg=navy_light)
+                self.note_entry.master.configure(bg=navy)
                 self.note_entry.master.master.configure(bg=navy)
+                if hasattr(self, 'note_line'):
+                    self.note_line.configure(bg=navy_light)
             except Exception:
                 pass
         if hasattr(self, 'status_combo'):
@@ -10125,7 +10127,7 @@ class LanMessengerApp:
         self.ramal_var = tk.StringVar(value='')
         self.ramal_entry = tk.Entry(status_row, textvariable=self.ramal_var,
                                     font=('Segoe UI', 9), width=6,
-                                    bg='#1a3f7a', fg='#ffffff',
+                                    bg=NAVY, fg='#ffffff',
                                     insertbackground='#ffffff',
                                     relief='flat', bd=0, justify='center',
                                     validate='key', validatecommand=vcmd)
@@ -10137,31 +10139,34 @@ class LanMessengerApp:
         note_row = tk.Frame(user_frame, bg=NAVY)
         note_row.pack(fill='x', padx=10, pady=(0, 8))
 
-        note_border = tk.Frame(note_row, bg='#1a3f7a', bd=0)
+        note_border = tk.Frame(note_row, bg=NAVY, bd=0)
         note_border.pack(fill='x')
+
+        self.note_line = tk.Frame(note_row, bg='#3b5c91', height=1)
+        self.note_line.pack(fill='x', padx=4, pady=(0, 0))
 
         # Emoji button colorido para a nota — empacotado PRIMEIRO (side='right')
         # para garantir que reserve espaço antes do Text expandir
         self._note_emoji_cache = {}   # cache emoji_char -> PhotoImage
         self._note_img_map = {}       # img_name -> emoji_char
-        self._note_emoji_btn_img = _render_color_emoji('\U0001f60a', 16)
+        self._note_emoji_btn_img = _render_color_emoji('\u270f', 16) # Pencil emoji
         if self._note_emoji_btn_img:
             btn_note_emoji = tk.Button(note_border, image=self._note_emoji_btn_img,
                                        relief='flat', bd=0, cursor='hand2',
-                                       bg='#1a3f7a', activebackground='#2451a0',
+                                       bg=NAVY, activebackground=NAVY,
                                        command=self._show_note_emoji_picker)
         else:
-            btn_note_emoji = tk.Button(note_border, text='\U0001f60a', font=('Segoe UI', 10),
+            btn_note_emoji = tk.Button(note_border, text='\u270e', font=('Segoe UI', 10),
                                        relief='flat', bd=0, cursor='hand2',
-                                       bg='#1a3f7a', fg='#c8d6e5', activebackground='#2451a0',
+                                       bg=NAVY, fg='#c8d6e5', activebackground=NAVY,
                                        command=self._show_note_emoji_picker)
         btn_note_emoji.pack(side='right', padx=2)
 
-        self.note_entry = tk.Text(note_border, font=FONT, bg='#1a3f7a',
+        self.note_entry = tk.Text(note_border, font=FONT, bg=NAVY,
                                    fg='#c8d6e5', relief='flat', bd=0,
                                    insertbackground='#c8d6e5',
                                    height=1, width=1, wrap='none', undo=False,
-                                   pady=5, padx=4)
+                                   pady=4, padx=4)
         self.note_entry.pack(side='left', fill='x', expand=True)
 
         self.note_entry.insert('1.0', _t('note_placeholder'))
