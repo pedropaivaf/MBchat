@@ -269,14 +269,23 @@ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyConti
         f.write(ps_content)
 
     CREATE_NO_WINDOW = 0x08000000
+    
+    # Elevar privilegios se necessario para escrever em Program Files
+    # Usa um script wrapper inline para rodar o update.ps1 como Administrador
+    elevate_cmd = (
+        f"Start-Process powershell.exe "
+        f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"{ps_path}\"' "
+        f"-WindowStyle Hidden -Verb RunAs"
+    )
+    
     subprocess.Popen(
-        ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
+        ['powershell.exe', '-NoProfile', '-Command', elevate_cmd],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=CREATE_NO_WINDOW)
 
-    log.info('Update script lancado, encerrando app...')
+    log.info('Update script lancado (com elevacao), encerrando app...')
 
 
 def check_update_async(callback):
