@@ -844,13 +844,15 @@ class Database:
     def get_messages_with_peer(self, local_user, peer_id,
                                date_from=None, date_to=None,
                                search_text=None):
-        # Query base: mensagens entre os dois usuários (ambas direções)
-        sql = """
-            SELECT * FROM messages
-            WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))
-        """
-        params = [local_user, peer_id, peer_id, local_user]
-        # Filtros opcionais adicionados dinamicamente
+        if peer_id.startswith('group:'):
+            sql = "SELECT * FROM messages WHERE to_user=?"
+            params = [peer_id]
+        else:
+            # Direct messages: any message where the peer is either sender or recipient
+            # We ignore local_user here to support historical messages from before ID migrations
+            sql = "SELECT * FROM messages WHERE from_user=? OR to_user=?"
+            params = [peer_id, peer_id]
+
         if date_from:
             sql += " AND timestamp >= ?"
             params.append(date_from)
