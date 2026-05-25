@@ -5,6 +5,16 @@ import tempfile
 import subprocess
 import urllib.request
 import urllib.error
+import ssl
+
+# Desativa a verificacao de certificado SSL globalmente no urllib
+# Necessario para baixar o instalador em maquinas Windows antigas
+# ou com certificados raizes desatualizados.
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except Exception:
+    pass
+
 
 LATEST_URL = 'https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe'
 MB_OK = 0x00000000
