@@ -102,7 +102,9 @@ def check_update():
     return has_update, ver, notes
 
 
-def download_update(progress_cb=None):
+def download_update(arg1=None, progress_cb=None):
+    if callable(arg1):
+        progress_cb = arg1
     # Baixa o zip do update. Retorna pasta extraida ou None.
     os.makedirs(_UPDATE_DIR, exist_ok=True)
     zip_dst = os.path.join(_UPDATE_DIR, 'MBChat_update.zip')
