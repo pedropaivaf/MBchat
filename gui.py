@@ -15600,16 +15600,25 @@ class LanMessengerApp:
             import threading
             def _download_bg():
                 import updater
-                if not updater.is_update_pending():
+                success = False
+                if updater.is_update_pending():
+                    success = True
+                else:
                     # Tenta baixar silenciosamente
                     share_path = ''
                     try: share_path = self.messenger.db.get_setting('update_share_path', '')
                     except Exception: pass
                     staging = updater.download_update(share_path)
                     if staging:
-                        updater.mark_update_ready(staging)
+                        if updater.mark_update_ready(staging):
+                            success = True
                 # Notifica a interface de que o update esta pronto para instalar
-                self.root.after(0, _on_ready)
+                if success:
+                    self.root.after(0, _on_ready)
+                else:
+                    def _on_failed():
+                        self._is_downloading_update = False
+                    self.root.after(0, _on_failed)
             def _on_ready():
                 self._update_ready_to_install = True
                 self._is_downloading_update = False
