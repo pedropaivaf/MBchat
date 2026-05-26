@@ -1,1 +1,1 @@
-APP_VERSION = "1.8.23-dev"
+APP_VERSION = "1.8.23-dev-vpn"

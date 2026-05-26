@@ -122,6 +122,17 @@ class Messenger:
             # Primeira execucao: gera um ID novo (MAC+hostname+winuser)
             self.user_id = generate_user_id()
 
+        # Adiciona sufixo da instancia ao user_id se for informado (evita conflito de eco em testes locais)
+        import sys
+        instance_name = None
+        for i, arg in enumerate(sys.argv):
+            if arg == '--instance' and i + 1 < len(sys.argv):
+                instance_name = sys.argv[i + 1]
+                break
+        if instance_name:
+            if not self.user_id.endswith(f"_{instance_name}"):
+                self.user_id += f"_{instance_name}"
+
         # Migracao: usuarios pre-1.4.60 tem user_id no formato mac_host
         # (sem winuser). Renomeia tudo para o formato novo para que historico,
         # contatos e grupos continuem funcionando pos-update.
@@ -185,6 +196,9 @@ class Messenger:
             on_complete=self._on_file_complete_internal,
             on_error=self._on_file_error_internal
         )
+
+        # Registra handler de fallback TCP para VPN
+        TCPClient.fallback_handler = self._tcp_fallback_handler
 
     # ========================================
     # LIFECYCLE — Iniciar e parar servicos
@@ -298,6 +312,62 @@ class Messenger:
     # TCP MESSAGES — Processamento de mensagens
     # ========================================
 
+    # Fallback handler para retransmitir mensagem via VPN/Anchor quando a conexao direta falha.
+    # Se nao conseguimos abrir socket direto, mas estamos em modo VPN com manual_peers configurados,
+    # retransmitimos a mensagem para o anchor, que se encarrega de retransmiti-la ao destino final.
+    def _tcp_fallback_handler(self, ip, port, message_dict):
+        if not self.is_vpn_enabled():
+            return False
+            
+        manual_peers = self.get_manual_peers()
+        if not manual_peers:
+            return False
+
+        # Evita loops de relay
+        if message_dict.get('is_relayed'):
+            return False
+            
+        relay_payload = dict(message_dict)
+        relay_payload['is_relayed'] = True
+        
+        # Tenta resolver o to_user a partir do IP se nao estiver no payload
+        if 'to_user' not in relay_payload:
+            contact_uid = None
+            try:
+                for uid, p in list(self.discovery.peers.items()):
+                    if p.get('ip') == ip:
+                        contact_uid = uid
+                        break
+            except Exception:
+                pass
+            if not contact_uid:
+                try:
+                    contacts = self.db.get_contacts()
+                    for c in contacts:
+                        if c.get('ip_address') == ip:
+                            contact_uid = c.get('user_id')
+                            break
+                except Exception:
+                    pass
+            if contact_uid:
+                relay_payload['to_user'] = contact_uid
+
+        if not relay_payload.get('to_user'):
+            return False
+
+        # Tenta enviar via anchors cadastrados (exceto se o proprio anchor for o destino)
+        for peer in manual_peers:
+            anchor_ip = peer.get('ip')
+            if anchor_ip and anchor_ip != ip:
+                ok = TCPClient.send_message(anchor_ip, port, relay_payload)
+                if ok:
+                    import logging as _logging
+                    _logging.getLogger('mbchat.messenger').info(
+                        'Message to %s (IP %s) relayed via anchor %s',
+                        relay_payload.get('to_user'), ip, anchor_ip)
+                    return True
+        return False
+
     # Callback central que roteia todas as mensagens TCP recebidas
     # Tipos tratados:
     # - MT_MESSAGE: mensagem de texto individual
@@ -318,6 +388,32 @@ class Messenger:
 
         # Fix 8: bloqueia mensagens de usuarios na block_list
         if from_user and self.db.is_blocked(from_user):
+            return
+
+        # VPN Relay/Forwarding: Se a mensagem e destinada a outro usuario, e eu sou a ponte (anchor),
+        # retransmite para o destinatario real no escritorio.
+        to_user = msg.get('to_user')
+        if to_user and to_user != self.user_id:
+            contact = self.db.get_contact(to_user)
+            if contact and contact.get('ip_address'):
+                target_ip = contact['ip_address']
+                relay_msg = dict(msg)
+                relay_msg['is_relayed'] = True
+                
+                # Envia assincrono para nao travar a thread do servidor TCP
+                def do_forward():
+                    TCPClient.send_message(target_ip, TCP_PORT, relay_msg)
+                threading.Thread(target=do_forward, daemon=True).start()
+                
+                import logging as _logging
+                _logging.getLogger('mbchat.messenger').info(
+                    'Relayed message from %s to %s (IP %s)',
+                    from_user, to_user, target_ip)
+            else:
+                import logging as _logging
+                _logging.getLogger('mbchat.messenger').warning(
+                    'Relay failed: target user %s is not in contacts or has no IP',
+                    to_user)
             return
 
         # Fix 2: IP pinning TCP — warning se IP diverge do cadastrado (não rejeita, VPN pode divergir)
@@ -1171,6 +1267,7 @@ class Messenger:
             if contact:
                 pkt = {
                     'type': MT_GROUP_INV,
+                    'to_user': uid,
                     'from_user': self.user_id,
                     'display_name': self.display_name,
                     'group_id': group_id,
@@ -1353,6 +1450,7 @@ class Messenger:
                 continue
             payload = {
                 'type': MT_GROUP_MSG,
+                'to_user': uid,
                 'from_user': self.user_id,
                 'display_name': self.display_name,
                 'group_id': group_id,

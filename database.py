@@ -78,13 +78,20 @@ def _compute_next_occurrence(last_ts, rule, now_ts):
 
 # Retorna caminho do banco: Windows=%APPDATA%/.mbchat/mbchat.db, Linux/Mac=~/.mbchat/mbchat.db
 def get_db_path():
+    import sys
+    instance_name = ''
+    for i, arg in enumerate(sys.argv):
+        if arg == '--instance' and i + 1 < len(sys.argv):
+            instance_name = sys.argv[i + 1]
+            break
     if os.name == 'nt':  # Windows
         base = os.environ.get('APPDATA', os.path.expanduser('~'))  # ex: C:/Users/pedro/AppData/Roaming
     else:
         base = os.path.expanduser('~')  # Linux/Mac: pasta home
     db_dir = os.path.join(base, '.mbchat')  # Subpasta oculta .mbchat
     os.makedirs(db_dir, exist_ok=True)  # Cria se não existir
-    return os.path.join(db_dir, 'mbchat.db')
+    db_name = f'mbchat_{instance_name}.db' if instance_name else 'mbchat.db'
+    return os.path.join(db_dir, db_name)
 
 
 # Gerenciador do banco SQLite local

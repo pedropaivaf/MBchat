@@ -223,13 +223,46 @@ MT_MEETING_SYNC_REQ = 'meeting_sync_req'  # TCP: pedido de sync de reservas ao r
 MT_MEETING_SYNC_RES = 'meeting_sync_res'  # TCP: dump de bookings como resposta ao sync
 
 
+# IP específico para bind (usado em testes locais de multi-instâncias com IPs separados)
+BIND_IP = ''
+for i, arg in enumerate(sys.argv):
+    if arg == '--bind-ip' and i + 1 < len(sys.argv):
+        BIND_IP = sys.argv[i + 1]
+        break
+
 # Detecta IP local da maquina na rede.
 # Cria socket UDP e "conecta" ao DNS do Google (8.8.8.8)
 # para descobrir qual interface de rede seria usada.
 # Nao envia dados, apenas verifica o roteamento.
 # Retorna '127.0.0.1' se nao conseguir detectar.
 def get_local_ip():
-    # Tenta via rota UDP (nao precisa de internet, so verifica roteamento)
+    if BIND_IP:
+        return BIND_IP
+    # 1. Tenta conectar aos manual_peers (VPN anchors) para obter o IP da interface da VPN
+    try:
+        import sqlite3
+        db_path = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), '.mbchat', 'mbchat.db')
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
+            cursor.execute("SELECT ip FROM manual_peers")
+            ips = [r[0] for r in cursor.fetchall() if r[0]]
+            conn.close()
+            for target in ips:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.settimeout(0.1)
+                    s.connect((target, 50100))
+                    ip = s.getsockname()[0]
+                    s.close()
+                    if ip and ip != '127.0.0.1' and not ip.startswith('169.254'):
+                        return ip
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 2. Tenta via rota UDP padrão (nao precisa de internet, so verifica roteamento)
     for target in ['10.255.255.255', '8.8.8.8']:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -402,7 +435,7 @@ class UDPDiscovery:
         bound = False
         for port in [UDP_PORT, UDP_PORT + 10, UDP_PORT + 20]:
             try:
-                self._sock_recv.bind(('', port))  # '' = todas as interfaces
+                self._sock_recv.bind((BIND_IP, port))  # BIND_IP = interface especifica se informado
                 bound = True
                 self.health['bound_port'] = port
                 _log().info('Unicast bind OK port=%d', port)
@@ -413,7 +446,7 @@ class UDPDiscovery:
                 continue
         if not bound:
             # Ultimo recurso: porta aleatoria. Discovery esta EFETIVAMENTE quebrado
-            self._sock_recv.bind(('', 0))
+            self._sock_recv.bind((BIND_IP, 0))
             rand_port = self._sock_recv.getsockname()[1]
             self.health['bound_port'] = rand_port
             self.health['bind_fallback'] = True
@@ -438,7 +471,7 @@ class UDPDiscovery:
                 self._sock_mcast.bind((MULTICAST_GROUP, self.health['bound_port']))
             except OSError:
                 # Fallback para SOs/redes que exigem bind em ''
-                self._sock_mcast.bind(('', self.health['bound_port']))
+                self._sock_mcast.bind((BIND_IP, self.health['bound_port']))
 
             # Tenta com IP local especifico primeiro, depois INADDR_ANY como fallback
             for iface_ip in [get_local_ip(), '0.0.0.0']:
@@ -716,20 +749,46 @@ class UDPDiscovery:
                 except (TypeError, ValueError):
                     pass
 
+        uid = pkt.get('user_id', '')
+        if not uid:
+            return
+
         self.health['packets_received'] += 1
         self.health['last_peer_seen_at'] = time.time()
 
         # Fix 1: IP pinning UDP — corrige IP declarado para o IP real do socket
         # Só para LAN (via_manual=False) — VPN/Tailscale têm IPs legítimos diferentes
-        if not pkt.get('via_manual'):
+        # Não pinamos se for retransmitido (via_relay) ou se o IP de origem for o nosso (loopback multicast/broadcast).
+        if not pkt.get('via_manual') and not pkt.get('via_relay'):
             actual_ip = addr[0]
             declared_ip = pkt.get('ip', '')
-            if declared_ip and declared_ip != actual_ip:
+            
+            # Proteção contra relés incorretos de clientes antigos na LAN:
+            is_relay_from_other = False
+            with self._lock:
+                for uid_check, info_check in self.peers.items():
+                    if uid_check != uid and info_check.get('ip') == actual_ip:
+                        is_relay_from_other = True
+                        break
+            
+            is_vpn_override = False
+            with self._lock:
+                current_peer = self.peers.get(uid)
+                if current_peer:
+                    current_ip = current_peer.get('ip', '')
+                    if (current_ip.startswith('10.') or current_ip.startswith('100.')) and actual_ip.startswith('192.168.'):
+                        is_vpn_override = True
+            
+            # Se for um anúncio via LAN (via_manual=False), mas for um relay incorreto 
+            # ou tentativa de sobrescrever um IP de VPN por um de LAN, preserva o IP da VPN registrado
+            if is_vpn_override or is_relay_from_other:
+                with self._lock:
+                    current_peer = self.peers.get(uid)
+                    if current_peer:
+                        pkt['ip'] = current_peer.get('ip')
+            elif actual_ip != get_local_ip() and declared_ip and declared_ip != actual_ip:
                 pkt['ip'] = actual_ip
 
-        uid = pkt.get('user_id', '')
-        if not uid:
-            return
         msg_type = pkt.get('type')
 
         if msg_type == MT_DEPART:
@@ -852,8 +911,42 @@ class UDPDiscovery:
             # Resolucao de IP prioritario para VPN/Tailscale (conflito de LAN)
             # REGRA: se pacote veio por VPN E o peer enviou ts_ip, usa ele como primario
             peer_ip = pkt.get('ip', addr[0])
-            if pkt.get('via_manual') and pkt.get('ts_ip'):
-                peer_ip = pkt.get('ts_ip')
+            if pkt.get('via_manual'):
+                declared = pkt.get('ip', '')
+                local_ip = get_local_ip()
+                
+                is_vpn_subnet = lambda ip: ip.startswith('10.') or ip.startswith('100.') or (
+                    ip.startswith('172.') and len(ip.split('.')) == 4 and 16 <= int(ip.split('.')[1]) <= 31
+                )
+                is_private = lambda ip: ip.startswith('192.168.') or ip.startswith('10.') or ip.startswith('172.')
+                
+                trust_declared = False
+                if declared and declared != '127.0.0.1' and not declared.startswith('169.254'):
+                    # Se o IP declarado é da subrede VPN, ele é o IP correto da interface VPN do peer
+                    if is_vpn_subnet(declared):
+                        trust_declared = True
+                    # Se nós somos o cliente VPN e o declared é um IP privado (ex: LAN do escritório)
+                    elif is_vpn_subnet(local_ip) and is_private(declared):
+                        trust_declared = True
+                    # Se o IP de origem (addr[0]) está na nossa própria subrede local, significa que o gateway 
+                    # mascarou o tráfego UDP na LAN. Portanto, o IP real é o declarado (desde que em outra subrede).
+                    else:
+                        try:
+                            addr_parts = addr[0].split('.')
+                            loc_parts = local_ip.split('.')
+                            dec_parts = declared.split('.')
+                            if len(addr_parts) == 4 and len(loc_parts) == 4 and len(dec_parts) == 4:
+                                if addr_parts[0:3] == loc_parts[0:3] and dec_parts[0:3] != loc_parts[0:3]:
+                                    trust_declared = True
+                        except Exception:
+                            pass
+                            
+                if pkt.get('ts_ip'):
+                    peer_ip = pkt['ts_ip']
+                elif trust_declared:
+                    peer_ip = declared
+                else:
+                    peer_ip = addr[0]
                 
             peer_info = {
                 'user_id': uid,
@@ -903,10 +996,10 @@ class UDPDiscovery:
                 try:
                     relay_pkt = dict(pkt)
                     relay_pkt['via_manual'] = False  # Engana a rede local
+                    relay_pkt['via_relay'] = True   # Indica que é um anúncio retransmitido (relay)
                     # Forca o IP da rede local a ser o IP da VPN, assim a rede inteira 
                     # conecta de volta pela VPN.
-                    if relay_pkt.get('ts_ip'):
-                        relay_pkt['ip'] = relay_pkt['ts_ip']
+                    relay_pkt['ip'] = peer_ip
                     relay_data = json.dumps(relay_pkt).encode('utf-8')
                     if self._sock_send:
                         self._sock_send.sendto(relay_data, (MULTICAST_GROUP, UDP_PORT))
@@ -1102,7 +1195,7 @@ class UDPDiscovery:
                     new_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 except (AttributeError, OSError):
                     pass
-            new_recv.bind(('', UDP_PORT))
+            new_recv.bind((BIND_IP, self.health.get('bound_port', UDP_PORT)))
             new_recv.settimeout(0.3)
             for iface_ip in [get_local_ip(), '0.0.0.0']:
                 try:
@@ -1174,7 +1267,7 @@ class TCPServer:
         self.port = TCP_PORT
         for port in [TCP_PORT, TCP_PORT + 10, TCP_PORT + 20, 0]:
             try:
-                self._server.bind(('', port))  # '' = todas as interfaces
+                self._server.bind((BIND_IP, port))  # BIND_IP = interface especifica se informado
                 self.port = self._server.getsockname()[1]  # Pega a porta efetiva
                 bound = True
                 break
@@ -1295,6 +1388,7 @@ class TCPServer:
 # Metodos estaticos (sem instancia necessaria)
 # Cada envio cria uma conexao TCP nova, envia e fecha
 class TCPClient:
+    fallback_handler = None  # Definido pelo Messenger
 
     @staticmethod
     # Envia uma mensagem JSON via TCP
@@ -1314,6 +1408,11 @@ class TCPClient:
             sock.close()
             return True
         except Exception as e:
+            if getattr(TCPClient, 'fallback_handler', None):
+                try:
+                    return TCPClient.fallback_handler(ip, port, message_dict)
+                except Exception:
+                    pass
             return False
 
     @staticmethod
@@ -1486,7 +1585,7 @@ class FileReceiver:
         self.port = TCP_PORT + 1
         for port in [TCP_PORT + 1, TCP_PORT + 11, TCP_PORT + 21, 0]:
             try:
-                self._server.bind(('', port))
+                self._server.bind((BIND_IP, port))
                 self.port = self._server.getsockname()[1]  # Pega a porta efetiva
                 bound = True
                 break

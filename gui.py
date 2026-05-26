@@ -15623,6 +15623,7 @@ class LanMessengerApp:
     def _check_firewall_on_startup(self):
         if not getattr(sys, 'frozen', False):
             return  # dev mode — nao mexer
+        import network
         def _bg():
             try:
                 if network.firewall_rules_present():
@@ -15658,6 +15659,7 @@ class LanMessengerApp:
         threading.Thread(target=_bg, daemon=True).start()
 
     def _prompt_firewall_fix(self):
+        import network
         try:
             resp = messagebox.askyesno(
                 APP_NAME,
@@ -18043,8 +18045,15 @@ def _remove_autostart():
 # de colisao entre logins distintos na mesma maquina.
 def _compute_single_instance_port():
     try:
-        import getpass, hashlib
+        import getpass, hashlib, sys
         user = (getpass.getuser() or 'default').lower()
+        instance_name = ''
+        for i, arg in enumerate(sys.argv):
+            if arg == '--instance' and i + 1 < len(sys.argv):
+                instance_name = sys.argv[i + 1]
+                break
+        if instance_name:
+            user += f"_{instance_name}"
         h = int(hashlib.md5(user.encode('utf-8')).hexdigest()[:8], 16)
         return 50200 + (h % 1000)
     except Exception:
