@@ -153,7 +153,7 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  AppDataPath: string;
+  CachePath, DataPath: string;
   Choice: Integer;
   KeepData: Boolean;
 begin
@@ -164,40 +164,53 @@ begin
 
     DeleteFile(ExpandConstant('{userstartup}\MB Chat.lnk'));
 
-    AppDataPath := ExpandConstant('{userappdata}\MBChat');
-    if DirExists(AppDataPath) then
+    // CachePath = %APPDATA%\MBChat   (sem ponto) — zip, scripts PS, staging do updater
+    // DataPath  = %APPDATA%\.mbchat  (com ponto) — banco SQLite, historico, settings
+    // Documents\MBFiles (arquivos recebidos) NUNCA e tocado em nenhuma situacao.
+    CachePath := ExpandConstant('{userappdata}\MBChat');
+    DataPath  := ExpandConstant('{userappdata}\.mbchat');
+
+    if DirExists(CachePath) or DirExists(DataPath) then
     begin
-      // Quando rodado em modo silencioso (uninstaller chamado pelo proprio installer
-      // novo, com flag /KEEPDATA), nao mostra dialog — assume manter dados.
-      KeepData := False;
-      if WizardSilent() then
-        KeepData := True
-      else
+      // Quando rodado em modo silencioso pelo novo installer (/SUPPRESSMSGBOXES),
+      // assume manter dados — sem dialog.
+      KeepData := True;
+      if not WizardSilent() then
       begin
         Choice := MsgBox(
           'O que deseja fazer com seus dados?' + #13#10 + #13#10 +
-          'SIM = Manter historico de mensagens (remove apenas arquivos temporarios)' + #13#10 +
-          'NAO = Remover TUDO (historico, configuracoes, banco de dados)' + #13#10 + #13#10 +
-          'Pasta: ' + AppDataPath,
+          'SIM = Manter historico de mensagens, configuracoes e banco de dados' + #13#10 +
+          '      (apenas arquivos temporarios de atualizacao serao removidos)' + #13#10 + #13#10 +
+          'NAO = Remover TUDO: historico, configuracoes e banco de dados' + #13#10 +
+          '      (a pasta de arquivos recebidos Documents\MBFiles nao sera tocada)' + #13#10 + #13#10 +
+          'Pasta de dados: ' + DataPath,
           mbConfirmation, MB_YESNO);
         KeepData := (Choice = IDYES);
       end;
 
       if KeepData then
       begin
-        // Mantem DB e historico, mas limpa temp/cache/scripts de update
-        DeleteFile(AppDataPath + '\MBChat_new.exe');
-        DeleteFile(AppDataPath + '\MBChat_update.zip');
-        DeleteFile(AppDataPath + '\update.bat');
-        DeleteFile(AppDataPath + '\update.ps1');
-        DeleteFile(AppDataPath + '\update.log');
-        DeleteFile(AppDataPath + '\update_pending.txt');
-        DeleteFile(AppDataPath + '\mbchat.log');
-        DelTree(AppDataPath + '\update_staging', True, True, True);
+        // Mantem DataPath (.mbchat) intacto — DB, historico e settings preservados.
+        // Limpa apenas arquivos temporarios de cache em CachePath (MBChat).
+        if DirExists(CachePath) then
+        begin
+          DeleteFile(CachePath + '\MBChat_new.exe');
+          DeleteFile(CachePath + '\MBChat_update.zip');
+          DeleteFile(CachePath + '\update.bat');
+          DeleteFile(CachePath + '\update.ps1');
+          DeleteFile(CachePath + '\update.log');
+          DeleteFile(CachePath + '\update_pending.txt');
+          DeleteFile(CachePath + '\mbchat.log');
+          DelTree(CachePath + '\update_staging', True, True, True);
+        end;
       end
       else
       begin
-        DelTree(AppDataPath, True, True, True);
+        // Remove tudo: cache do updater + banco + historico + settings
+        if DirExists(CachePath) then
+          DelTree(CachePath, True, True, True);
+        if DirExists(DataPath) then
+          DelTree(DataPath, True, True, True);
       end;
     end;
   end;
