@@ -394,7 +394,7 @@ Commit: `a3a0363` — branch main, aguardando validação e release pelo usuári
 
 **Problema:** `FileSender` sempre conectava em `peer_ip:50102` (hardcoded `TCP_PORT+1`). Se a porta 50102 estiver ocupada na maquina do destinatario, o `FileReceiver` faz bind em porta fallback (50112, 50122...) e o sender conecta num port errado → "Connection refused" imediato → status "Erro".
 
-**Causa raiz confirmada em producao:** cassiana.dalton (192.168.0.111) — `TcpTestSucceeded: False` na porta 50102, firewall bloqueando inbound TCP 50102.
+**Causa raiz confirmada em producao:** PC de usuario interno — `TcpTestSucceeded: False` na porta 50102, firewall bloqueando inbound TCP 50102.
 
 **Fix implementado:**
 1. `network.py _make_packet`: adiciona `'file_port': getattr(self, 'file_port', TCP_PORT+1)` ao announce UDP
@@ -699,7 +699,7 @@ Apos deploy, conferir no MB Chat que todos os peers aparecem com a versao nova (
 ## Peer VPN visivel mas duplo-clique nao abre chat (incidente 27/mai/2026)
 
 ### Sintoma
-Usuario interno (ex: ana.raquel, 192.168.0.247) ve o peer VPN (ex: aline.franco, 10.0.0.5) na lista mas duplo-clique nao faz nada e clique-direito nao exibe menu. Afeta apenas o par especifico — outros usuarios conseguem interagir normalmente.
+Usuario interno (ex: usuario.lan, 192.168.0.x) ve o peer VPN (ex: usuario.vpn, 10.0.0.x) na lista mas duplo-clique nao faz nada e clique-direito nao exibe menu. Afeta apenas o par especifico — outros usuarios conseguem interagir normalmente.
 
 ### Causa raiz
 O banco local do usuario afetado acumulou registros duplicados ou com user_id desatualizado para o peer VPN — residuo de antes da v1.6.9 (persistent user_id). 
@@ -730,6 +730,6 @@ Historico de mensagens (tabela `messages`) NAO e afetado. Apenas o registro de d
 A partir de v1.8.27, cada duplo-clique registra no `%APPDATA%\MBChat\mbchat.log`:
 ```
 [DEBUG] [DBL] identify_row='I005' sel=('I003',) peer_items=28
-[DEBUG] [DBL] item='I005' uid='aline.franco@...' tags=('online',)
+[DEBUG] [DBL] item='I005' uid='usuario.vpn@...' tags=('online',)
 ```
 Se `uid=None` e `tags=('offline',)` — registro inconsistente no banco, aplicar fix acima.

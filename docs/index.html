@@ -1091,8 +1091,8 @@ cd "$env:APPDATA\.mbchat"
 # Confirma que o registro existe antes de deletar:
 &amp; $sq mbchat.db "SELECT user_id, display_name, ip_address, status FROM contacts WHERE display_name LIKE '%NomeDoPeer%';"
 # Deleta pelo IP VPN ou pelo nome:
-&amp; $sq mbchat.db "DELETE FROM contacts WHERE ip_address='10.0.0.5';"
-# OU: &amp; $sq mbchat.db "DELETE FROM contacts WHERE display_name LIKE '%Aline%';"
+&amp; $sq mbchat.db "DELETE FROM contacts WHERE ip_address='IP_DO_PEER_VPN';"
+# OU: &amp; $sq mbchat.db "DELETE FROM contacts WHERE display_name LIKE '%NomeDoPeer%';"
 
 # 3. Reabre — o peer será redescoberto via UDP em ~30s
 Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
