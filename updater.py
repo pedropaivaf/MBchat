@@ -164,14 +164,17 @@ def _download_from_github(dst, progress_cb=None):
         return None, None
 
 
-def apply_update(staging_dir):
+def apply_update(staging_dir, **kwargs):
     # staging_dir contem os arquivos extraidos do zip (MBChat.exe + _internal/).
     # Script PowerShell mata o processo, substitui a pasta inteira e relanca.
+    # kwargs aceita show_ui para compat com chamadas antigas (ignorado).
+    if not staging_dir or not os.path.isdir(staging_dir):
+        log.error(f'apply_update: staging_dir invalido: {staging_dir!r}')
+        return
     target_exe = _get_long_path(sys.executable)
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
-    args = '""'
 
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
@@ -258,10 +261,34 @@ foreach ($oldExe in $oldExes) {{
     }}
 }}
 
-# Lanca o app via Start-Process
-Log "Lancando app..."
-Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue
-Log "App lancado via Start-Process com args: {args}"
+# Lanca o app via CreateProcess (UseShellExecute=$false herda env vars do pai).
+# CRITICO: NUNCA usar Start-Process / start "" / explorer.exe — usam ShellExecute
+# que ignora env vars do pai e causa "Failed to load Python DLL" em maquinas
+# com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI). Veja CLAUDE.md.
+Log "Lancando app via CreateProcess..."
+$launched = $false
+try {{
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "{target_exe}"
+    $psi.WorkingDirectory = "{target_dir}"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $false
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    $launched = $true
+    Log "App lancado via CreateProcess OK"
+}} catch {{
+    Log "ERRO no CreateProcess: $_"
+}}
+
+# Fallback: se CreateProcess falhou por algum motivo, tenta Start-Process
+if (-not $launched) {{
+    try {{
+        Start-Process -FilePath "{target_exe}" -ErrorAction Stop
+        Log "App lancado via Start-Process (fallback)"
+    }} catch {{
+        Log "ERRO no fallback Start-Process: $_"
+    }}
+}}
 
 # Remove este script
 Start-Sleep -Seconds 2
