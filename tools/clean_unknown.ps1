@@ -81,8 +81,11 @@ if (-not $dbs) {
 foreach ($db in $dbs) {
     $path = $db.FullName
     "$(Get-Date) limpando: $path" | Out-File $log -Append
-    $sql = "DELETE FROM contacts WHERE display_name = '' OR display_name = 'Desconhecido' OR display_name LIKE '[Desconhecido]%' OR display_name = 'Unknown';"
-    $result = & $sq $path $sql 2>&1
+    # Remove mensagens de peers sem nome resolvivel (causa dos [Desconhecido] no historico)
+    $sql1 = "DELETE FROM messages WHERE (CASE WHEN is_sent=1 THEN to_user ELSE from_user END) NOT IN (SELECT user_id FROM contacts WHERE display_name != '' AND display_name IS NOT NULL) AND (CASE WHEN is_sent=1 THEN to_user ELSE from_user END) NOT IN (SELECT uid FROM group_members WHERE display_name != '' AND display_name IS NOT NULL);"
+    # Remove contatos com nome vazio/desconhecido (defensivo)
+    $sql2 = "DELETE FROM contacts WHERE display_name = '' OR display_name = 'Desconhecido' OR display_name LIKE '[Desconhecido]%' OR display_name = 'Unknown';"
+    $result = (& $sq $path $sql1 2>&1) + (& $sq $path $sql2 2>&1)
     "$(Get-Date) resultado: $result (exit $LASTEXITCODE)" | Out-File $log -Append
 }
 

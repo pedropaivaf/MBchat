@@ -31,4 +31,6 @@ assets/vc_redist.x64.exe
 
 # Deploy em massa: lista real de PCs (manter so o .example no repo)
 tools/pcs.txt
+tools/sqlite3.exe
 deploy_report_*.csv
+clean_report_*.csv
