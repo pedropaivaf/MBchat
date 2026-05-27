@@ -584,3 +584,62 @@ Depois que todos os PCs rodaram o installer:
 1. Apos uns 30s, todos os MBChat.exe ja iniciaram automaticamente (atalho de autostart `--silent`)
 2. Conferir no proprio MB Chat (peer list) que todos voltaram online com a nova versao
 3. Painel admin → "Monitor de Versoes" mostra a versao de cada peer e destaca em vermelho os atrasados
+
+## Clean install no webinstaller (installer.iss)
+
+Em 27/mai/2026 o `installer.iss` foi reforcado para garantir **instalacao 100% limpa por cima** de qualquer versao anterior, **preservando o banco de dados e configuracoes** do usuario (que ficam em `%APPDATA%\.mbchat\`, intocado pelo installer).
+
+### O que o installer faz quando roda por cima de v1.8.24/v1.8.25:
+
+**Fase 1 - Pre-install (Pascal `CurStepChanged(ssInstall)`):**
+1. `taskkill /f /im MBChat.exe` — mata o app em qualquer lugar (mais robusto que o `CloseApplications=force` sozinho)
+2. Le do registro `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1` (e WOW6432Node + HKCU como fallback) o caminho do `unins000.exe`
+3. Roda o uninstaller anterior com `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPDATA` — desinstala a versao antiga sem prompt nenhum, e o `/SUPPRESSMSGBOXES` faz o MsgBox "manter historico?" retornar IDYES default → preserva os dados
+4. `taskkill` de novo (defensivo, caso o uninstaller tenha relancado algo)
+
+**Fase 2 - InstallDelete (limpeza de resquicios em locais nao-padrao):**
+
+Apaga EXEs/folders/scripts orfaos que podem ter sobrado de versoes muito antigas (--onefile, builds manuais, instalacoes per-user em LocalAppData, scripts de update interrompidos):
+- `{userdesktop}\MBChat.exe`, `{commondesktop}\MBChat.exe`
+- `{userappdata}\MBChat\MBChat.exe`, `{userappdata}\MBChat\MBChat_new.exe`, `{userappdata}\MBChat_new.exe`
+- `{localappdata}\Programs\MBChat\` (pasta INTEIRA, nao so o EXE) + `_internal`
+- `{userappdata}\MBChat\update_staging`, `{userappdata}\MBChat\MBChat_update.zip`, `{userappdata}\MBChat\update.ps1`, `{userappdata}\MBChat\update_pending.txt`
+- Atalhos orfaos: `{userdesktop}\MB Chat.lnk`, `{userdesktop}\MBChat.lnk`, `{commondesktop}\MBChat.lnk`, `{userstartup}\MBChat.lnk`
+
+**Fase 3 - Install normal:**
+
+Copia novo MBChat.exe + `_internal` para `C:\Program Files\MBChat\` com flag `ignoreversion`.
+
+**Fase 4 - Post-install:**
+
+Cria/recria regras de firewall via `netsh` (`[Run]` section).
+
+### O que NUNCA e tocado pelo installer:
+
+- `%APPDATA%\.mbchat\` (com ponto, pasta oculta) — contem o banco SQLite `mbchat.db` e settings → **DB e historico preservados**
+- `%APPDATA%\MBChat\mbchat.log` (log do app — apaga so se uninstall escolher "Remover TUDO")
+
+### Caminhos de pastas usadas pelo MBChat (importante nao confundir):
+
+- `%APPDATA%\.mbchat\` (lowercase, com dot) — **dados do usuario** (DB SQLite, settings, user_themes.json, etc.) — **NUNCA mexer**
+- `%APPDATA%\MBChat\` (capitalized, sem dot) — **cache do updater** (zip baixado, script PS, staging, log) — pode limpar
+- `C:\Program Files\MBChat\` — **binarios** (MBChat.exe, _internal/, unins000.exe) — substitui no install
+
+### Fluxo completo apos esse fix:
+
+1. **v1.8.24 → v1.8.25 (com novo installer.iss)**: rodar webinstaller novo → clean install, DB preservado, regras firewall recriadas, atalhos corretos
+2. **v1.8.25 → v1.8.26 (auto-update via botao "Reiniciar para Atualizar")**: silent download funciona (fix de v1.8.25), `apply_update` usa CreateProcess (fix em updater.py do commit 3b08738), relanca limpo em contas `nome.sobrenome`
+3. **v1.8.25 → v1.8.26 (silencioso no proximo reboot do PC)**: `update_pending.txt` ja foi criado pelo silent download; ao abrir o app de novo, `is_update_pending()` retorna o path, `apply_update` roda com CreateProcess
+4. **v1.8.26 → v1.8.27+**: tudo silencioso, sem manutencao manual
+
+### Por que NAO precisa rodar o webinstaller novamente depois da v1.8.25 (com fixes):
+
+A partir da v1.8.25 com `updater.py` corrigido (CreateProcess) e `installer.iss` corrigido (clean install), TODOS os componentes do auto-update funcionam:
+- Silent download em background (fixo desde v1.8.25)
+- Botao "Reiniciar para Atualizar" (so aparece quando download terminou de verdade — checagem `if success` no `_show_update_bar`)
+- `_quit()` aplica update se `update_pending.txt` existe
+- `main()` aplica update no boot se `update_pending.txt` existe
+- PowerShell relanca via `[System.Diagnostics.Process]::Start` com `UseShellExecute=$false` (resolve 8.3 paths)
+- Fallback `Start-Process` caso CreateProcess falhe
+
+Resultado: **o webinstaller so e necessario uma vez (para sair da v1.8.24)**. A partir da v1.8.25 com fixes, todos os updates futuros sao automaticos.

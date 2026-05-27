@@ -1,8 +1,8 @@
 [Setup]
 AppId={{MB-CHAT-APP}
 AppName=MB Chat
-AppVersion=1.8.25-dev-vpn-dev-dev-dev-dev
-AppVerName=MB Chat v1.8.25-dev-vpn-dev-dev-dev-dev
+AppVersion=1.8.25
+AppVerName=MB Chat v1.8.25
 AppPublisher=MB Contabilidade
 DefaultDirName={autopf}\MBChat
 DefaultGroupName=MB Chat
@@ -29,11 +29,30 @@ Name: "desktopicon"; Description: "Criar atalho na Area de Trabalho"
 Name: "autostart"; Description: "Iniciar MB Chat com o Windows"
 
 [InstallDelete]
+; EXEs soltos de versoes antigas (PyInstaller --onefile, builds manuais, desktop)
 Type: files; Name: "{userdesktop}\MBChat.exe"
+Type: files; Name: "{commondesktop}\MBChat.exe"
 Type: files; Name: "{userappdata}\MBChat\MBChat.exe"
+Type: files; Name: "{userappdata}\MBChat\MBChat_new.exe"
+Type: files; Name: "{userappdata}\MBChat_new.exe"
 Type: files; Name: "{localappdata}\Programs\MBChat.exe"
+; Pasta inteira do install per-user antigo (LocalAppData)
+Type: filesandordirs; Name: "{localappdata}\Programs\MBChat\_internal"
+Type: filesandordirs; Name: "{localappdata}\Programs\MBChat"
+; _internal solto em qualquer lugar
 Type: filesandordirs; Name: "{userappdata}\MBChat\_internal"
 Type: filesandordirs; Name: "{userdesktop}\_internal"
+Type: filesandordirs; Name: "{commondesktop}\_internal"
+; Resquicios de update (zip, staging, scripts PS) — NAO mexer no log nem no DB
+Type: filesandordirs; Name: "{userappdata}\MBChat\update_staging"
+Type: files; Name: "{userappdata}\MBChat\MBChat_update.zip"
+Type: files; Name: "{userappdata}\MBChat\update.ps1"
+Type: files; Name: "{userappdata}\MBChat\update_pending.txt"
+; Atalhos antigos em lugares variados (lnk sem grupo MB Chat)
+Type: files; Name: "{userdesktop}\MB Chat.lnk"
+Type: files; Name: "{userdesktop}\MBChat.lnk"
+Type: files; Name: "{commondesktop}\MBChat.lnk"
+Type: files; Name: "{userstartup}\MBChat.lnk"
 
 [Files]
 Source: "dist\MBChat\MBChat.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -69,10 +88,74 @@ Type: filesandordirs; Name: "{app}\_internal"
 Type: dirifempty; Name: "{app}"
 
 [Code]
+// Mata MBChat.exe em todos os lugares (taskkill robusto) e roda o uninstaller da versao
+// anterior em modo silencioso, garantindo que nao sobre nada antes de instalar a nova.
+// Roda em ssInstall (antes dos arquivos serem copiados), ignora erros para nao bloquear
+// a instalacao se nao houver versao anterior.
+function GetUninstallerPath(): string;
+var
+  Key1, Key2, Path: string;
+begin
+  Result := '';
+  // Inno Setup AppId formato no registro: {AppId}_is1
+  Key1 := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1';
+  Key2 := 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1';
+
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, Key1, 'UninstallString', Path) then
+    Result := Path
+  else if RegQueryStringValue(HKEY_LOCAL_MACHINE, Key2, 'UninstallString', Path) then
+    Result := Path
+  else if RegQueryStringValue(HKEY_CURRENT_USER, Key1, 'UninstallString', Path) then
+    Result := Path;
+
+  // Remove aspas se vier com elas (o Inno salva entre aspas no registro)
+  if (Length(Result) >= 2) and (Result[1] = '"') then
+    Result := Copy(Result, 2, Length(Result) - 2);
+end;
+
+procedure KillMBChatProcesses();
+var
+  ResultCode: Integer;
+begin
+  // Mata MBChat.exe em todos os lugares conhecidos. Ignora exit code (1=nao tinha processo).
+  Exec(ExpandConstant('{cmd}'), '/c taskkill /f /im MBChat.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+end;
+
+procedure UninstallPreviousVersion();
+var
+  UninstallerPath: string;
+  ResultCode: Integer;
+begin
+  UninstallerPath := GetUninstallerPath();
+  if (UninstallerPath = '') or (not FileExists(UninstallerPath)) then
+    Exit;
+
+  // Roda uninstaller anterior 100% silencioso. /NORESTART nunca reinicia,
+  // /SUPPRESSMSGBOXES suprime o dialog "manter historico?" (assume manter).
+  Exec(UninstallerPath,
+    '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPDATA',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    KillMBChatProcesses();
+    UninstallPreviousVersion();
+    // Mata de novo apos uninstall (caso o uninstaller tenha relancado algo)
+    KillMBChatProcesses();
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   AppDataPath: string;
   Choice: Integer;
+  KeepData: Boolean;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
@@ -84,23 +167,37 @@ begin
     AppDataPath := ExpandConstant('{userappdata}\MBChat');
     if DirExists(AppDataPath) then
     begin
-      Choice := MsgBox(
-        'O que deseja fazer com seus dados?' + #13#10 + #13#10 +
-        'SIM = Manter historico de mensagens (remove apenas arquivos temporarios)' + #13#10 +
-        'NAO = Remover TUDO (historico, configuracoes, banco de dados)' + #13#10 + #13#10 +
-        'Pasta: ' + AppDataPath,
-        mbConfirmation, MB_YESNO);
-
-      if Choice = IDNO then
+      // Quando rodado em modo silencioso (uninstaller chamado pelo proprio installer
+      // novo, com flag /KEEPDATA), nao mostra dialog — assume manter dados.
+      KeepData := False;
+      if WizardSilent() then
+        KeepData := True
+      else
       begin
-        DelTree(AppDataPath, True, True, True);
+        Choice := MsgBox(
+          'O que deseja fazer com seus dados?' + #13#10 + #13#10 +
+          'SIM = Manter historico de mensagens (remove apenas arquivos temporarios)' + #13#10 +
+          'NAO = Remover TUDO (historico, configuracoes, banco de dados)' + #13#10 + #13#10 +
+          'Pasta: ' + AppDataPath,
+          mbConfirmation, MB_YESNO);
+        KeepData := (Choice = IDYES);
+      end;
+
+      if KeepData then
+      begin
+        // Mantem DB e historico, mas limpa temp/cache/scripts de update
+        DeleteFile(AppDataPath + '\MBChat_new.exe');
+        DeleteFile(AppDataPath + '\MBChat_update.zip');
+        DeleteFile(AppDataPath + '\update.bat');
+        DeleteFile(AppDataPath + '\update.ps1');
+        DeleteFile(AppDataPath + '\update.log');
+        DeleteFile(AppDataPath + '\update_pending.txt');
+        DeleteFile(AppDataPath + '\mbchat.log');
+        DelTree(AppDataPath + '\update_staging', True, True, True);
       end
       else
       begin
-        DeleteFile(AppDataPath + '\MBChat_new.exe');
-        DeleteFile(AppDataPath + '\update.bat');
-        DeleteFile(AppDataPath + '\update.log');
-        DeleteFile(AppDataPath + '\mbchat.log');
+        DelTree(AppDataPath, True, True, True);
       end;
     end;
   end;
