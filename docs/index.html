@@ -820,6 +820,7 @@
             <a href="#doc-vpn">VPN / Home-office</a>
             <a href="#doc-multiuser">Multi-usuário</a>
             <a href="#doc-firewall">Firewall</a>
+            <a href="#doc-vpn-peer-clique">Peer VPN sem clique</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
         <button class="docs-topbar-arrow right" id="docs-arrow-right" aria-label="Rolar para direita">
@@ -1067,6 +1068,40 @@
                     Após o reboot o app volta a usar <code>50101</code> normalmente.
                 </li>
             </ol>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-vpn-peer-clique">
+            <h3>Peer VPN visível mas duplo-clique não abre chat</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Sintoma: um colega em home-office (VPN) aparece na lista de contatos mas duplo-clique não abre nada e clique-direito não exibe menu. Afeta apenas a relação entre dois usuários específicos — outros conseguem clicar normalmente.
+            </p>
+            <div class="docs-note" style="border-left-color: #f59e0b;">
+                <strong>Causa raiz:</strong> O banco local do usuário afetado acumulou registros duplicados ou com identidade trocada para esse peer — geralmente resquício de antes da v1.6.9 (user_id persistente). O <code>_load_saved_contacts</code> na inicialização carrega o registro errado, criando um mapeamento inconsistente entre o item do TreeView e o <code>peer_items</code> em memória. O duplo-clique não consegue localizar o UID pelo IID clicado e retorna silenciosamente.
+            </div>
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Fix — sem nova instalação</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 0.5rem;">Rodar no PC afetado (PowerShell como administrador não é necessário):</p>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.82rem;overflow-x:auto;"><code># 1. Fecha o app
+taskkill /f /im MBChat.exe
+
+# 2. Baixa sqlite3 portátil (1 arquivo, ~2 MB) e deleta o registro corrompido
+Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-tools-win-x64-3460100.zip" -OutFile "$env:TEMP\sq.zip"
+Expand-Archive "$env:TEMP\sq.zip" -DestinationPath "$env:TEMP\sq" -Force
+$sq = Get-ChildItem "$env:TEMP\sq" -Recurse -Filter "sqlite3.exe" | Select-Object -First 1 -ExpandProperty FullName
+cd "$env:APPDATA\.mbchat"
+# Confirma que o registro existe antes de deletar:
+&amp; $sq mbchat.db "SELECT user_id, display_name, ip_address, status FROM contacts WHERE display_name LIKE '%NomeDoPeer%';"
+# Deleta pelo IP VPN ou pelo nome:
+&amp; $sq mbchat.db "DELETE FROM contacts WHERE ip_address='10.0.0.5';"
+# OU: &amp; $sq mbchat.db "DELETE FROM contacts WHERE display_name LIKE '%Aline%';"
+
+# 3. Reabre — o peer será redescoberto via UDP em ~30s
+Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
+            <div class="docs-note">
+                <strong>Segurança:</strong> Deletar da tabela <code>contacts</code> não apaga o histórico de mensagens (tabela <code>messages</code>). O histórico fica íntegro; apenas o peer será redescoberto como se fosse o primeiro contato.
+            </div>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-top: 0.75rem;">
+                A partir da <strong>v1.8.27</strong> o duplo-clique usa <code>identify_row(e.y)</code> em vez de <code>selection()</code>, tornando o app resiliente a esse mapeamento inconsistente — mesmo que o registro fique corrompido, o chat abre normalmente.
+            </p>
         </div>
 
         <div class="docs-section fade-in" id="doc-desinstalar">

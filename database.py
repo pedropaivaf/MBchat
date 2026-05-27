@@ -731,6 +731,20 @@ class Database:
             (time.time(), user_id))
         self.conn.commit()
 
+    # Remove contatos com nome "[Desconhecido]" ou vazio acumulados por bugs antigos de discovery
+    def cleanup_unknown_contacts(self):
+        try:
+            self.conn.execute(
+                "DELETE FROM contacts WHERE display_name = '' "
+                "OR display_name = 'Desconhecido' "
+                "OR display_name LIKE '[Desconhecido]%' "
+                "OR display_name = 'Unknown'"
+            )
+            self.conn.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger('mbchat').warning(f'cleanup_unknown_contacts: {e}')
+
     # Marca TODOS os contatos como offline (chamado no startup e ao encerrar)
     def set_all_contacts_offline(self):
         self.conn.execute(
@@ -1624,7 +1638,7 @@ class Database:
             (booking_id, uid))
         self.conn.commit()
 
-    # Fecha conexão da thread atual
+    # Fecha conexao da thread atual
     def close(self):
         if hasattr(self._local, 'conn') and self._local.conn:
             self._local.conn.close()

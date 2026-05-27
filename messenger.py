@@ -216,6 +216,12 @@ class Messenger:
 
         self.discovery.start()      # Comeca a enviar/receber announces UDP
 
+        # Remove contatos fantasma "[Desconhecido]" acumulados por bugs de discovery antigos
+        try:
+            self.db.cleanup_unknown_contacts()
+        except Exception:
+            pass
+
         # Carrega peers manuais persistidos (cenario VPN/fora-da-LAN).
         # Lista vazia = no-op (caminho da LAN intocado, zero overhead).
         try:

@@ -695,3 +695,41 @@ Ou: colocar `MBChat_Setup.exe` no servidor/share que todos acessam e pedir pra e
 Apos deploy, conferir no MB Chat que todos os peers aparecem com a versao nova (painel admin ou peer list).
 
 **A partir dai:** v1.8.27, v1.8.28 etc. sao 100% automaticos. O usuario ve o sino, clica Reiniciar para Atualizar, ve a barra de progresso, clica OK, app reabre atualizado. Ou simplesmente reinicia o PC e o app ja abre na versao nova. Nunca mais precisa de instalador manual.
+
+## Peer VPN visivel mas duplo-clique nao abre chat (incidente 27/mai/2026)
+
+### Sintoma
+Usuario interno (ex: ana.raquel, 192.168.0.247) ve o peer VPN (ex: aline.franco, 10.0.0.5) na lista mas duplo-clique nao faz nada e clique-direito nao exibe menu. Afeta apenas o par especifico — outros usuarios conseguem interagir normalmente.
+
+### Causa raiz
+O banco local do usuario afetado acumulou registros duplicados ou com user_id desatualizado para o peer VPN — residuo de antes da v1.6.9 (persistent user_id). 
+
+O `_load_saved_contacts` (gui.py) na inicializacao carrega o registro do banco como `status='online'` (ultimo estado salvo), cria um tree item (iid1) e registra `peer_items[uid_antigo] = iid1`. Quando o peer anuncia via VPN com seu uid ATUAL (persistente desde v1.6.9), o `_add_contact` cria um SEGUNDO item (iid2) com `peer_items[uid_atual] = iid2`. O usuario ve iid1 (carregado do banco) na lista — que NAO esta em peer_items com o uid correto. O `_get_selected_peer` itera peer_items procurando `iid == iid1` mas so encontra uid_antigo (cujo mapeamento pode estar inconsistente). Resultado: retorna None, nada acontece.
+
+### Fix imediato (sem nova release)
+Deletar o registro do peer no banco do usuario afetado — forcando redescoberta via UDP:
+
+```powershell
+taskkill /f /im MBChat.exe
+Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-tools-win-x64-3460100.zip" -OutFile "$env:TEMP\sq.zip"
+Expand-Archive "$env:TEMP\sq.zip" -DestinationPath "$env:TEMP\sq" -Force
+$sq = Get-ChildItem "$env:TEMP\sq" -Recurse -Filter "sqlite3.exe" | Select-Object -First 1 -ExpandProperty FullName
+cd "$env:APPDATA\.mbchat"
+& $sq mbchat.db "DELETE FROM contacts WHERE ip_address='IP_DO_PEER_VPN';"
+Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"
+```
+
+Historico de mensagens (tabela `messages`) NAO e afetado. Apenas o registro de descoberta e removido.
+
+### Fix estrutural (v1.8.27)
+`_on_tree_dbl` trocou `selection()` por `identify_row(e.y)` como lookup principal, tornando o duplo-clique robusto a qualquer mapeamento inconsistente entre iid e peer_items. Mesmo que o registro do banco fique corrompido, o chat abre normalmente apos v1.8.27.
+
+`_on_tree_right` remove o bloqueio por tag `offline` — so bloqueia se o iid nao estiver em peer_items, evitando que peers VPN fiquem sem menu de contexto.
+
+### Log diagnostico
+A partir de v1.8.27, cada duplo-clique registra no `%APPDATA%\MBChat\mbchat.log`:
+```
+[DEBUG] [DBL] identify_row='I005' sel=('I003',) peer_items=28
+[DEBUG] [DBL] item='I005' uid='aline.franco@...' tags=('online',)
+```
+Se `uid=None` e `tags=('offline',)` — registro inconsistente no banco, aplicar fix acima.
