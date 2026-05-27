@@ -16424,6 +16424,125 @@ class LanMessengerApp:
         updater.apply_update(new_exe_path, show_ui=show_ui)
         os._exit(0)
 
+    # Dialog de progresso ao clicar "Reiniciar para Atualizar" no sino.
+    # Mostra ao usuario que o update esta acontecendo (em vez de fechar direto),
+    # evitando o problema de usuario tentar reabrir o app manualmente porque acha
+    # que travou. Como o download ja terminou (silencioso), o que sobra e o passo
+    # de aplicar (PS script substitui arquivos + relanca via CreateProcess --show).
+    #
+    # UX:
+    #   1. Toplevel centralizado, sem borda, com barra azul animada
+    #   2. Texto "Preparando atualizacao..." -> "Quase pronto..." -> "Concluido!"
+    #   3. Barra fica verde, botao OK aparece
+    #   4. Click OK -> _quit() -> apply_update (PS script) -> relanca com --show
+    def _show_install_progress_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.title('MB Chat - Atualizacao')
+        try:
+            win.overrideredirect(True)
+        except Exception:
+            pass
+        win.configure(bg='#ffffff', highlightbackground='#e2e8f0',
+                      highlightcolor='#e2e8f0', highlightthickness=1)
+        win.attributes('-topmost', True)
+
+        tk.Label(win, text='Atualizando o MB Chat',
+                 font=('Segoe UI', 12, 'bold'),
+                 bg='#ffffff', fg='#0f172a').pack(pady=(20, 5))
+
+        lbl_sub = tk.Label(win, text='Preparando arquivos...',
+                           font=('Segoe UI', 9),
+                           bg='#ffffff', fg='#64748b')
+        lbl_sub.pack(pady=(0, 10))
+
+        canvas = tk.Canvas(win, width=280, height=8, bg='#f1f5f9',
+                           bd=0, highlightthickness=0)
+        canvas.pack(pady=5)
+        bar_id = canvas.create_rectangle(0, 0, 0, 8, fill='#3b82f6', outline='')
+
+        lbl_pct = tk.Label(win, text='0%',
+                           font=('Segoe UI', 8, 'bold'),
+                           bg='#ffffff', fg='#3b82f6')
+        lbl_pct.pack(pady=(5, 0))
+
+        lbl_warn = tk.Label(win,
+                            text='Aguarde - nao feche esta janela.\nO app vai reabrir sozinho ao terminar.',
+                            font=('Segoe UI', 8),
+                            bg='#ffffff', fg='#94a3b8', justify='center')
+        lbl_warn.pack(pady=(10, 10))
+
+        # Centraliza
+        try:
+            win.update_idletasks()
+            sx = win.winfo_screenwidth()
+            sy = win.winfo_screenheight()
+            x = (sx - 360) // 2
+            y = (sy - 200) // 2
+            win.geometry(f'360x200+{max(0, x)}+{max(0, y)}')
+        except Exception:
+            win.geometry('360x200')
+        win.deiconify()
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        # Botao OK (criado oculto, aparece quando barra chega em 100%)
+        def _on_ok():
+            btn_ok.config(state='disabled')
+            lbl_pct.config(text='Reiniciando...', fg='#10b981')
+            lbl_warn.config(text='Aguarde alguns segundos.\nO MB Chat vai reabrir.',
+                            fg='#64748b')
+            # Da 400ms pra UI atualizar antes de fechar
+            self.root.after(400, self._quit)
+
+        btn_ok = tk.Button(win, text='OK',
+                           font=('Segoe UI', 9, 'bold'),
+                           bg='#10b981', fg='white',
+                           relief='flat', bd=0, padx=24, pady=6,
+                           cursor='hand2', command=_on_ok)
+
+        # Animacao da barra: 0 -> 100% em ~2.5s (50 steps de 50ms)
+        # Como o download ja terminou, isso e progresso visual de "aplicando"
+        # mesmo. O PS script roda DEPOIS que o usuario clica OK e o app fecha.
+        state = {'step': 0}
+        steps_total = 50
+
+        def _tick():
+            state['step'] += 1
+            s = state['step']
+            pct = int((s / steps_total) * 100)
+            fill_w = int((s / steps_total) * 280)
+            try:
+                canvas.coords(bar_id, 0, 0, fill_w, 8)
+                lbl_pct.config(text=f'{pct}%')
+            except Exception:
+                return
+            # Mensagens em fases
+            if pct < 35:
+                lbl_sub.config(text='Preparando arquivos...')
+            elif pct < 70:
+                lbl_sub.config(text='Verificando integridade...')
+            elif pct < 100:
+                lbl_sub.config(text='Quase pronto...')
+            else:
+                # Concluido!
+                lbl_sub.config(text='Atualizacao concluida!', fg='#10b981')
+                lbl_pct.config(text='100%', fg='#10b981')
+                try:
+                    canvas.itemconfig(bar_id, fill='#10b981')
+                except Exception:
+                    pass
+                lbl_warn.config(text='Clique OK para reiniciar o MB Chat\ne abrir a nova versao.',
+                                fg='#0f172a', font=('Segoe UI', 8, 'bold'))
+                btn_ok.pack(pady=(5, 12))
+                return
+            self.root.after(50, _tick)
+
+        # Comeca a animacao
+        self.root.after(100, _tick)
+
     # Exibe dialog 'MB Chat' com informacoes do aplicativo.
     # Dividido em helpers pequenos por responsabilidade: header (icone+titulo+versao),
     # body (subtitulo+features) e footer (botoes Autor/OK).
@@ -16968,7 +17087,9 @@ class LanMessengerApp:
                 def _do_restart():
                     self._pending_update = None
                     popup.destroy()
-                    self._quit()  # Aplica o update via _quit()
+                    # Mostra dialog de progresso para o usuario nao ficar no escuro
+                    # (antes fechava direto e usuario nao sabia se tinha que reabrir)
+                    self._show_install_progress_dialog()
                 tk.Button(upd_body, text='🟢 Reiniciar para Atualizar',
                           font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white',
                           relief='flat', bd=0, padx=12, pady=5, cursor='hand2',

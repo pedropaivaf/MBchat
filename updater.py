@@ -265,17 +265,21 @@ foreach ($oldExe in $oldExes) {{
 # CRITICO: NUNCA usar Start-Process / start "" / explorer.exe — usam ShellExecute
 # que ignora env vars do pai e causa "Failed to load Python DLL" em maquinas
 # com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI). Veja CLAUDE.md.
+# Passa --show pro novo MBChat abrir a janela principal direto (em vez de iniciar
+# em tray). Sem isso o usuario clica OK no dialog mas o app fica "escondido" na
+# bandeja e ele pensa que nao reabriu.
 Log "Lancando app via CreateProcess..."
 $launched = $false
 try {{
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "{target_exe}"
+    $psi.Arguments = "--show"
     $psi.WorkingDirectory = "{target_dir}"
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $false
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     $launched = $true
-    Log "App lancado via CreateProcess OK"
+    Log "App lancado via CreateProcess OK (--show)"
 }} catch {{
     Log "ERRO no CreateProcess: $_"
 }}
@@ -283,8 +287,8 @@ try {{
 # Fallback: se CreateProcess falhou por algum motivo, tenta Start-Process
 if (-not $launched) {{
     try {{
-        Start-Process -FilePath "{target_exe}" -ErrorAction Stop
-        Log "App lancado via Start-Process (fallback)"
+        Start-Process -FilePath "{target_exe}" -ArgumentList "--show" -ErrorAction Stop
+        Log "App lancado via Start-Process (fallback, --show)"
     }} catch {{
         Log "ERRO no fallback Start-Process: $_"
     }}
