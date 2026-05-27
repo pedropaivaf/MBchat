@@ -473,11 +473,114 @@ Problemas resolvidos:
 - NUNCA usar [System.Diagnostics.Process] no updater.py para relançar o aplicativo. Mantenha Start-Process.
 - NUNCA forçar requests à API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.
 
-## Transfer�ncia de Arquivos (v1.8.23+)
-- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transfer�ncia.
-- **Scroll Wheel Global:** O scroll na tela de transfer�ncias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inv�s do Canvas.
+## Transfer�ncia de Arquivos (v1.8.23+)
+- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transfer�ncia.
+- **Scroll Wheel Global:** O scroll na tela de transfer�ncias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inv�s do Canvas.
 - **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
-- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transfer�ncias por nome do arquivo ou do contato.
+- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transfer�ncias por nome do arquivo ou do contato.
 
 ## Regra de Versionamento
 Ao desenvolver localmente, use o sufixo '-dev' na versao em version.py (ex: 1.8.23-dev). Isso impede que a rede P2P notifique erroneamente uma atualizacao aos outros usuarios durante a sua fase de teste. No momento do build/lancamento final da release, retire esse sufixo.
+
+## Fix do relancamento pos-update (commit 3b08738, alvo v1.8.26)
+
+### Problema diagnosticado em producao (26/mai/2026)
+
+Auto-update v1.8.24 -> v1.8.25 falhou em todas as 30 maquinas, forcando reinstalacao manual via web installer. Investigacao mostrou DOIS bugs encadeados:
+
+1. **Download silencioso quebrado em v1.8.24**: `gui.py:_show_update_bar._download_bg()` chamava `updater.download_update(share_path)` passando string onde a funcao esperava callable. Erro `'str' object is not callable` interno em `_download_from_github`, swallowed pelo try/except, retorno None. Resultado: `update_pending.txt` nunca era criado.
+
+2. **Botao mentindo na UI**: em v1.8.24, `_on_ready()` era chamado mesmo se download falhasse → `_update_ready_to_install = True` → botao "Reiniciar para Atualizar" aparecia para o usuario clicar. Click → `_quit()` → `is_update_pending() = None` → `apply_update` nao roda → app fechava sem nunca reabrir.
+
+**Diagnostico via `%APPDATA%\MBChat\mbchat.log`**:
+```
+[INFO] Baixando update v1.8.25 do GitHub...
+[WARNING] Download GitHub falhou: 'str' object is not callable
+```
+
+Ambos os bugs ja estao corrigidos em v1.8.25 (commits 8cafc18 + 5623eed). `download_update(arg1=None, progress_cb=None)` aceita string ou callable. `_show_update_bar` so chama `_on_ready` se `success=True`.
+
+### Bug remanescente em v1.8.25 — relancamento via Start-Process
+
+`updater.apply_update()` em v1.8.25 gera script PowerShell que relanca o novo MBChat.exe via `Start-Process`. Em maquinas com conta Windows `nome.sobrenome` (todas as 30 da MB), Windows gera 8.3 short name `PEDRO~1.PAI` para o path do usuario. PyInstaller frozen exe carrega env vars com 8.3 paths para %TEMP%. `Start-Process` herda essas vars e o novo MBChat falha com "Failed to load Python DLL".
+
+**Fix em v1.8.26 (commit 3b08738)** — `updater.py:apply_update`:
+- Relanca via `[System.Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess) — herda env LONGO do pai
+- Fallback para `Start-Process` se CreateProcess falhar (raro)
+- Funcao aceita `**kwargs` (corrige `apply_update(path, show_ui=...)` em gui.py:16424)
+- Valida `staging_dir` antes de gerar script (evita PS quebrado)
+
+**ATENCAO**: O paragrafo anterior no CLAUDE.md ("Regras estritas...") dizendo "NUNCA usar [System.Diagnostics.Process]" e "Mantenha Start-Process" estava errado para o caso de contas com 8.3 paths. A regra correta e:
+1. Tentar **CreateProcess** primeiro (resolve 8.3 paths, herda env do pai)
+2. **Start-Process** como fallback (cobre casos sem 8.3 e maquinas onde CreateProcess falha)
+
+### Mecanica da transicao v1.8.25 -> v1.8.26
+
+O `apply_update` que executa o salto e o da v1.8.25 (codigo congelado dentro do MBChat.exe instalado). A correcao do CreateProcess so vale DEPOIS da v1.8.26 estar rodando. Por isso o salto v1.8.25 -> v1.8.26 ainda pode deixar app fechado em maquinas com 8.3. Mas:
+
+- **Arquivos sao substituidos** (PS script copia _internal/ novo antes de tentar relancar)
+- App fica em v1.8.26 no disco
+- Usuario abre pelo icone do menu Iniciar (Explorer = env limpo) -> abre normal
+- A partir de v1.8.26 -> v1.8.27+ tudo automatico
+
+## Deploy em massa via SMB+schtasks (tools/deploy_mbchat.ps1)
+
+Quando o auto-update do botao nao for confiavel (caso de v1.8.25 -> v1.8.26 com contas 8.3), use o script de deploy em massa do PC de admin no dominio para forcar a instalacao do web installer (Inno Setup) em todas as maquinas de uma vez. Nao depende de WinRM — usa apenas SMB + schtasks.
+
+**Pre-requisitos:**
+- Estar logado em conta de administrador de dominio (ou ter PSCredential para os PCs)
+- Cada PC alvo precisa: share C$ acessivel ao admin, servico Schedule ativo (default)
+- Installer ja gerado localmente: `python build.py --version 1.8.26 --release` (ou apenas o build sem release: ver Regra de Versionamento)
+
+**Como rodar:**
+
+1. Copiar `tools/pcs.txt.example` para `tools/pcs.txt` e listar os 30 hosts (1 por linha, hostname ou IP).
+   - `tools/pcs.txt` esta no `.gitignore` — nao vai pro repo.
+2. Rodar do PC de admin no dominio:
+```powershell
+# Deploy real
+.\tools\deploy_mbchat.ps1 `
+    -InstallerPath ".\dist\MBChat_Setup.exe" `
+    -PcListFile ".\tools\pcs.txt"
+
+# Com credencial explicita
+$cred = Get-Credential
+.\tools\deploy_mbchat.ps1 -InstallerPath "..." -PcListFile "..." -Credential $cred
+
+# Apenas testar conectividade (sem instalar)
+.\tools\deploy_mbchat.ps1 -InstallerPath "..." -PcListFile "..." -DryRun
+```
+
+**O que o script faz para cada PC:**
+
+1. **Ping** — se offline, pula e marca falha
+2. **Test C$** — Test-Path \\PC\C$\Windows (com PSCredential opcional)
+3. **Copy** — copia MBChat_Setup.exe para `\\PC\C$\Windows\Temp\`
+4. **Run** — cria schtask one-shot via `schtasks /create /s PC /ru SYSTEM /rl HIGHEST`, dispara, aguarda terminar (poll status 5s, timeout 180s default), deleta task
+5. **Verify** — le versao do MBChat.exe instalado via `(Get-Item ...).VersionInfo.FileVersion`
+6. **Cleanup** — remove installer do C:\Windows\Temp\
+
+**Flags Inno Setup usadas:**
+- `/VERYSILENT` — sem UI nenhuma
+- `/SUPPRESSMSGBOXES` — suprime qualquer dialog (msgbox de uninstall data assume default)
+- `/CLOSEAPPLICATIONS` — fecha MBChat.exe antes (alem do `CloseApplications=force` em installer.iss)
+- `/NORESTART` — nunca reinicia Windows
+- `/LOG="C:\Windows\Temp\MBChat_Setup.log"` — log no PC alvo para debug
+
+**Output:**
+- Console colorido com status de cada PC ([OK v1.8.26], [OFFLINE], [SEM C$], [COPY FAIL], [INSTALL FAIL])
+- Lista de PCs com falha no final (para retry/manual)
+- CSV `deploy_report_YYYYMMDD_HHMMSS.csv` com colunas: PC, Ping, Share, Copy, Install, Version, Error
+
+**Por que schtasks /s e nao WinRM/PSExec:**
+- WinRM pode estar desabilitado em ambiente sem GPO de WinRM
+- PsExec exige download separado e tem fama de "ferramenta de hacker" (alguns AVs marcam)
+- schtasks /s e nativo do Windows, funciona em qualquer Windows Pro com share C$ acessivel
+- Ja documentado no CLAUDE.md (secao firewall) como o mecanismo padrao de fix remoto
+
+**Pos-deploy:**
+
+Depois que todos os PCs rodaram o installer:
+1. Apos uns 30s, todos os MBChat.exe ja iniciaram automaticamente (atalho de autostart `--silent`)
+2. Conferir no proprio MB Chat (peer list) que todos voltaram online com a nova versao
+3. Painel admin → "Monitor de Versoes" mostra a versao de cada peer e destaca em vermelho os atrasados

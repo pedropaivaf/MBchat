@@ -28,3 +28,7 @@ preview_*.png
 
 # VC++ Redistributable (25MB, nao commitar)
 assets/vc_redist.x64.exe
+
+# Deploy em massa: lista real de PCs (manter so o .example no repo)
+tools/pcs.txt
+deploy_report_*.csv

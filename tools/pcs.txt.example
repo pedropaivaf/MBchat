@@ -1,0 +1,21 @@
+# Lista de PCs alvo para deploy do MBChat
+# Um hostname ou IP por linha. Linhas vazias e comentarios (#) sao ignoradas.
+#
+# Copia este arquivo para tools\pcs.txt e edita com os hosts reais.
+# Como descobrir os hostnames:
+#   - Abrir o MBChat no PC de admin → menu Ferramentas → Diagnostico de rede
+#   - OU rodar: arp -a   no PC de admin (lista IPs ativos da LAN)
+#   - OU pegar dos peers conhecidos no banco SQLite local (%APPDATA%\.mbchat\messages.db)
+
+# Setor Contabil
+# pc-aline
+# pc-bruno
+# pc-cassiana
+
+# Setor Fiscal
+# pc-eduardo
+# pc-fernanda
+
+# Por IP funciona tambem:
+# 192.168.0.101
+# 192.168.0.102
