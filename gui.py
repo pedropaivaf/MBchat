@@ -11914,8 +11914,15 @@ class LanMessengerApp:
     def _remove_contact(self, uid):
         if uid in self.peer_items:
             iid = self.peer_items[uid]
-            self.tree.item(iid, tags=('offline',))
-            self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+            try:
+                self.tree.item(iid, tags=('offline',))
+            except Exception:
+                pass
+            try:
+                self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+            except Exception:
+                # iid pode estar invalido se o tree foi reconstruido; remove do mapa
+                self.peer_items.pop(uid, None)
         # Se o usuario esta com a janela de chat aberta com esse peer,
         # mostra mensagem de sistema cinza no chat (LAN Messenger style).
         if uid in self.chat_windows:
@@ -12147,7 +12154,9 @@ class LanMessengerApp:
         if sel and sel[0] in self._group_tree_items.values():
             self._on_tree_dbl_group(sel[0])
             return
-        uid = self._get_selected_peer()
+        # allow_offline=True: duplo-clique abre chat mesmo se peer ficou com tag
+        # 'offline' presa por TclError no detach (peer VPN visivel mas nao clicavel)
+        uid = self._get_selected_peer(allow_offline=True)
         if uid:
             self._open_chat(uid)
 
@@ -13962,12 +13971,16 @@ class LanMessengerApp:
         self._schedule_periodic_update_check()
 
     def _schedule_periodic_update_check(self, interval_ms=30 * 60 * 1000):
-        # Verifica novamente em background; só notifica se ainda não há update pendente
+        # Verifica novamente em background; só notifica se ainda não há update pendente.
+        # Nao faz chamada a API do GitHub se _pending_update ja esta preenchido
+        # (notificado via P2P) — evita esgotar rate limit de 60 req/h compartilhado
+        # por todos os 30 PCs da LAN que usam o mesmo IP externo.
         def _on_result(has_update, ver, notes=''):
             if has_update and not self._pending_update:
                 self.root.after(0, lambda: self._show_update_bar(ver, notes))
         def _run():
-            updater.check_update_async(_on_result)
+            if not self._pending_update:  # ja sabemos do update via P2P? poupa a API
+                updater.check_update_async(_on_result)
             self.root.after(interval_ms, _run)
         self.root.after(interval_ms, _run)
 
