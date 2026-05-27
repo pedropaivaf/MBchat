@@ -643,3 +643,55 @@ A partir da v1.8.25 com `updater.py` corrigido (CreateProcess) e `installer.iss`
 - Fallback `Start-Process` caso CreateProcess falhe
 
 Resultado: **o webinstaller so e necessario uma vez (para sair da v1.8.24)**. A partir da v1.8.25 com fixes, todos os updates futuros sao automaticos.
+
+## Auto-update — fixes finais e validacao (commits 9a254a2 + 92c0903)
+
+### Bugs encontrados e corrigidos durante testes em 27/mai/2026
+
+1. **PS syntax error** — `$oldExe: $_` no script PowerShell gerado por `apply_update()` causava `InvalidVariableReferenceWithDrive`. O `:` apos `$oldExe` era interpretado como drive specifier. Fix: `${{oldExe}}` no template f-string → gera `${oldExe}` no PS output.
+
+2. **Acesso negado em Program Files** — o PS script rodava como usuario normal, sem permissao pra deletar/copiar em `C:\Program Files\MBChat\_internal\`. Fix: auto-elevacao UAC no inicio do script PS (`IsInRole(Administrator)` + `Start-Process -Verb RunAs`). Se user negar UAC, tenta sem admin (funciona se app estiver em pasta de usuario).
+
+3. **Notificacao toast spam** — cada peer ja atualizado mandava announce a cada 30s, gerando N toasts por ciclo. Fix: 3 camadas de dedup (network.py in-memory set + gui.py in-memory set + DB persistente). Toast aparece 1x por versao, sino fica marcado ate usuario clicar.
+
+4. **Botao OK invisivel** — no dialog de progresso ("Atualizacao concluida!"), o botao OK era branco sobre verde com `relief='flat'`. Usuarios nao viam. Fix: fonte 11 preta, `relief='solid'`, `bd=2`, padding generoso.
+
+5. **App nao reabria apos update** — alem do PS syntax error, o `--show` flag nao era passado ao relancamento. Fix: `$psi.Arguments = "--show"` no CreateProcess + fallback Start-Process.
+
+### Validacao em teste local (27/mai/2026)
+
+Ambos os fluxos testados com simulacao v1.8.25 → v1.8.26 (staging local + announce UDP fake):
+
+**Fluxo 1 — Botao (sino → progress → OK → fecha → reabre):**
+1. Peer anuncia versao nova via UDP → toast 1x + sino vermelho
+2. Sino mostra "Nova versao X disponivel" + botao verde "Reiniciar para Atualizar"
+3. Click → dialog de progresso centralizado (barra animada 0→100% em ~2.5s)
+4. "Atualizacao concluida!" → botao OK grande preto com borda
+5. Click OK → `_quit()` → `apply_update` gera PS → PS auto-eleva UAC → mata MBChat, copia _internal novo, sanity check, cleanup, relanca via CreateProcess com `--show`
+6. App reabre como versao nova (~4-5 segundos total)
+
+**Fluxo 2 — Boot (reboot do PC → app abre atualizado):**
+1. `update_pending.txt` existe (criado pelo download silencioso)
+2. `main()` detecta pending → `apply_update()` → gera PS + `os._exit(0)`
+3. PS auto-eleva, copia arquivos, relanca
+4. App abre como versao nova
+
+**Compatibilidade:** Windows 10 e Windows 11 (testado em Win11, PS syntax e UAC funcionam em ambos).
+
+### Procedimento de lancamento de nova versao (para uso no escritorio)
+
+**Passo 1 — Build + Release (do PC de dev ou admin):**
+```bash
+git pull
+python build.py --version 1.8.26 --release
+```
+Isso faz: bump version.py → build PyInstaller → installer Inno Setup → zip → cria GitHub Release v1.8.26 com assets.
+
+**Passo 2 — Deploy em massa via installer (opcao A — recomendado para primeira vez):**
+Rodar do PC admin no dominio com `tools\deploy_mbchat.ps1` (ver secao anterior).
+Ou: colocar `MBChat_Setup.exe` no servidor/share que todos acessam e pedir pra executar.
+
+**Passo 3 — Verificacao:**
+Apos deploy, conferir no MB Chat que todos os peers aparecem com a versao nova (painel admin ou peer list).
+
+**A partir dai:** v1.8.27, v1.8.28 etc. sao 100% automaticos. O usuario ve o sino, clica Reiniciar para Atualizar, ve a barra de progresso, clica OK, app reabre atualizado. Ou simplesmente reinicia o PC e o app ja abre na versao nova. Nunca mais precisa de instalador manual.
