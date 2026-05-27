@@ -1008,14 +1008,29 @@ class UDPDiscovery:
                     _log().warning('announce relay failed: %s', e)
 
             # --- REALTIME UPDATE NOTIFICATION ---
-            # Se esse peer estiver rodando uma versao maior que a nossa, avisa a GUI!
+            # Se esse peer estiver rodando uma versao maior que a nossa, avisa a GUI.
+            # IMPORTANTE: cada peer manda announce a cada DISCOVERY_INTERVAL segundos.
+            # Sem dedup aqui, com N peers ja atualizados a GUI recebia N callbacks por
+            # ciclo, causando spam de notificacoes Windows (usuarios reclamaram).
+            # Mantem em memoria um set de versoes ja notificadas a GUI nesta sessao.
             peer_version = pkt.get('version', '0.0.0')
             try:
                 def _parse_v(v):
-                    return tuple(int(x) for x in v.split('.'))
-                if _parse_v(peer_version) > _parse_v(APP_VERSION):
-                    if self.on_newer_version:
-                        self.on_newer_version(peer_version)
+                    # Aceita "1.8.26", "1.8.26-dev", "v1.8.26" - normaliza para tupla
+                    try:
+                        v = str(v).strip().lstrip('v').split('-')[0]
+                        return tuple(int(x) for x in v.split('.'))
+                    except Exception:
+                        return (0, 0, 0)
+                peer_v_tuple = _parse_v(peer_version)
+                if peer_v_tuple > _parse_v(APP_VERSION):
+                    if not hasattr(self, '_notified_versions'):
+                        self._notified_versions = set()
+                    # So chama callback se NUNCA notificou essa versao nesta sessao
+                    if peer_v_tuple not in self._notified_versions:
+                        self._notified_versions.add(peer_v_tuple)
+                        if self.on_newer_version:
+                            self.on_newer_version(peer_version)
             except Exception:
                 pass
 

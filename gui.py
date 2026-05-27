@@ -17000,6 +17000,14 @@ class LanMessengerApp:
         self._update_bell_badge(n)
 
     def _on_newer_version(self, peer_version):
+        # Disparado pela rede quando um peer anuncia versao maior que a local.
+        # Garantia: 1 toast Windows POR VERSAO, com 3 camadas de dedup pra evitar
+        # spam (usuarios reclamavam de notificacao insistente que atrapalhava o trabalho):
+        #   1. network.py: dedup in-memory por versao (so chama callback 1x por versao)
+        #   2. _update_session_versions (aqui): dedup in-memory na sessao da GUI
+        #   3. update_toast_shown_for (DB): dedup persistente entre sessoes
+        # O sino (bell badge) continua marcado independente do toast, ate o usuario
+        # clicar em "Reiniciar para Atualizar" ou aplicar o update por outro caminho.
         def parse_v(v):
             try: return tuple(int(x) for x in str(v).strip().lstrip('v').split('-')[0].split('.'))
             except Exception: return (0, 0, 0)
@@ -17009,23 +17017,44 @@ class LanMessengerApp:
         if peer_v <= my_v:
             return
 
+        # === Atualiza sino (idempotente, sem popup) ===
+        # Sempre atualiza o bell badge se a versao detectada for maior que a pendente.
+        # Isso garante que o usuario sempre veja no sino qual versao esta disponivel.
         current_pend = self._pending_update.get('version', '0.0.0') if self._pending_update else '0.0.0'
-        if peer_v <= parse_v(current_pend):
-            return
+        if peer_v > parse_v(current_pend):
+            self.root.after(0, lambda: self._show_update_bar(peer_version, 'Nova atualização disponível na rede!'))
 
-        self.root.after(0, lambda: self._show_update_bar(peer_version, 'Nova atualização disponível na rede!'))
+        # === Camada 2: dedup in-memory na GUI ===
+        # Mesmo que a network.py falhe em algum caso de borda, aqui garante que
+        # nao mostraremos toast 2x para a mesma versao nesta sessao.
+        if not hasattr(self, '_update_session_versions'):
+            self._update_session_versions = set()
+        if peer_v in self._update_session_versions:
+            return  # ja mostrou toast nesta sessao
+        self._update_session_versions.add(peer_v)
+
+        # === Camada 3: dedup persistente entre sessoes (DB) ===
+        # Evita o toast voltar a aparecer toda vez que o app reinicia (ate o user
+        # de fato atualizar). update_toast_shown_for so e ultrapassado por uma
+        # versao MAIOR (ou seja, quando sai uma nova release apos esta).
         try:
             shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
         except Exception:
             shown_for = ''
-            
-        if parse_v(peer_version) > parse_v(shown_for):
-            self._show_toast_generic('Atualização Disponível',
-                                     f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
-            try:
-                self.messenger.db.set_setting('update_toast_shown_for', peer_version)
-            except Exception:
-                pass
+
+        if peer_v <= parse_v(shown_for):
+            return  # ja notificou em sessao anterior, sino ja basta
+
+        # Marca DB ANTES do toast (defensivo: se algo der ruim no toast,
+        # mesmo assim nao tenta de novo no proximo announce)
+        try:
+            self.messenger.db.set_setting('update_toast_shown_for', peer_version)
+        except Exception:
+            pass
+
+        self._show_toast_generic(
+            'MB Chat - Atualização disponível',
+            f'Versão {peer_version} liberada. Clique no sino do app para atualizar.')
 
     def _open_bell_dropdown(self):
         # Re-check em background ao abrir o sino (se não há update pendente)
