@@ -11705,6 +11705,8 @@ class LanMessengerApp:
                     if 'offline' in tags:          # contato esta offline?
                         return None               # retorna None para bloquear acao
                 return uid  # retorna o uid do contato selecionado
+        log.debug('[GET_PEER] item=%r nao encontrado em peer_items (total=%d)',
+                  item, len(self.peer_items))
         return None  # item nao encontrado em peer_items
 
     def _sort_tree_children(self, parent):
@@ -12150,26 +12152,51 @@ class LanMessengerApp:
 
     # Trata duplo clique no TreeView: abre chat (contato) ou janela de grupo.
     def _on_tree_dbl(self, e):
-        sel = self.tree.selection()  # item selecionado no TreeView
-        if sel and sel[0] in self._group_tree_items.values():
-            self._on_tree_dbl_group(sel[0])
+        # identify_row e mais robusto que selection() — funciona mesmo quando
+        # a selecao nao foi atualizada a tempo (ex: double-click rapido) ou
+        # quando o item ficou com tag 'offline' presa (peer VPN visivel).
+        item = self.tree.identify_row(e.y)
+        sel = self.tree.selection()
+        log.debug('[DBL] identify_row=%r sel=%r peer_items=%d',
+                  item, sel, len(self.peer_items))
+        if not item:
+            # Fallback: tenta pela selecao
+            if sel and sel[0] in self._group_tree_items.values():
+                self._on_tree_dbl_group(sel[0])
             return
-        # allow_offline=True: duplo-clique abre chat mesmo se peer ficou com tag
-        # 'offline' presa por TclError no detach (peer VPN visivel mas nao clicavel)
+        if item in self._group_tree_items.values():
+            self._on_tree_dbl_group(item)
+            return
+        if item in (self.group_general, self.group_groups):
+            return
+        if item in self._dept_nodes.values():
+            return
+        # Busca uid pelo iid direto (O(n) mas lista e pequena)
+        iid_to_uid = {iid: uid for uid, iid in self.peer_items.items()}
+        uid = iid_to_uid.get(item)
+        log.debug('[DBL] item=%r uid=%r tags=%r',
+                  item, uid, self.tree.item(item, 'tags') if item else ())
+        if uid:
+            self._open_chat(uid)
+            return
+        # Fallback: selection-based (cobre edge cases onde identify_row diverge)
         uid = self._get_selected_peer(allow_offline=True)
+        log.debug('[DBL] fallback uid=%r', uid)
         if uid:
             self._open_chat(uid)
 
-    # Trata clique direito no TreeView: exibe menu de contexto para contatos online.
+    # Trata clique direito no TreeView: exibe menu de contexto para contatos.
     def _on_tree_right(self, e):
         item = self.tree.identify_row(e.y)  # identifica o item na posicao Y do mouse
         # Ignora nos de secao (Geral, Offline, Grupos, departamentos)
         section_nodes = {self.group_general, self.group_groups}
         section_nodes.update(self._dept_nodes.values())
         if item and item not in section_nodes:
-            # Block right-click on offline contacts
-            tags = self.tree.item(item, 'tags')
-            if 'offline' in tags:
+            # Permite menu de contexto para contatos online E peers VPN com tag
+            # 'offline' presa (visivel mas marcado como offline por fallback).
+            # Bloqueia apenas se o item NAO esta mapeado em peer_items.
+            iid_to_uid = {iid: uid for uid, iid in self.peer_items.items()}
+            if item not in iid_to_uid:
                 return
             self.tree.selection_set(item)
             self.ctx_menu.tk_popup(e.x_root, e.y_root)
