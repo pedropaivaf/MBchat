@@ -16477,11 +16477,11 @@ class LanMessengerApp:
             win.update_idletasks()
             sx = win.winfo_screenwidth()
             sy = win.winfo_screenheight()
-            x = (sx - 360) // 2
-            y = (sy - 200) // 2
-            win.geometry(f'360x200+{max(0, x)}+{max(0, y)}')
+            x = (sx - 380) // 2
+            y = (sy - 240) // 2
+            win.geometry(f'380x240+{max(0, x)}+{max(0, y)}')
         except Exception:
-            win.geometry('360x200')
+            win.geometry('380x240')
         win.deiconify()
         try:
             win.grab_set()
@@ -16497,10 +16497,12 @@ class LanMessengerApp:
             # Da 400ms pra UI atualizar antes de fechar
             self.root.after(400, self._quit)
 
-        btn_ok = tk.Button(win, text='OK',
-                           font=('Segoe UI', 9, 'bold'),
-                           bg='#10b981', fg='white',
-                           relief='flat', bd=0, padx=24, pady=6,
+        btn_ok = tk.Button(win, text='  OK  ',
+                           font=('Segoe UI', 11, 'bold'),
+                           bg='#10b981', fg='#0f172a',
+                           activebackground='#059669', activeforeground='#0f172a',
+                           relief='solid', bd=2, padx=30, pady=8,
+                           highlightbackground='#064e3b', highlightthickness=1,
                            cursor='hand2', command=_on_ok)
 
         # Animacao da barra: 0 -> 100% em ~2.5s (50 steps de 50ms)
@@ -16535,8 +16537,8 @@ class LanMessengerApp:
                 except Exception:
                     pass
                 lbl_warn.config(text='Clique OK para reiniciar o MB Chat\ne abrir a nova versao.',
-                                fg='#0f172a', font=('Segoe UI', 8, 'bold'))
-                btn_ok.pack(pady=(5, 12))
+                                fg='#0f172a', font=('Segoe UI', 9, 'bold'))
+                btn_ok.pack(pady=(8, 15))
                 return
             self.root.after(50, _tick)
 

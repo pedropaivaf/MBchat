@@ -179,10 +179,24 @@ def apply_update(staging_dir, **kwargs):
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
     ps_content = f'''
+# Auto-elevacao: se nao tem admin, relanca como admin via UAC.
+# Necessario porque C:\Program Files\MBChat precisa de permissao elevada
+# para deletar/copiar arquivos. O installer roda como admin (Inno Setup),
+# mas o updater roda como usuario normal.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {{
+    try {{
+        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        exit 0
+    }} catch {{
+        # Se UAC for negado, tenta sem admin mesmo (funciona se app esta em pasta de usuario)
+    }}
+}}
+
 $LogFile = "{log_path}"
 function Log($msg) {{ "{{0:yyyy-MM-dd HH:mm:ss}}" -f (Get-Date) + " $msg" | Out-File -Append -FilePath $LogFile }}
 
-Log "Update iniciado"
+Log "Update iniciado (admin=$isAdmin)"
 Log "Target dir: {target_dir}"
 Log "Staging dir: {staging_dir}"
 
@@ -254,9 +268,9 @@ foreach ($oldExe in $oldExes) {{
     if ((Test-Path $oldExe) -and ($oldExe -ne "{target_exe}")) {{
         try {{
             Remove-Item -Path $oldExe -Force -ErrorAction Stop
-            Log "Removido executavel antigo: $oldExe"
+            Log "Removido executavel antigo: ${{oldExe}}"
         }} catch {{
-            Log "Nao foi possivel remover $oldExe: $_"
+            Log "Nao foi possivel remover ${{oldExe}} - $_"
         }}
     }}
 }}
@@ -342,3 +356,4 @@ def is_update_pending():
         except Exception:
             return None
     return None
+
