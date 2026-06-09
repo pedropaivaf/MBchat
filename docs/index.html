@@ -821,6 +821,7 @@
             <a href="#doc-multiuser">Multi-usuário</a>
             <a href="#doc-firewall">Firewall</a>
             <a href="#doc-vpn-peer-clique">Peer VPN sem clique</a>
+            <a href="#doc-backup">Backup</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
         <button class="docs-topbar-arrow right" id="docs-arrow-right" aria-label="Rolar para direita">
@@ -1104,6 +1105,55 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
             </p>
         </div>
 
+        <div class="docs-section fade-in" id="doc-backup">
+            <h3>Backup e Restauração do Histórico</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Todo o histórico de mensagens, contatos e configurações fica em <strong>uma única pasta oculta</strong> no seu perfil Windows. Fazer backup é simples: copiar essa pasta inteira para um local seguro.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Onde ficam os dados</h4>
+            <table class="docs-table">
+                <thead><tr><th>Arquivo</th><th>Caminho</th><th>Conteúdo</th></tr></thead>
+                <tbody>
+                    <tr><td><code>mbchat.db</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Banco SQLite — mensagens, contatos, lembretes, configurações</td></tr>
+                    <tr><td><code>mbchat.db-wal</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>WAL do SQLite — <strong>obrigatório salvar junto</strong></td></tr>
+                    <tr><td><code>mbchat.db-shm</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Shared memory — <strong>obrigatório salvar junto</strong></td></tr>
+                    <tr><td><code>user_themes.json</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Temas personalizados criados pelo usuário</td></tr>
+                    <tr><td>Arquivos recebidos</td><td><code>%USERPROFILE%\Documentos\MBFiles\</code></td><td>Arquivos, imagens e documentos recebidos via chat</td></tr>
+                </tbody>
+            </table>
+
+            <div class="docs-note" style="margin-top: 1rem;">
+                <strong>⚠️ Atenção:</strong> Os três arquivos <code>.db</code>, <code>.db-wal</code> e <code>.db-shm</code> formam uma unidade do SQLite em WAL mode. Salvar só o <code>.db</code> sem os outros dois pode resultar em banco corrompido ou histórico incompleto.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Como fazer backup</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Fechar o MB Chat completamente pelo ícone na bandeja (não só minimizar)</li>
+                <li>Abrir o Explorador de Arquivos e navegar até <code>%APPDATA%\.mbchat\</code></li>
+                <li>Copiar a pasta <code>.mbchat</code> inteira para um local seguro (pendrive, rede, nuvem)</li>
+                <li>Opcionalmente copiar também a pasta <code>%USERPROFILE%\Documentos\MBFiles\</code> (arquivos recebidos)</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Como restaurar</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Instalar o MB Chat normalmente</li>
+                <li>Fechar o app antes de copiar</li>
+                <li>Copiar os arquivos do backup de volta para <code>%APPDATA%\.mbchat\</code></li>
+                <li>Abrir o MB Chat — histórico completo restaurado automaticamente</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Aviso: Revo Uninstaller e desinstaladores de terceiros</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem;">
+                O Revo Uninstaller no modo <strong>Avançado</strong> varre o disco por arquivos "órfãos" e pode deletar a pasta <code>%APPDATA%\.mbchat\</code> mesmo sem ela fazer parte do instalador oficial (que preserva os dados por design). Sempre faça backup antes de usar desinstaladores de terceiros. Se for usar o Revo, utilize o modo <strong>Moderado</strong> para preservar o histórico.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Banco corrompido</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem;">
+                Se ao abrir o app o histórico aparecer vazio ou der erro, o banco pode estar corrompido — geralmente por cópia feita com o app aberto. Se você tiver os três arquivos (<code>.db</code> + <code>.db-wal</code> + <code>.db-shm</code>) do mesmo backup, restaure os três juntos: o SQLite fará o checkpoint automático na próxima abertura e recuperará os dados. Somente o <code>.db</code> sem os outros dois é irrecuperável.
+            </p>
+        </div>
+
         <div class="docs-section fade-in" id="doc-desinstalar">
             <h3>Desinstalação Completa</h3>
             <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
@@ -1164,94 +1214,4 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
 </section>
 
 <section id="download">
-    <h2 class="section-title fade-in">Download</h2>
-    <div class="download-box fade-in">
-        <h3>MB Chat para Windows</h3>
-        <p>Instalador <b>web</b>: sempre baixa a versão mais recente ao executar. Atalho no Desktop, Menu Iniciar e desinstalador completo.</p>
-        <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_WebInstaller.exe" class="btn btn-primary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Baixar Instalador
-        </a>
-    </div>
-</section>
-
-<footer>
-    <div class="footer-logo">
-        <img src="icon.png" alt="MB Chat">
-        <span>Chat</span>
-    </div>
-    <p><a href="https://github.com/pedropaivaf" target="_blank">Autor - pedropaivaf</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
-</footer>
-
-<script>
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) entry.target.classList.add('visible');
-        });
-    }, { threshold: 0.1 });
-    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-
-    // Scroll spy para nav lateral dos docs
-    const docSections = document.querySelectorAll('.docs-section[id]');
-    const docLinks = document.querySelectorAll('#docs-nav a');
-    const spyObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                docLinks.forEach(a => a.classList.remove('active'));
-                const link = document.querySelector('#docs-nav a[href="#' + entry.target.id + '"]');
-                if (link) {
-                    link.classList.add('active');
-                    // Auto-scroll horizontal pra manter item ativo visível
-                    const inner = document.getElementById('docs-topbar-inner');
-                    if (inner) {
-                        const linkRect = link.getBoundingClientRect();
-                        const innerRect = inner.getBoundingClientRect();
-                        if (linkRect.left < innerRect.left + 40) {
-                            inner.scrollBy({ left: linkRect.left - innerRect.left - 60, behavior: 'smooth' });
-                        } else if (linkRect.right > innerRect.right - 40) {
-                            inner.scrollBy({ left: linkRect.right - innerRect.right + 60, behavior: 'smooth' });
-                        }
-                    }
-                }
-            }
-        });
-    }, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
-    docSections.forEach(s => spyObserver.observe(s));
-
-    // Setas do topbar de docs: scroll horizontal + visibilidade condicional
-    (function() {
-        const inner = document.getElementById('docs-topbar-inner');
-        const leftBtn = document.getElementById('docs-arrow-left');
-        const rightBtn = document.getElementById('docs-arrow-right');
-        if (!inner || !leftBtn || !rightBtn) return;
-
-        function updateArrows() {
-            const hasOverflow = inner.scrollWidth > inner.clientWidth + 1;
-            if (!hasOverflow) {
-                leftBtn.classList.remove('visible');
-                rightBtn.classList.remove('visible');
-                return;
-            }
-            const atStart = inner.scrollLeft <= 2;
-            const atEnd = inner.scrollLeft + inner.clientWidth >= inner.scrollWidth - 2;
-            leftBtn.classList.toggle('visible', !atStart);
-            rightBtn.classList.toggle('visible', !atEnd);
-        }
-
-        function scrollByStep(dir) {
-            const step = Math.max(120, inner.clientWidth * 0.6);
-            inner.scrollBy({ left: dir * step, behavior: 'smooth' });
-        }
-
-        leftBtn.addEventListener('click', () => scrollByStep(-1));
-        rightBtn.addEventListener('click', () => scrollByStep(1));
-        inner.addEventListener('scroll', updateArrows, { passive: true });
-        window.addEventListener('resize', updateArrows);
-        // Checa inicialmente após render
-        setTimeout(updateArrows, 100);
-        setTimeout(updateArrows, 500);
-    })();
-</script>
-
-</body>
-</html>
+   

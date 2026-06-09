@@ -585,6 +585,45 @@ Depois que todos os PCs rodaram o installer:
 2. Conferir no proprio MB Chat (peer list) que todos voltaram online com a nova versao
 3. Painel admin → "Monitor de Versoes" mostra a versao de cada peer e destaca em vermelho os atrasados
 
+## Backup e Restauracao do Historico
+
+### Onde ficam os dados do usuario
+
+```
+%APPDATA%\.mbchat\          ← pasta oculta, DOT no nome (nao confundir com %APPDATA%\MBChat\)
+├── mbchat.db               ← banco SQLite: mensagens, contatos, configuracoes, lembretes
+├── mbchat.db-wal           ← WAL do SQLite — OBRIGATORIO salvar junto com .db
+├── mbchat.db-shm           ← shared memory — OBRIGATORIO salvar junto com .db
+└── user_themes.json        ← temas personalizados criados pelo usuario
+```
+
+**ATENCAO**: os tres arquivos (`mbchat.db`, `mbchat.db-wal`, `mbchat.db-shm`) formam uma unidade atomica do SQLite em WAL mode. Salvar so o `.db` sem os outros dois pode resultar em banco corrompido ou historico incompleto.
+
+### Procedimento de backup manual
+
+1. Fechar o MBChat completamente (sair pelo icone na bandeja — nao so minimizar)
+2. Copiar a pasta inteira `%APPDATA%\.mbchat\` para local seguro (pendrive, rede, nuvem)
+3. Arquivos baixados via transferencia ficam em `Documentos\MBFiles\` — salvar separado se necessario
+
+### Restauracao apos reinstalacao
+
+1. Fechar o MBChat (se aberto)
+2. Copiar os arquivos de volta para `%APPDATA%\.mbchat\`
+3. Abrir o MBChat — historico completo restaurado
+
+### AVISO: Revo Uninstaller modo Avancado
+
+O Revo Uninstaller no modo **Avancado** varre o disco por arquivos "orfaos" e pode deletar a pasta `%APPDATA%\.mbchat\` mesmo o nosso installer nao a tocando (o Inno Setup preserva a pasta de dados por design).
+
+**Sempre fazer backup antes de usar Revo Uninstaller ou qualquer desinstalador de terceiros.**
+**Usar modo Moderado no Revo, nunca Avancado, para preservar historico.**
+
+### Banco corrompido (DatabaseError: database disk image is malformed)
+
+Causa mais comum: copia do `.db` enquanto o MBChat estava aberto (WAL nao foi checkpointed).
+Fix: se tiver os tres arquivos (`.db` + `.db-wal` + `.db-shm`) da mesma sessao, restaurar os tres juntos e abrir o MBChat — o SQLite faz o checkpoint automaticamente e recupera os dados.
+Se so tiver o `.db` sem os WAL files e estiver corrompido, os dados sao irrecuperaveis.
+
 ## Clean install no webinstaller (installer.iss)
 
 Em 27/mai/2026 o `installer.iss` foi reforcado para garantir **instalacao 100% limpa por cima** de qualquer versao anterior, **preservando o banco de dados e configuracoes** do usuario (que ficam em `%APPDATA%\.mbchat\`, intocado pelo installer).
