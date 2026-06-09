@@ -1130,9 +1130,16 @@ class Messenger:
             from PIL import Image
             from io import BytesIO
             img = Image.open(custom)
-            img.thumbnail((48, 48), Image.LANCZOS)  # Reduz mantendo proporcao
+            img.thumbnail((128, 128), Image.LANCZOS)  # 128px: downscale 3x ao exibir em 39px — maximo de nitidez
+            # PNG circular tem cantos transparentes — compoe sobre branco antes
+            # do JPEG (sem alpha) para nao virar franja/canto preto nos peers
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGBA')
+                bg = Image.new('RGB', img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
             buf = BytesIO()
-            img.convert('RGB').save(buf, format='JPEG', quality=70)
+            img.convert('RGB').save(buf, format='JPEG', quality=85)
             return base64.b64encode(buf.getvalue()).decode('ascii')
         except Exception:
             return ''  # PIL nao disponivel ou erro na imagem

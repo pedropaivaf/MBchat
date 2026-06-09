@@ -1214,4 +1214,94 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
 </section>
 
 <section id="download">
-   
+    <h2 class="section-title fade-in">Download</h2>
+    <div class="download-box fade-in">
+        <h3>MB Chat para Windows</h3>
+        <p>Instalador <b>web</b>: sempre baixa a versão mais recente ao executar. Atalho no Desktop, Menu Iniciar e desinstalador completo.</p>
+        <a href="https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_WebInstaller.exe" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Baixar Instalador
+        </a>
+    </div>
+</section>
+
+<footer>
+    <div class="footer-logo">
+        <img src="icon.png" alt="MB Chat">
+        <span>Chat</span>
+    </div>
+    <p><a href="https://github.com/pedropaivaf" target="_blank">Autor - pedropaivaf</a> &middot; <a href="https://github.com/pedropaivaf/MBchat" target="_blank">GitHub</a> &middot; <a href="https://github.com/pedropaivaf/MBchat/issues" target="_blank">Reportar Bug</a></p>
+</footer>
+
+<script>
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) entry.target.classList.add('visible');
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Scroll spy para nav lateral dos docs
+    const docSections = document.querySelectorAll('.docs-section[id]');
+    const docLinks = document.querySelectorAll('#docs-nav a');
+    const spyObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                docLinks.forEach(a => a.classList.remove('active'));
+                const link = document.querySelector('#docs-nav a[href="#' + entry.target.id + '"]');
+                if (link) {
+                    link.classList.add('active');
+                    // Auto-scroll horizontal pra manter item ativo visível
+                    const inner = document.getElementById('docs-topbar-inner');
+                    if (inner) {
+                        const linkRect = link.getBoundingClientRect();
+                        const innerRect = inner.getBoundingClientRect();
+                        if (linkRect.left < innerRect.left + 40) {
+                            inner.scrollBy({ left: linkRect.left - innerRect.left - 60, behavior: 'smooth' });
+                        } else if (linkRect.right > innerRect.right - 40) {
+                            inner.scrollBy({ left: linkRect.right - innerRect.right + 60, behavior: 'smooth' });
+                        }
+                    }
+                }
+            }
+        });
+    }, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
+    docSections.forEach(s => spyObserver.observe(s));
+
+    // Setas do topbar de docs: scroll horizontal + visibilidade condicional
+    (function() {
+        const inner = document.getElementById('docs-topbar-inner');
+        const leftBtn = document.getElementById('docs-arrow-left');
+        const rightBtn = document.getElementById('docs-arrow-right');
+        if (!inner || !leftBtn || !rightBtn) return;
+
+        function updateArrows() {
+            const hasOverflow = inner.scrollWidth > inner.clientWidth + 1;
+            if (!hasOverflow) {
+                leftBtn.classList.remove('visible');
+                rightBtn.classList.remove('visible');
+                return;
+            }
+            const atStart = inner.scrollLeft <= 2;
+            const atEnd = inner.scrollLeft + inner.clientWidth >= inner.scrollWidth - 2;
+            leftBtn.classList.toggle('visible', !atStart);
+            rightBtn.classList.toggle('visible', !atEnd);
+        }
+
+        function scrollByStep(dir) {
+            const step = Math.max(120, inner.clientWidth * 0.6);
+            inner.scrollBy({ left: dir * step, behavior: 'smooth' });
+        }
+
+        leftBtn.addEventListener('click', () => scrollByStep(-1));
+        rightBtn.addEventListener('click', () => scrollByStep(1));
+        inner.addEventListener('scroll', updateArrows, { passive: true });
+        window.addEventListener('resize', updateArrows);
+        // Checa inicialmente após render
+        setTimeout(updateArrows, 100);
+        setTimeout(updateArrows, 500);
+    })();
+</script>
+
+</body>
+</html>
