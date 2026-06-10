@@ -884,9 +884,14 @@ class Database:
 
     # Retorna peers com quem houve conversa + data da última mensagem (para tela Histórico)
     def get_history_contacts(self):
+        # Mensagem em canal de grupo conta para o GRUPO (to_user) mesmo
+        # quando recebida — senao recebidas de grupo iam para o peer do
+        # remetente e nao apareciam em conversa nenhuma.
         rows = self.conn.execute("""
             SELECT
-                CASE WHEN is_sent=1 THEN to_user ELSE from_user END as peer,
+                CASE WHEN to_user LIKE 'group:%' THEN to_user
+                     WHEN is_sent=1 THEN to_user
+                     ELSE from_user END as peer,
                 MAX(timestamp) as last_ts
             FROM messages
             GROUP BY peer
@@ -898,12 +903,19 @@ class Database:
     def get_messages_with_peer(self, local_user, peer_id,
                                date_from=None, date_to=None,
                                search_text=None):
-        # Query base: mensagens entre os dois usuários (ambas direções)
-        sql = """
-            SELECT * FROM messages
-            WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))
-        """
-        params = [local_user, peer_id, peer_id, local_user]
+        if peer_id.startswith('group:') or peer_id == 'broadcast':
+            # Canal de grupo/broadcast: TODAS as mensagens do canal —
+            # enviadas (from=eu) E recebidas (from=remetente real). A query
+            # de par ordenado nao pega recebidas de grupo (to != eu).
+            sql = "SELECT * FROM messages WHERE to_user=?"
+            params = [peer_id]
+        else:
+            # Query base: mensagens entre os dois usuários (ambas direções)
+            sql = """
+                SELECT * FROM messages
+                WHERE ((from_user=? AND to_user=?) OR (from_user=? AND to_user=?))
+            """
+            params = [local_user, peer_id, peer_id, local_user]
         # Filtros opcionais adicionados dinamicamente
         if date_from:
             sql += " AND timestamp >= ?"
@@ -944,7 +956,9 @@ class Database:
     # popular a lista de contatos filtrados sem precisar carregar todas as mensagens na memoria.
     def get_peers_with_match(self, search_text=None, date_from=None, date_to=None):
         sql = """
-            SELECT DISTINCT CASE WHEN is_sent=1 THEN to_user ELSE from_user END as peer
+            SELECT DISTINCT CASE WHEN to_user LIKE 'group:%' THEN to_user
+                                 WHEN is_sent=1 THEN to_user
+                                 ELSE from_user END as peer
             FROM messages
             WHERE 1=1
         """
