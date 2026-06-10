@@ -10329,6 +10329,110 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Exporta backup completo do historico (banco + temas + avatares) em um
+    # unico .zip. Usa a API de backup do SQLite: copia CONSISTENTE mesmo com
+    # o app aberto (WAL e consolidado na copia — zero risco de corromper).
+    def _backup_history(self):
+        import zipfile
+        import sqlite3 as _sq
+        ts = datetime.now().strftime('%Y%m%d_%H%M')
+        dest = filedialog.asksaveasfilename(
+            parent=self.root,
+            title='Salvar backup do historico',
+            defaultextension='.zip',
+            initialfile=f'MBChat_backup_{ts}.zip',
+            filetypes=[('Backup MB Chat', '*.zip')])
+        if not dest:
+            return
+        tmp_db = ''
+        try:
+            data_dir = _get_data_dir()
+            db_path = os.path.join(data_dir, 'mbchat.db')
+            tmp_db = os.path.join(data_dir, f'_backup_tmp_{os.getpid()}.db')
+            src_conn = _sq.connect(db_path)
+            dst_conn = _sq.connect(tmp_db)
+            with dst_conn:
+                src_conn.backup(dst_conn)
+            dst_conn.close()
+            src_conn.close()
+            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(tmp_db, 'mbchat.db')
+                themes = os.path.join(data_dir, 'user_themes.json')
+                if os.path.exists(themes):
+                    zf.write(themes, 'user_themes.json')
+                avdir = os.path.join(data_dir, 'avatars')
+                if os.path.isdir(avdir):
+                    for fn in os.listdir(avdir):
+                        fp = os.path.join(avdir, fn)
+                        if os.path.isfile(fp):
+                            zf.write(fp, f'avatars/{fn}')
+            messagebox.showinfo(
+                'Backup do historico',
+                'Backup salvo com sucesso!\n\n'
+                f'{dest}\n\n'
+                'Para usar em outro computador (ou apos reinstalar): '
+                'Ferramentas > Restaurar backup...',
+                parent=self.root)
+        except Exception as ex:
+            log.exception('backup_history')
+            messagebox.showerror('Backup do historico',
+                                 f'Falha ao gerar backup:\n{ex}',
+                                 parent=self.root)
+        finally:
+            try:
+                if tmp_db and os.path.exists(tmp_db):
+                    os.remove(tmp_db)
+            except Exception:
+                pass
+
+    # Restaura um backup .zip: o banco e deixado como mbchat_restore.db e o
+    # main() faz a troca NO PROXIMO BOOT (antes de abrir conexoes — nunca
+    # troca o banco por baixo de um app aberto). Temas/avatares sao
+    # restaurados imediatamente.
+    def _restore_history(self):
+        import zipfile
+        src = filedialog.askopenfilename(
+            parent=self.root,
+            title='Restaurar backup do historico',
+            filetypes=[('Backup MB Chat', '*.zip')])
+        if not src:
+            return
+        try:
+            data_dir = _get_data_dir()
+            with zipfile.ZipFile(src) as zf:
+                names = zf.namelist()
+                if 'mbchat.db' not in names:
+                    messagebox.showerror(
+                        'Restaurar backup',
+                        'Arquivo invalido: nao contem mbchat.db.',
+                        parent=self.root)
+                    return
+                if not messagebox.askyesno(
+                        'Restaurar backup',
+                        'O historico ATUAL sera substituido pelo backup na '
+                        'proxima abertura do MB Chat.\n\nContinuar?',
+                        icon='warning', parent=self.root):
+                    return
+                with zf.open('mbchat.db') as f, \
+                     open(os.path.join(data_dir, 'mbchat_restore.db'),
+                          'wb') as out:
+                    shutil.copyfileobj(f, out)
+                for n in names:
+                    if n == 'user_themes.json':
+                        zf.extract(n, data_dir)
+                    elif n.startswith('avatars/') and not n.endswith('/'):
+                        zf.extract(n, data_dir)
+            messagebox.showinfo(
+                'Restaurar backup',
+                'Backup preparado!\n\nFeche e abra o MB Chat para concluir '
+                'a restauracao do historico.',
+                parent=self.root)
+        except Exception as ex:
+            log.exception('restore_history')
+            messagebox.showerror('Restaurar backup',
+                                 f'Falha ao restaurar:\n{ex}',
+                                 parent=self.root)
+
     # Dropdown moderno que substitui o tk.Menu nativo (visual antigo do
     # Windows). Toplevel overrideredirect estilizado no tema: borda 1px,
     # itens com icone MDL2 + hover, separador fino. Fecha por clique,
@@ -10360,7 +10464,7 @@ class LanMessengerApp:
         outer.pack(fill='both', expand=True)
         inner = tk.Frame(outer, bg=bg)
         inner.pack(fill='both', expand=True, padx=1, pady=1)
-        tk.Frame(inner, bg=bg, width=200, height=1).pack()  # largura minima
+        tk.Frame(inner, bg=bg, width=160, height=1).pack()  # largura minima
 
         def _close(*_a):
             try:
@@ -10379,11 +10483,11 @@ class LanMessengerApp:
             lbl_i = tk.Label(row, text=icon_char,
                              font=('Segoe MDL2 Assets', 10),
                              bg=bg, fg=accent, width=2, anchor='center')
-            lbl_i.pack(side='left', padx=(10, 2), pady=7)
+            lbl_i.pack(side='left', padx=(8, 2), pady=6)
             lbl_t = tk.Label(row, text=text, font=('Segoe UI', 9),
                              bg=bg, fg=fg, anchor='w')
-            lbl_t.pack(side='left', fill='x', expand=True, padx=(2, 24),
-                       pady=7)
+            lbl_t.pack(side='left', fill='x', expand=True, padx=(2, 12),
+                       pady=6)
             def _enter(e, r=row, li=lbl_i, lt=lbl_t):
                 r.configure(bg=hover)
                 li.configure(bg=hover)
@@ -10401,11 +10505,16 @@ class LanMessengerApp:
                 w.bind('<Button-1>', _click)
 
         # Posicao: alinhado ao clique na menubar, logo abaixo dela (o topo
-        # da area cliente da janela = base da menubar nativa)
+        # da area cliente da janela = base da menubar nativa). A caixa fica
+        # contida na largura da janela principal — nunca passa da borda direita.
         menu.update_idletasks()
         mw = menu.winfo_reqwidth()
         mh = menu.winfo_reqheight()
+        rx = self.root.winfo_rootx()
+        rw = self.root.winfo_width()
         px = self.root.winfo_pointerx() - 24
+        px = min(px, rx + rw - mw - 2)
+        px = max(px, rx + 2)
         py = self.root.winfo_rooty()
         sw = menu.winfo_screenwidth()
         sh = menu.winfo_screenheight()
@@ -10430,6 +10539,9 @@ class LanMessengerApp:
             ('\uE81C', _t('menu_history'), self._show_all_history),
             ('\uE723', _t('menu_transfers'), self._show_transfers),
             ('\uE7ED', 'Lembretes', self._show_reminders),
+            ('-',),
+            ('\uE74E', 'Backup do histórico...', self._backup_history),
+            ('\uE896', 'Restaurar backup...', self._restore_history),
             ('-',),
             ('\uE895', _t('menu_check_update'), self._manual_check_update),
         ])
@@ -13124,7 +13236,7 @@ class LanMessengerApp:
                 gid = peer_id[6:]
                 g = self.messenger._groups.get(gid)
                 if not g:
-                    rows = db.get_groups()
+                    rows = db.get_groups(include_archived=True)
                     db_g = next((x for x in rows if x['group_id'] == gid), None)
                     name = db_g['name'] if db_g else gid
                 else:
@@ -13391,17 +13503,30 @@ class LanMessengerApp:
             
             mode = mode_var.get()
             if mode == 'Grupos':
-                groups = db.get_groups(group_type='fixed')
-                groups = sorted(groups, key=lambda g: _last_by_peer.get(
-                    f"group:{g['group_id']}", 0), reverse=True)
-                for g in groups:
-                    gid = f"group:{g['group_id']}"
-                    if visible_peers is not None and gid not in visible_peers:
+                # Todos os grupos com mensagens trocadas — fixos E temporarios
+                # (incluindo encerrados/arquivados) — mais recentes no topo.
+                # Rotulo visual de tipo: (fixo) / (temporario).
+                reg = {g['group_id']: g
+                       for g in db.get_groups(include_archived=True)}
+                gpeers = [c['peer'] for c in all_contacts
+                          if c['peer'].startswith('group:')]
+                gpeers.sort(key=lambda p: _last_by_peer.get(p, 0),
+                            reverse=True)
+                for gid_peer in gpeers:
+                    if visible_peers is not None and gid_peer not in visible_peers:
                         continue
-                    name = g['name']
+                    gid = gid_peer[6:]
+                    g = reg.get(gid)
+                    if g:
+                        sufixo = (' (fixo)' if g.get('group_type') == 'fixed'
+                                  else ' (temporário)')
+                        name = f"{g['name']}{sufixo}"
+                    else:
+                        name = f'Grupo {gid[:8]} (encerrado)'
                     if name_q and name_q not in name.lower():
                         continue
-                    contacts_tree.insert('', 'end', iid=gid, values=(name,))
+                    contacts_tree.insert('', 'end', iid=gid_peer,
+                                         values=(name,))
                     shown += 1
             else:
                 for c in all_contacts:
@@ -18946,6 +19071,26 @@ def main():
     # Passamos da verificacao de instancia unica: somos a UNICA instancia legitima.
     # Vamos limpar processos MBChat.exe zumbis que possam ter ficado travados antes.
     _cleanup_zombie_processes()
+
+    # Restauracao de backup preparada por Ferramentas > Restaurar backup:
+    # troca o banco AGORA, antes de qualquer conexao SQLite (somos a unica
+    # instancia, entao nao ha WAL aberto — swap 100% seguro).
+    try:
+        _data_dir = _get_data_dir()
+        _restore = os.path.join(_data_dir, 'mbchat_restore.db')
+        if os.path.exists(_restore):
+            _target = os.path.join(_data_dir, 'mbchat.db')
+            for _suf in ('', '-wal', '-shm'):
+                try:
+                    os.remove(_target + _suf)
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+            os.replace(_restore, _target)
+            log.info('Backup restaurado: mbchat.db substituido no boot')
+    except Exception:
+        log.exception('Falha ao aplicar mbchat_restore.db no boot')
 
     # Se o computador foi reiniciado ou o usuario fechou o app ontem com update pronto,
     # aplica de forma invisível agora ANTES de subir o Tcl/Tkinter.

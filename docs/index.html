@@ -1108,7 +1108,30 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
         <div class="docs-section fade-in" id="doc-backup">
             <h3>Backup e Restauração do Histórico</h3>
             <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
-                Todo o histórico de mensagens, contatos e configurações fica em <strong>uma única pasta oculta</strong> no seu perfil Windows. Fazer backup é simples: copiar essa pasta inteira para um local seguro.
+                A partir da <strong>v1.8.28</strong>, o backup é feito pelo próprio MB Chat — com o app aberto, em um único arquivo <code>.zip</code>, sem mexer em pastas ocultas. O método manual continua valendo como alternativa.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Backup pelo próprio app (recomendado)</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Abrir <strong>Ferramentas &gt; Backup do histórico...</strong></li>
+                <li>Escolher onde salvar o <code>MBChat_backup_AAAAMMDD_HHMM.zip</code> (pendrive, rede, nuvem)</li>
+                <li>Pronto — o zip contém o banco completo (mensagens, contatos, grupos, lembretes, configurações), os temas personalizados e a foto de perfil</li>
+            </ol>
+            <div class="docs-note" style="margin-top: 0.8rem;">
+                <strong>✅ Pode fazer com o app aberto:</strong> o backup usa a API nativa de cópia do SQLite, que gera um arquivo consistente mesmo durante o uso — sem risco de corromper o banco.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Restaurar pelo app (reinstalação ou outro computador)</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Instalar o MB Chat normalmente no computador de destino</li>
+                <li>Abrir <strong>Ferramentas &gt; Restaurar backup...</strong> e selecionar o <code>.zip</code></li>
+                <li>Confirmar a substituição do histórico atual</li>
+                <li>Fechar e abrir o MB Chat — a troca acontece na abertura, antes de qualquer conexão, e o histórico completo aparece restaurado</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Método manual (alternativa)</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Todo o histórico fica em <strong>uma única pasta oculta</strong> no perfil Windows. Copiar essa pasta inteira para um local seguro também é um backup válido.
             </p>
 
             <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Onde ficam os dados</h4>

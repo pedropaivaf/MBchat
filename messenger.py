@@ -551,15 +551,15 @@ class Messenger:
                                        'creator_uid': creator_uid,
                                        'admins': admins}
 
-            # Se fixo, persiste no banco
-            if group_type == 'fixed':
-                self.db.save_group(group_id, group_name, 'fixed',
-                                   creator_uid=creator_uid)
-                for m in members:
-                    is_admin = 1 if m['uid'] in admins else 0
-                    self.db.save_group_member(group_id, m['uid'],
-                                              m['display_name'],
-                                              m.get('ip', ''), is_admin=is_admin)
+            # Persiste no banco SEMPRE (fixo E temporario) — o historico
+            # precisa do nome/tipo mesmo depois do grupo encerrar
+            self.db.save_group(group_id, group_name, group_type,
+                               creator_uid=creator_uid)
+            for m in members:
+                is_admin = 1 if m['uid'] in admins else 0
+                self.db.save_group_member(group_id, m['uid'],
+                                          m['display_name'],
+                                          m.get('ip', ''), is_admin=is_admin)
 
             # Notifica GUI para abrir janela do grupo
             if self.on_group_invite:
@@ -588,7 +588,7 @@ class Messenger:
             recovered = False
             if group_id and group_id not in self._groups:
                 # Tenta carregar do DB (caso seja fixo ja salvo)
-                rows = self.db.get_groups()
+                rows = self.db.get_groups(include_archived=True)
                 db_g = next((g for g in rows if g['group_id'] == group_id), None)
                 if db_g:
                     members = self.db.get_group_members(group_id)
@@ -622,13 +622,12 @@ class Messenger:
                              'ip': sender_ip},
                         ],
                     }
-                    if group_type == 'fixed':
-                        self.db.save_group(group_id, group_name, 'fixed')
-                        self.db.save_group_member(group_id, self.user_id,
-                                                  self.display_name,
-                                                  get_local_ip())
-                        self.db.save_group_member(group_id, from_user,
-                                                  display_name, sender_ip)
+                    self.db.save_group(group_id, group_name, group_type)
+                    self.db.save_group_member(group_id, self.user_id,
+                                              self.display_name,
+                                              get_local_ip())
+                    self.db.save_group_member(group_id, from_user,
+                                              display_name, sender_ip)
                     recovered = True
             # Persiste a mensagem no historico do grupo (idempotente por msg_id)
             try:
@@ -706,7 +705,7 @@ class Messenger:
                 if target_uid == self.user_id:
                     if group_id in self._groups:
                         del self._groups[group_id]
-                    self.db.delete_group(group_id)
+                    self.db.archive_group(group_id)  # preserva historico
             if self.on_group_kick:
                 self.on_group_kick(group_id, target_uid, group_name)
 
@@ -738,8 +737,8 @@ class Messenger:
             group_id = msg.get('group_id')
             if group_id in self._groups:
                 del self._groups[group_id]
-            # Apaga o grupo e seus membros do banco local sempre (se existirem)
-            self.db.delete_group(group_id)
+            # Arquiva (nao apaga): historico do grupo permanece acessivel
+            self.db.archive_group(group_id)
             if hasattr(self, 'on_group_deleted') and self.on_group_deleted:
                 self.on_group_deleted(group_id)
 
@@ -1265,14 +1264,14 @@ class Messenger:
                                    'creator_uid': self.user_id,
                                    'admins': [self.user_id]}
 
-        # Se fixo, persiste no banco de dados
-        if group_type == 'fixed':
-            self.db.save_group(group_id, group_name, 'fixed',
-                               creator_uid=self.user_id)
-            for m in members_info:
-                is_admin = 1 if m['uid'] == self.user_id else 0
-                self.db.save_group_member(group_id, m['uid'],
-                                          m['display_name'], m.get('ip', ''), is_admin=is_admin)
+        # Persiste no banco SEMPRE (fixo E temporario) — o historico precisa
+        # do nome/tipo mesmo apos encerrar. Boot reativa apenas fixos ativos.
+        self.db.save_group(group_id, group_name, group_type,
+                           creator_uid=self.user_id)
+        for m in members_info:
+            is_admin = 1 if m['uid'] == self.user_id else 0
+            self.db.save_group_member(group_id, m['uid'],
+                                      m['display_name'], m.get('ip', ''), is_admin=is_admin)
 
         # Envia convite TCP para cada membro convidado
         for uid in member_ids:
@@ -1338,10 +1337,10 @@ class Messenger:
         # Salva membros para notificar antes de apagar
         members = group.get('members', [])
         
-        # Apaga localmente
+        # Apaga localmente (arquiva no banco — historico permanece)
         if group_id in self._groups:
             del self._groups[group_id]
-        self.db.delete_group(group_id)
+        self.db.archive_group(group_id)
         
         # Propaga
         pkt = {
@@ -1557,7 +1556,7 @@ class Messenger:
                     'group_id': group_id,
                 })
             del self._groups[group_id]  # Remove da memoria
-        self.db.delete_group(group_id)  # Remove do banco (CASCADE nos membros)
+        self.db.archive_group(group_id)  # Arquiva (historico permanece)
 
     # ========================================
     # HISTORY — Acesso ao historico

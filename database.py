@@ -326,6 +326,15 @@ class Database:
         except Exception:
             pass
 
+        # Migration: archived na tabela groups — grupos encerrados/deletados
+        # sao ARQUIVADOS (nao apagados) para o historico preservar nome e
+        # tipo. Listas ativas e o boot filtram archived=0.
+        try:
+            c.execute("ALTER TABLE groups ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            c.commit()
+        except Exception:
+            pass
+
         # Migration: is_admin na tabela group_members
         try:
             c.execute("ALTER TABLE group_members ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
@@ -735,6 +744,9 @@ class Database:
     def cleanup_unknown_contacts(self):
         try:
             # Remove mensagens de peers sem nome em nenhuma tabela
+            # PROTECAO: mensagens de grupo (to_user='group:...'), broadcast
+            # e sistema NUNCA sao apagadas — esses peers nao existem em
+            # contacts/group_members e eram destruidos a cada boot.
             self.conn.execute("""
                 DELETE FROM messages
                 WHERE (CASE WHEN is_sent=1 THEN to_user ELSE from_user END)
@@ -747,6 +759,12 @@ class Database:
                         SELECT uid FROM group_members
                         WHERE display_name != '' AND display_name IS NOT NULL
                     )
+                AND (CASE WHEN is_sent=1 THEN to_user ELSE from_user END)
+                    NOT LIKE 'group:%'
+                AND (CASE WHEN is_sent=1 THEN to_user ELSE from_user END)
+                    NOT IN ('broadcast', 'system', 'all')
+                AND from_user NOT LIKE 'group:%'
+                AND to_user NOT LIKE 'group:%'
             """)
             # Remove contatos com nome vazio/desconhecido (limpeza defensiva)
             self.conn.execute(
@@ -1012,15 +1030,26 @@ class Database:
         return (dict(row).get('creator_uid', '') if row else '') or ''
 
     # Retorna lista de grupos (filtrados por tipo se especificado)
-    def get_groups(self, group_type=None):
+    def get_groups(self, group_type=None, include_archived=False):
+        arch = "" if include_archived else " AND archived=0"
         if group_type:
             rows = self.conn.execute(
-                "SELECT * FROM groups WHERE group_type=? ORDER BY created_at DESC",
+                f"SELECT * FROM groups WHERE group_type=?{arch} ORDER BY created_at DESC",
                 (group_type,)).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM groups ORDER BY created_at DESC").fetchall()
+                f"SELECT * FROM groups WHERE 1=1{arch} ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
+
+    # Arquiva grupo (substitui o DELETE no fluxo normal): o registro fica
+    # no banco para o historico resolver nome e tipo; membros preservados.
+    def archive_group(self, group_id):
+        try:
+            self.conn.execute(
+                "UPDATE groups SET archived=1 WHERE group_id=?", (group_id,))
+            self.conn.commit()
+        except Exception:
+            pass
 
     # Remove grupo do banco (CASCADE deleta membros também)
     def delete_group(self, group_id):

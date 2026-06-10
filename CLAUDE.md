@@ -103,6 +103,26 @@ Apos o build+release, atualizar o changelog no cofre Obsidian:
 Tipos: Major Feature, Feature, Bugfix, Refactor, Build, Docs, UI, Performance, QA, Hotfix, UX
 Emojis: ver legenda no proprio changelog
 
+## Avatar, Recado, Menus modernos, Historico permanente e Backup (v1.8.28)
+
+1. **Editor de foto de perfil (`AvatarCropDialog`, gui.py)**: "Enviar foto" (Preferencias>Conta e janela Conta) abre editor com circulo fixo, arrastar para posicionar e scroll para zoom, no tema do sistema. Salva PNG **512px com mascara alpha CIRCULAR** (cantos transparentes). Nome de arquivo unico por upload (`custom_avatar_<ts>.png`): troca de foto dispara `avatar_changed` no `_save_all` (chave correta: `custom_avatar`) e Cancelar preserva a foto anterior. `_cleanup_old_custom_avatars(keep)` apaga antigas ao aplicar e orfaos no boot. Imagem invalida (ex. HEIC): aviso ao usuario; `wait_window` so roda `if dlg.winfo_exists()` (TclError visto em producao). `grab_set` apos `wait_visibility()` — chamar logo apos `deiconify` lanca "window not viewable" e abortava o `__init__` (janela nunca aparecia).
+
+2. **Nitidez de avatares**: thumbnail de rede **128px JPEG q85** em `_generate_avatar_thumbnail` (messenger). Gerado no BOOT do messenger — basta o peer abrir a versao nova para todos verem nitido. PNG circular e composto sobre BRANCO antes do JPEG (sem franja). `_make_circular_avatar` antialias 3x. Fonte do setor na lista: 10px.
+
+3. **Recado (nota do header)**: visual flat — lapis MDL2 + underline 1px que acende no foco (`#7cb8f0`). Botao emoji e **X de cancelar** so aparecem DURANTE a edicao (FocusIn mostra; FocusOut com `after(200)` + guarda `_note_picker_open` esconde). X/Esc restauram `_last_saved_note` ANTES de tirar o foco — o autosave do `_note_focus_out` ve texto igual e nao propaga nada.
+
+4. **Menus modernos**: "Ferramentas" e "Agendar" usam `_open_modern_menu` (Toplevel overrideredirect no tema, icones MDL2, hover, separador; FocusOut armado com atraso de 120ms — mesmo fix do dropdown do sino). Largura contida na janela principal (nunca passa da borda direita). O tk.Menu nativo foi removido em `_build_ui` E `_rebuild_ui_language`.
+
+5. **Historico de Mensagens**: contatos ordenados por `last_ts` DESC (mais recente no topo — era A-Z); filtro De/Ate sem busca refiltra a LISTA via `get_peers_with_match(date_from, date_to)`; modo Grupos lista TODOS os grupos com mensagens, rotulados **(fixo)** / **(temporario)** / "(encerrado)" para legados sem registro.
+
+6. **HISTORICO PERMANENTE — fix critico**: `cleanup_unknown_contacts` (roda no start) APAGAVA mensagens enviadas a grupos (`to_user='group:...'`) e broadcasts a cada boot (peers inexistentes em contacts/group_members). Query agora exclui `group:%`, `broadcast`, `system`, `all`. **NAO reverter.** Nao existe nenhuma outra poda — historico cresce sem limite.
+
+7. **Grupos persistentes**: `save_group` roda SEMPRE (temp E fixed) no create/invite/recovery de mensagem. Migration: coluna `groups.archived` (default 0). Sair/deletar/kick chama `db.archive_group` (UPDATE archived=1) em vez de DELETE — nome+tipo ficam para o historico. Boot reativa apenas `get_groups('fixed')` com `archived=0` (novo default `include_archived=False`); historico consulta com `include_archived=True`. `INSERT OR REPLACE` do save_group reativa (archived volta ao default 0) quando o usuario re-entra.
+
+8. **Backup/Restauracao integrados (menu Ferramentas)**: `_backup_history` gera zip com o banco copiado pela **API `sqlite3.Connection.backup`** (consistente com o app ABERTO — resolve o problema do WAL) + `user_themes.json` + `avatars/`. `_restore_history` valida o zip e deixa `mbchat_restore.db` na pasta de dados; `main()` faz o swap no boot (apos single-instance check, ANTES de abrir conexoes) apagando `.db/-wal/-shm` antigos. Documentado na landing (`#doc-backup`).
+
+9. **REGRA DE EDICAO DE ARQUIVOS GRANDES**: o Edit tool TRUNCA arquivos grandes (aconteceu 2x: messenger.py e o final de gui.py). Editar gui.py/messenger.py/database.py SEMPRE via script python (ler arquivo -> `.replace()` com assert de unicidade -> `ast.parse` -> gravar com `newline=''`).
+
 ## Blindagem de rede e auto-fix de firewall (v1.4.59)
 
 Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-recuperaveis:
