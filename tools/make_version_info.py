@@ -6,10 +6,10 @@ import sys
 def generate_version_info(output_path=None):
     here = os.path.dirname(os.path.abspath(__file__))
     if output_path is None:
-        output_path = os.path.join(here, 'file_version_info.txt')
+        output_path = os.path.join(os.path.dirname(here), 'file_version_info.txt')
 
     # Le versao de version.py
-    ver_file = os.path.join(here, 'version.py')
+    ver_file = os.path.join(os.path.dirname(here), 'version.py')
     version = '0.0.0'
     with open(ver_file, 'r', encoding='utf-8') as f:
         for line in f:

@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0\.."
 title MB Chat - Teste de VPN Local (Simulador)
 echo =======================================================
 echo      MB Chat - Teste de VPN Local (Simulador)

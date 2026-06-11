@@ -7,6 +7,11 @@ import json
 import threading
 import time
 import sys
+import os
+
+here = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(here) if os.path.basename(here) == 'tests' else here
+sys.path.insert(0, root_dir)
 
 UDP_PORT = 50100
 PASS = []
@@ -26,7 +31,7 @@ def fail(msg, detail=''):
 # ─────────────────────────────────────────────
 def test_fix1_mcast_constant():
     print('\n[Fix 1] MCAST_GRP -> MULTICAST_GROUP no relay')
-    with open('network.py', encoding='utf-8') as f:
+    with open(os.path.join(root_dir, 'network.py'), encoding='utf-8') as f:
         src = f.read()
 
     if 'MCAST_GRP' in src:
@@ -53,7 +58,7 @@ def test_fix1_mcast_constant():
 # ─────────────────────────────────────────────
 def test_fix2_reply_port_source():
     print('\n[Fix 2] Porta da resposta (analise de codigo)')
-    with open('network.py', encoding='utf-8') as f:
+    with open(os.path.join(root_dir, 'network.py'), encoding='utf-8') as f:
         src = f.read()
 
     if 'port=addr[1]' in src:
@@ -182,7 +187,7 @@ def test_fix2_reply_port_behavior():
 # ─────────────────────────────────────────────
 def test_fix3_btns_order():
     print('\n[Fix 3] Ordem de pack do botao Remover (analise de codigo)')
-    with open('gui.py', encoding='utf-8') as f:
+    with open(os.path.join(root_dir, 'gui.py'), encoding='utf-8') as f:
         src = f.read()
 
     import re

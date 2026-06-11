@@ -2,11 +2,14 @@
 # Valida as novas correções de VPN e retransmissão de mensagens.
 # Rodar: python test_vpn_relay.py
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import socket
 import json
 import threading
 import time
-import sys
 from network import UDPDiscovery, TCPClient, MT_ANNOUNCE
 from messenger import Messenger
 from database import Database

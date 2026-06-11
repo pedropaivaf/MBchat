@@ -112,11 +112,11 @@ def _do_build():
         shutil.rmtree(cache_dir)
 
     print('Gerando icone...')
-    from create_icon import save_icon
+    from tools.create_icon import save_icon
     save_icon(ICON)
 
     # Gera VERSIONINFO para reduzir falsos positivos de antivirus
-    from make_version_info import generate_version_info
+    from tools.make_version_info import generate_version_info
     version_info_path = os.path.join(HERE, 'file_version_info.txt')
     generate_version_info(version_info_path)
     manifest_path = os.path.join(HERE, 'MBChat.exe.manifest')
@@ -216,7 +216,7 @@ def _do_installer():
 # do GitHub Releases e executa. Uso: usuario baixa uma vez e sempre que
 # executar pega a versao atual, sem precisar atualizar depois no app.
 def _do_web_installer():
-    stub_src = os.path.join(HERE, 'installer_stub.py')
+    stub_src = os.path.join(HERE, 'tools', 'installer_stub.py')
     if not os.path.isfile(stub_src):
         print('AVISO: installer_stub.py nao encontrado, pulando web installer.')
         return False
