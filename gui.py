@@ -710,6 +710,113 @@ def _make_circular_avatar(img_or_path, size=36, antialias=3):
     return img
 
 
+# Emojis de reacao rapida (1 clique no menu de contexto da mensagem)
+REACTION_EMOJIS = ('\U0001f44d', '\u2705', '\u2764\ufe0f',
+                   '\U0001f602', '\U0001f44f', '\U0001f62e')
+
+
+# Menu de contexto MODERNO de mensagem (estilo WhatsApp): linha de emojis
+# clicaveis no topo (reacao em 1 clique) + itens estilizados no tema.
+# Substitui o tk.Menu nativo cinza. items: [(icone_mdl2, texto, cb, enabled)].
+# on_emoji(char) aplica a reacao. Fecha por clique, Escape ou perda de foco
+# (FocusOut armado com atraso — mesmo fix do dropdown do sino).
+def _show_msg_context_menu(host, x_root, y_root, items, on_emoji):
+    bg     = BG_WHITE
+    fg     = FG_BLACK
+    muted  = FG_GRAY
+    hover  = BG_SELECT
+    border = '#d8dee9'
+    accent = FG_BLUE
+
+    menu = tk.Toplevel(host)
+    menu.withdraw()
+    menu.overrideredirect(True)
+    menu.attributes('-topmost', True)
+
+    outer = tk.Frame(menu, bg=border)
+    outer.pack(fill='both', expand=True)
+    inner = tk.Frame(outer, bg=bg)
+    inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+    def _close(*_a):
+        try:
+            menu.destroy()
+        except Exception:
+            pass
+
+    # Linha de emojis — reacao aplicada com UM clique
+    erow = tk.Frame(inner, bg=bg)
+    erow.pack(fill='x', padx=6, pady=(6, 4))
+    menu._eimgs = []
+    for ch in REACTION_EMOJIS:
+        img = _render_color_emoji(ch, 20)
+        if img:
+            menu._eimgs.append(img)
+            lb = tk.Label(erow, image=img, bg=bg, cursor='hand2',
+                          padx=5, pady=4)
+        else:
+            lb = tk.Label(erow, text=ch, font=('Segoe UI Emoji', 12),
+                          bg=bg, cursor='hand2', padx=4, pady=3)
+        lb.pack(side='left', padx=1)
+        lb.bind('<Enter>', lambda e, w=lb: w.configure(bg=hover))
+        lb.bind('<Leave>', lambda e, w=lb: w.configure(bg=bg))
+        lb.bind('<Button-1>', lambda e, c=ch: (
+            _close(), host.after(10, lambda: on_emoji(c))))
+
+    tk.Frame(inner, bg=border, height=1).pack(fill='x', padx=8, pady=(2, 3))
+
+    for icon_char, text, cb, enabled in items:
+        row = tk.Frame(inner, bg=bg, cursor='hand2' if enabled else 'arrow')
+        row.pack(fill='x')
+        lbl_i = tk.Label(row, text=icon_char,
+                         font=('Segoe MDL2 Assets', 10),
+                         bg=bg, fg=accent if enabled else muted,
+                         width=2, anchor='center')
+        lbl_i.pack(side='left', padx=(10, 2), pady=6)
+        lbl_t = tk.Label(row, text=text, font=('Segoe UI', 9),
+                         bg=bg, fg=fg if enabled else muted, anchor='w')
+        lbl_t.pack(side='left', fill='x', expand=True, padx=(2, 18), pady=6)
+        if not enabled:
+            continue
+        def _enter(e, r=row, li=lbl_i, lt=lbl_t):
+            r.configure(bg=hover)
+            li.configure(bg=hover)
+            lt.configure(bg=hover)
+        def _leave(e, r=row, li=lbl_i, lt=lbl_t):
+            r.configure(bg=bg)
+            li.configure(bg=bg)
+            lt.configure(bg=bg)
+        def _click(e, c=cb):
+            _close()
+            host.after(10, c)
+        for w in (row, lbl_i, lbl_t):
+            w.bind('<Enter>', _enter)
+            w.bind('<Leave>', _leave)
+            w.bind('<Button-1>', _click)
+
+    # Posiciona no ponteiro, clampado na tela (nunca cortado)
+    menu.update_idletasks()
+    mw = menu.winfo_reqwidth()
+    mh = menu.winfo_reqheight()
+    sw = menu.winfo_screenwidth()
+    sh = menu.winfo_screenheight()
+    px = max(0, min(x_root, sw - mw - 4))
+    py = max(0, min(y_root, sh - mh - 4))
+    menu.geometry(f'+{px}+{py}')
+    menu.deiconify()
+    menu.lift()
+    menu.bind('<Escape>', _close)
+    def _arm_focus():
+        try:
+            if menu.winfo_exists():
+                menu.focus_force()
+                menu.bind('<FocusOut>', _close)
+        except Exception:
+            pass
+    menu.after(120, _arm_focus)
+    return menu
+
+
 # Cria um ícone da fonte Segoe MDL2 Assets como PhotoImage tkinter.
 # Versão module-level (sem self) usada fora de classes, por exemplo na janela
 # principal. Para uso dentro de classes, use o método _create_mdl2_icon() da classe.
@@ -4254,6 +4361,10 @@ class ChatWindow(tk.Toplevel):
                                      lmargin1=12, lmargin2=12,
                                      rmargin=40,
                                      spacing1=0, spacing3=4)
+        self.chat_text.tag_configure('reaction_line',
+                                     foreground='#64748b',
+                                     font=('Segoe UI', 9),
+                                     lmargin1=12, spacing1=0, spacing3=2)
 
         try: self.chat_text.tag_raise('sel')
         except tk.TclError: pass
@@ -4371,11 +4482,9 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
         self.bind('<Escape>', self._on_escape_selection, add='+')
 
-        # Menu de contexto no chat (Responder / Copiar / Selecionar)
-        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
-        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
-        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
+        # Menu de contexto moderno da mensagem: emojis de reacao no topo
+        # (1 clique) + Responder/Copiar/Selecionar no tema do sistema.
+        # Construido sob demanda por _show_msg_context_menu.
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -5308,6 +5417,18 @@ class ChatWindow(tk.Toplevel):
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
                                'text': text, 'is_mine': is_mine,
                                'timestamp': timestamp or time.time()})
+        # Insere âncora de reações (inicialmente vazia) com marks para atualização futura
+        if msg_id:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            self.chat_text.insert('end', '\n')
+            pos = self.chat_text.index('end-1c')
+            self.chat_text.mark_set(rmark + '_s', pos)
+            self.chat_text.mark_set(rmark + '_e', pos)
+            self.chat_text.mark_gravity(rmark + '_s', 'left')
+            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            rxns = self.messenger.db.get_reactions(msg_id) if msg_id else {}
+            if rxns:
+                self._render_reaction_mark(msg_id, rxns)
         self.chat_text.insert('end', '\n')   # linha em branco entre mensagens
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
@@ -5474,12 +5595,18 @@ class ChatWindow(tk.Toplevel):
         idx = self.chat_text.index(f'@{event.x},{event.y}')
         self._ctx_click_index = idx
         self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        # "Responder" habilitado para qualquer mensagem (própria ou recebida)
         msg_idx = self._ctx_msg_idx
-        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
-            self._chat_ctx.entryconfigure(0, state='disabled')
-        else:
-            self._chat_ctx.entryconfigure(0, state='normal')
-        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+        has_id = (0 <= msg_idx < len(self._msg_data)
+                  and bool(self._msg_data[msg_idx].get('msg_id')))
+        _show_msg_context_menu(
+            self, event.x_root, event.y_root,
+            items=[
+                ('\uE97A', 'Responder', self._ctx_reply, has_id),
+                ('\uE8C8', 'Copiar', self._ctx_copy, True),
+                ('\uE8B3', 'Selecionar', self._ctx_select, True),
+            ],
+            on_emoji=self._ctx_react)
 
     # Encontra indice da mensagem na posicao da linha clicada
     def _find_msg_at_line(self, click_line):
@@ -5512,6 +5639,39 @@ class ChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    # Contexto: Reagir com emoji à mensagem clicada (chat individual)
+    def _ctx_react(self, emoji):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        msg_id = data.get('msg_id', '')
+        if not msg_id:
+            return
+        try:
+            self.messenger.send_reaction(self.peer_id, msg_id, emoji)
+            rxns = self.messenger.db.get_reactions(msg_id)
+            self._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em _ctx_react')
+
+    # Atualiza linha de reações para msg_id usando marks no Text widget
+    def _render_reaction_mark(self, msg_id, rxns):
+        try:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            ms = rmark + '_s'
+            me = rmark + '_e'
+            if ms not in self.chat_text.mark_names():
+                return
+            self.chat_text.configure(state='normal')
+            self.chat_text.delete(ms, me)
+            if rxns:
+                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
+                self.chat_text.insert(ms, line, 'reaction_line')
+            self.chat_text.configure(state='disabled')
+        except Exception:
+            log.exception('Erro em _render_reaction_mark')
 
     # Contexto: Entra em modo selecao com a mensagem clicada ja marcada
     def _ctx_select(self):
@@ -5900,7 +6060,7 @@ class ChatWindow(tk.Toplevel):
                                  msg_id=local_id, reply_to=reply_to_id)
 
             def _do_send(lid=local_id, cnt=content, rid=reply_to_id):
-                ok, _ = self.messenger.send_message(self.peer_id, cnt, rid)
+                ok, _ = self.messenger.send_message(self.peer_id, cnt, rid, msg_id=lid)
                 self.after(0, lambda: self._update_msg_status(lid, ok))
 
             threading.Thread(target=_do_send, daemon=True).start()
@@ -7639,6 +7799,10 @@ class GroupChatWindow(tk.Toplevel):
                                      rmargin=40,
                                      spacing1=0, spacing3=4)
 
+        self.chat_text.tag_configure('reaction_line',
+                                     foreground='#64748b',
+                                     font=('Segoe UI', 9),
+                                     lmargin1=12, spacing1=0, spacing3=2)
         # Tag para @mencao destacada
         self.chat_text.tag_configure('mention',
                                      foreground='#2451a0',
@@ -7751,11 +7915,9 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
         self.bind('<Escape>', self._on_escape_selection, add='+')
 
-        # Menu de contexto no chat (Responder / Copiar / Selecionar)
-        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
-        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
-        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
+        # Menu de contexto moderno da mensagem: emojis de reacao no topo
+        # (1 clique) + Responder/Copiar/Selecionar no tema do sistema.
+        # Construido sob demanda por _show_msg_context_menu.
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -8745,6 +8907,18 @@ class GroupChatWindow(tk.Toplevel):
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
                                'text': text, 'is_mine': is_mine,
                                'timestamp': timestamp or time.time()})
+        # Âncora de reações do grupo
+        if msg_id:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            self.chat_text.insert('end', '\n')
+            pos = self.chat_text.index('end-1c')
+            self.chat_text.mark_set(rmark + '_s', pos)
+            self.chat_text.mark_set(rmark + '_e', pos)
+            self.chat_text.mark_gravity(rmark + '_s', 'left')
+            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            rxns = self.app.messenger.db.get_reactions(msg_id) if msg_id else {}
+            if rxns:
+                self._render_reaction_mark(msg_id, rxns)
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
@@ -8859,12 +9033,18 @@ class GroupChatWindow(tk.Toplevel):
             self._img_click_handled = False
             return
         self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        # "Responder" habilitado para qualquer mensagem (própria ou recebida)
         msg_idx = self._ctx_msg_idx
-        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
-            self._chat_ctx.entryconfigure(0, state='disabled')
-        else:
-            self._chat_ctx.entryconfigure(0, state='normal')
-        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+        has_id = (0 <= msg_idx < len(self._msg_data)
+                  and bool(self._msg_data[msg_idx].get('msg_id')))
+        _show_msg_context_menu(
+            self, event.x_root, event.y_root,
+            items=[
+                ('\uE97A', 'Responder', self._ctx_reply, has_id),
+                ('\uE8C8', 'Copiar', self._ctx_copy, True),
+                ('\uE8B3', 'Selecionar', self._ctx_select, True),
+            ],
+            on_emoji=self._ctx_react)
 
     def _ctx_reply(self):
         idx = getattr(self, '_ctx_msg_idx', -1)
@@ -8883,6 +9063,39 @@ class GroupChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    # Contexto: Reagir com emoji à mensagem clicada (grupo)
+    def _ctx_react(self, emoji):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        msg_id = data.get('msg_id', '')
+        if not msg_id:
+            return
+        try:
+            self.app.messenger.send_group_reaction(self._group_id, msg_id, emoji)
+            rxns = self.app.messenger.db.get_reactions(msg_id)
+            self._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em GroupChat _ctx_react')
+
+    # Atualiza linha de reações (group) — mesmo mecanismo do chat individual
+    def _render_reaction_mark(self, msg_id, rxns):
+        try:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            ms = rmark + '_s'
+            me = rmark + '_e'
+            if ms not in self.chat_text.mark_names():
+                return
+            self.chat_text.configure(state='normal')
+            self.chat_text.delete(ms, me)
+            if rxns:
+                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
+                self.chat_text.insert(ms, line, 'reaction_line')
+            self.chat_text.configure(state='disabled')
+        except Exception:
+            log.exception('Erro em GroupChat _render_reaction_mark')
 
     def _ctx_select(self):
         idx = getattr(self, '_ctx_msg_idx', -1)
@@ -9546,10 +9759,11 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.delete('1.0', 'end')
         self._entry_img_map.clear()
         if content:
+            local_id = str(uuid.uuid4())
             self._append_message(self.app.messenger.display_name, content, True,
-                                 reply_to=reply_to_id, mentions=mentions)
+                                 reply_to=reply_to_id, mentions=mentions, msg_id=local_id)
             threading.Thread(target=self.app.messenger.send_group_message,
-                             args=(self.group_id, content, reply_to_id, mentions),
+                             args=(self.group_id, content, reply_to_id, mentions, local_id),
                              daemon=True).start()
         if pending_img:
             self._send_clipboard_image(pending_img)
@@ -10049,6 +10263,7 @@ class LanMessengerApp:
             on_group_admin_set=self._safe(self._on_group_admin_set),
             on_group_deleted=self._safe(self._on_group_deleted),
         )
+        self.messenger.on_reaction = self._safe(self._on_reaction)
         self.messenger.start()
         if hasattr(self.messenger, 'discovery'):
             self.messenger.discovery.on_newer_version = self._safe(self._on_newer_version)
@@ -18025,6 +18240,22 @@ class LanMessengerApp:
     def _on_typing(self, from_user, is_typing):
         if from_user in self.chat_windows:                    # janela do remetente aberta?
             self.chat_windows[from_user].set_typing(is_typing)  # atualiza indicador
+
+    # Callback: reação emoji recebida via TCP (MT_REACTION).
+    # Atualiza a linha de reações na janela de chat aberta, se houver.
+    def _on_reaction(self, from_user, msg_id, emoji, added):
+        try:
+            rxns = self.messenger.db.get_reactions(msg_id)
+            # Janelas de chat individual
+            for cw in self.chat_windows.values():
+                if hasattr(cw, '_render_reaction_mark'):
+                    cw._render_reaction_mark(msg_id, rxns)
+            # Janelas de grupo
+            for gw in getattr(self, 'group_windows', {}).values():
+                if hasattr(gw, '_render_reaction_mark'):
+                    gw._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em _on_reaction')
 
     def _on_file_incoming(self, file_id, from_user, display_name,
                           filename, filesize):

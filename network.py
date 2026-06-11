@@ -199,6 +199,7 @@ MT_FILE_CANCEL = 'file_cancel'  # TCP: cancelamento de transferencia
 MT_STATUS = 'status_change'     # TCP: mudanca de status (online/away/busy)
 MT_TYPING = 'typing'            # TCP: indicador de digitacao
 MT_ACK = 'ack'                  # TCP: confirmacao de recebimento de mensagem
+MT_REACTION = 'reaction'         # TCP: reacao emoji em mensagem
 MT_GROUP_INV = 'group_invite'   # TCP: convite para entrar em grupo
 MT_GROUP_MSG = 'group_message'  # TCP: mensagem de texto em grupo (mesh)
 MT_GROUP_LEAVE = 'group_leave'  # TCP: notificacao de saida do grupo

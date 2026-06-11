@@ -344,6 +344,15 @@ class Database:
 
         # Tabela de usuarios bloqueados
         c.executescript("""
+            -- Reações em mensagens (emoji por msg_id por usuário)
+            CREATE TABLE IF NOT EXISTS reactions (
+                msg_id   TEXT NOT NULL,
+                emoji    TEXT NOT NULL,
+                from_user TEXT NOT NULL,
+                ts       REAL NOT NULL,
+                PRIMARY KEY (msg_id, emoji, from_user)
+            );
+
             CREATE TABLE IF NOT EXISTS block_list (
                 user_id TEXT PRIMARY KEY,
                 display_name TEXT DEFAULT '',
@@ -1179,6 +1188,57 @@ class Database:
         row = self.conn.execute(
             "SELECT * FROM messages WHERE msg_id=?", (msg_id,)).fetchone()
         return dict(row) if row else None
+
+    # ========================================
+    # REACTIONS — reações emoji em mensagens
+    # ========================================
+
+    def toggle_reaction(self, msg_id, emoji, from_user):
+        # Retorna True se adicionou, False se removeu (toggle)
+        existing = self.conn.execute(
+            "SELECT 1 FROM reactions WHERE msg_id=? AND emoji=? AND from_user=?",
+            (msg_id, emoji, from_user)).fetchone()
+        if existing:
+            self.conn.execute(
+                "DELETE FROM reactions WHERE msg_id=? AND emoji=? AND from_user=?",
+                (msg_id, emoji, from_user))
+            self.conn.commit()
+            return False
+        else:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO reactions (msg_id, emoji, from_user, ts) VALUES (?,?,?,?)",
+                (msg_id, emoji, from_user, __import__('time').time()))
+            self.conn.commit()
+            return True
+
+    def get_reactions(self, msg_id):
+        # Retorna {emoji: [from_user, ...]} para o msg_id dado
+        rows = self.conn.execute(
+            "SELECT emoji, from_user FROM reactions WHERE msg_id=? ORDER BY ts",
+            (msg_id,)).fetchall()
+        result = {}
+        for emoji, from_user in rows:
+            result.setdefault(emoji, []).append(from_user)
+        return result
+
+    def get_reactions_batch(self, msg_ids):
+        # Retorna {msg_id: {emoji: [users]}} para múltiplos msg_ids
+        if not msg_ids:
+            return {}
+        placeholders = ','.join('?' * len(msg_ids))
+        rows = self.conn.execute(
+            f"SELECT msg_id, emoji, from_user FROM reactions WHERE msg_id IN ({placeholders}) ORDER BY ts",
+            list(msg_ids)).fetchall()
+        result = {}
+        for msg_id, emoji, from_user in rows:
+            result.setdefault(msg_id, {}).setdefault(emoji, []).append(from_user)
+        return result
+
+    def remove_reaction(self, msg_id, emoji, from_user):
+        self.conn.execute(
+            "DELETE FROM reactions WHERE msg_id=? AND emoji=? AND from_user=?",
+            (msg_id, emoji, from_user))
+        self.conn.commit()
 
     # ========================================
     # CONTACTS — department, private_note

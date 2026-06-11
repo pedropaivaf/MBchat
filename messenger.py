@@ -23,7 +23,7 @@ from network import (
     UDPDiscovery, TCPServer, TCPClient, FileSender, FileReceiver,
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
-    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
+    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK, MT_REACTION,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
     MT_GROUP_ADMIN_SET, MT_GROUP_DELETE,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
@@ -84,6 +84,7 @@ class Messenger:
         self.on_message = on_message            # Mensagem recebida
         self.on_status = on_status              # Status mudou
         self.on_typing = on_typing              # Indicador de digitacao
+        self.on_reaction = None                     # Callback(from_user, msg_id, emoji, added)
         self.on_file_incoming = on_file_incoming  # Arquivo chegando
         self.on_file_progress = on_file_progress  # Progresso do arquivo
         self.on_file_complete = on_file_complete  # Arquivo completo
@@ -466,6 +467,20 @@ class Messenger:
         elif msg_type == MT_TYPING:
             if self.on_typing:
                 self.on_typing(from_user, msg.get('is_typing', False))
+
+        # --- Reacao emoji ---
+        elif msg_type == MT_REACTION:
+            r_msg_id = msg.get('msg_id', '')
+            r_emoji  = msg.get('emoji', '')
+            r_remove = msg.get('remove', False)
+            if r_msg_id and r_emoji:
+                if r_remove:
+                    self.db.remove_reaction(r_msg_id, r_emoji, from_user)
+                    added = False
+                else:
+                    added = self.db.toggle_reaction(r_msg_id, r_emoji, from_user)
+                if self.on_reaction:
+                    self.on_reaction(from_user, r_msg_id, r_emoji, not r_remove and added)
 
         # --- Mudanca de status ---
         elif msg_type == MT_STATUS:
@@ -963,12 +978,12 @@ class Messenger:
     # to_user_id: user_id do destinatario
     # content: Texto da mensagem
     # Retorna True se enviou com sucesso, False se falhou
-    def send_message(self, to_user_id, content, reply_to_id='', is_broadcast=False):
+    def send_message(self, to_user_id, content, reply_to_id='', is_broadcast=False, msg_id=None):
         contact = self.db.get_contact(to_user_id)
         if not contact:
             return False, None
 
-        msg_id = self._next_msg_id()
+        msg_id = msg_id or self._next_msg_id()
         timestamp = time.time()
 
         self.db.save_message(msg_id, self.user_id, to_user_id,
@@ -1067,6 +1082,58 @@ class Messenger:
         return path
 
     # Envia indicador de digitacao para um peer
+    def send_reaction(self, to_user_id, msg_id, emoji, remove=False):
+        # Envia reacao (ou remoção) para um peer ou grupo
+        # Persiste localmente e propaga via TCP
+        local_uid = self.user_id
+        if remove:
+            self.db.remove_reaction(msg_id, emoji, local_uid)
+            added = False
+        else:
+            added = self.db.toggle_reaction(msg_id, emoji, local_uid)
+        payload = {
+            'type': MT_REACTION,
+            'from_user': local_uid,
+            'msg_id': msg_id,
+            'emoji': emoji,
+            'remove': not added,
+        }
+        peer_info = self.discovery.peers.get(to_user_id, {})
+        peer_ip   = peer_info.get('ip', '')
+        if peer_ip:
+            try:
+                TCPClient.send_message(peer_ip, TCP_PORT, payload)
+            except Exception:
+                pass
+        return added
+
+    def send_group_reaction(self, group_id, msg_id, emoji, remove=False):
+        # Envia reacao para todos os membros do grupo
+        local_uid = self.user_id
+        if remove:
+            self.db.remove_reaction(msg_id, emoji, local_uid)
+            added = False
+        else:
+            added = self.db.toggle_reaction(msg_id, emoji, local_uid)
+        group = self._groups.get(group_id)
+        if not group:
+            return added
+        payload = {
+            'type': MT_REACTION,
+            'from_user': local_uid,
+            'msg_id': msg_id,
+            'emoji': emoji,
+            'remove': not added,
+        }
+        for member in group['members']:
+            if member['uid'] == local_uid:
+                continue
+            try:
+                TCPClient.send_message(member['ip'], TCP_PORT, payload)
+            except Exception:
+                pass
+        return added
+
     def send_typing(self, to_user_id, is_typing=True):
         contact = self.db.get_contact(to_user_id)
         if not contact:
@@ -1436,12 +1503,12 @@ class Messenger:
     # Usa mesh: cada membro envia diretamente para todos os outros
     # Nao ha servidor central intermediando
     def send_group_message(self, group_id, content, reply_to_id='',
-                           mentions=None):
+                           mentions=None, msg_id=None):
         group = self._groups.get(group_id)
         if not group:
             return
         timestamp = time.time()
-        msg_id = self._next_msg_id()
+        msg_id = msg_id or self._next_msg_id()
 
         # Persiste a mensagem enviada no historico local do grupo
         try:
