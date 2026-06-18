@@ -408,8 +408,8 @@
         .docs-topbar-arrow svg { width: 18px; height: 18px; }
 
         .docs-topbar-inner {
-            max-width: 900px;
-            margin: 0 auto;
+            max-width: none;
+            margin: 0;
             display: flex;
             gap: 0;
             padding: 0 2rem;
@@ -458,8 +458,8 @@
         }
 
         .docs-container {
-            max-width: 900px;
-            margin: 0 auto;
+            max-width: none;
+            margin: 0;
             padding: 0 2rem 4rem;
         }
 
@@ -1386,6 +1386,17 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
         rightBtn.addEventListener('click', () => scrollByStep(1));
         inner.addEventListener('scroll', updateArrows, { passive: true });
         window.addEventListener('resize', updateArrows);
+
+        // Roda do mouse sobre a barra de abas = rolagem horizontal das abas.
+        // So intercepta se houver overflow; fora disso a pagina rola normal.
+        inner.addEventListener('wheel', (e) => {
+            if (inner.scrollWidth <= inner.clientWidth) return;
+            const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+            if (!delta) return;
+            e.preventDefault();
+            inner.scrollLeft += delta;
+            updateArrows();
+        }, { passive: false });
         // Checa inicialmente após render
         setTimeout(updateArrows, 100);
         setTimeout(updateArrows, 500);
