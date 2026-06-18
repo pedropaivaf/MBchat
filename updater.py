@@ -170,7 +170,10 @@ def apply_update(staging_dir, **kwargs):
     # kwargs aceita show_ui para compat com chamadas antigas (ignorado).
     if not staging_dir or not os.path.isdir(staging_dir):
         log.error(f'apply_update: staging_dir invalido: {staging_dir!r}')
-        return
+        # Marcador aponta para staging que sumiu/corrompeu: limpa para nao
+        # travar o boot num loop que nunca abre a GUI.
+        clear_update_pending()
+        return False
     target_exe = _get_long_path(sys.executable)
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
@@ -312,18 +315,31 @@ if (-not $launched) {{
 Start-Sleep -Seconds 2
 Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '''
-    with open(ps_path, 'w', encoding='utf-8') as f:
-        f.write(ps_content)
+    try:
+        with open(ps_path, 'w', encoding='utf-8') as f:
+            f.write(ps_content)
+    except Exception as e:
+        log.error(f'apply_update: falha ao escrever {ps_path}: {e}')
+        return False
 
-    CREATE_NO_WINDOW = 0x08000000
-    subprocess.Popen(
-        ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=CREATE_NO_WINDOW)
+    if not os.path.isfile(ps_path):
+        log.error('apply_update: update.ps1 nao foi criado, abortando.')
+        return False
+
+    try:
+        CREATE_NO_WINDOW = 0x08000000
+        subprocess.Popen(
+            ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW)
+    except Exception as e:
+        log.error(f'apply_update: falha ao lancar PowerShell: {e}')
+        return False
 
     log.info('Update script lancado, encerrando app...')
+    return True
 
 
 def check_update_async(callback):
@@ -356,4 +372,17 @@ def is_update_pending():
         except Exception:
             return None
     return None
+
+
+def clear_update_pending():
+    # Remove o marcador de update pendente. Usado quando o staging e invalido
+    # para evitar loop de boot que nunca abre a GUI (app "nao reabre").
+    pending_file = os.path.join(_UPDATE_DIR, 'update_pending.txt')
+    try:
+        if os.path.exists(pending_file):
+            os.remove(pending_file)
+        return True
+    except Exception as e:
+        log.error(f'Falha ao limpar update_pending: {e}')
+        return False
 

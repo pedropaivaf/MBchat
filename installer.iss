@@ -43,11 +43,18 @@ Type: filesandordirs; Name: "{localappdata}\Programs\MBChat"
 Type: filesandordirs; Name: "{userappdata}\MBChat\_internal"
 Type: filesandordirs; Name: "{userdesktop}\_internal"
 Type: filesandordirs; Name: "{commondesktop}\_internal"
-; Resquicios de update (zip, staging, scripts PS) — NAO mexer no log nem no DB
+; _internal do install atual (Program Files) — apaga ANTES de copiar para garantir
+; pasta limpa sem DLLs/pyd orfas de versoes antigas. Roda apos UninstallPreviousVersion
+; e antes de [Files]. O processo ja foi morto em CurStepChanged(ssInstall).
+Type: filesandordirs; Name: "{app}\_internal"
+; Resquicios de update (zip, staging, scripts PS, exes parciais) — NAO mexer no DB (.mbchat)
 Type: filesandordirs; Name: "{userappdata}\MBChat\update_staging"
 Type: files; Name: "{userappdata}\MBChat\MBChat_update.zip"
 Type: files; Name: "{userappdata}\MBChat\update.ps1"
 Type: files; Name: "{userappdata}\MBChat\update_pending.txt"
+Type: files; Name: "{userappdata}\MBChat\MBChat_old.exe"
+Type: files; Name: "{userappdata}\MBChat\MBChat_backup.exe"
+Type: files; Name: "{userappdata}\MBChat\update.bat"
 ; Atalhos antigos em lugares variados (lnk sem grupo MB Chat)
 Type: files; Name: "{userdesktop}\MB Chat.lnk"
 Type: files; Name: "{userdesktop}\MBChat.lnk"
@@ -130,7 +137,17 @@ var
 begin
   UninstallerPath := GetUninstallerPath();
   if (UninstallerPath = '') or (not FileExists(UninstallerPath)) then
+  begin
+    // Entrada de registro orfa (aponta para unins000.exe inexistente): limpa para
+    // nao deixar cruft que confunde reinstalacoes futuras. No-op se nao existir.
+    RegDeleteKeyIncludingSubkeys(HKEY_LOCAL_MACHINE,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
+    RegDeleteKeyIncludingSubkeys(HKEY_LOCAL_MACHINE,
+      'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
     Exit;
+  end;
 
   // Roda uninstaller anterior 100% silencioso. /NORESTART nunca reinicia,
   // /SUPPRESSMSGBOXES suprime o dialog "manter historico?" (assume manter).
@@ -155,10 +172,15 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   CachePath, DataPath: string;
   Choice: Integer;
-  KeepData: Boolean;
+  KeepData, IsSilent: Boolean;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
+    // Durante o uninstall a funcao correta e UninstallSilent(). WizardSilent()
+    // so existe no Setup e dispara "Cannot call WizardSilent function during
+    // Uninstall", abortando a procedure antes da limpeza/pergunta de dados.
+    IsSilent := UninstallSilent();
+
     RegDeleteValue(HKEY_CURRENT_USER,
       'Software\Microsoft\Windows\CurrentVersion\Run', 'MBChat');
 
@@ -170,12 +192,15 @@ begin
     CachePath := ExpandConstant('{userappdata}\MBChat');
     DataPath  := ExpandConstant('{userappdata}\.mbchat');
 
+    // Blindagem: qualquer erro aqui nao pode abortar a procedure deixando a
+    // limpeza/pergunta de dados pela metade (uninstall ja removeu os binarios).
+    try
     if DirExists(CachePath) or DirExists(DataPath) then
     begin
       // Quando rodado em modo silencioso pelo novo installer (/SUPPRESSMSGBOXES),
       // assume manter dados — sem dialog.
       KeepData := True;
-      if not WizardSilent() then
+      if not IsSilent then
       begin
         Choice := MsgBox(
           'O que deseja fazer com seus dados?' + #13#10 + #13#10 +
@@ -212,6 +237,9 @@ begin
         if DirExists(DataPath) then
           DelTree(DataPath, True, True, True);
       end;
+    end;
+    except
+      // Engole qualquer erro — nao travar a desinstalacao com popup.
     end;
   end;
 end;

@@ -18859,7 +18859,9 @@ class LanMessengerApp:
             pending = updater.is_update_pending()
             if pending:
                 log.info("Aplicando update via PowerShell no encerramento...")
-                updater.apply_update(pending)
+                if not updater.apply_update(pending):
+                    updater.clear_update_pending()
+                    log.warning("Update pendente invalido no encerramento — limpo")
         except Exception as e:
             log.error(f"Falha ao acionar script de update no encerramento: {e}")
             
@@ -19330,8 +19332,13 @@ def main():
         pending_update_dir = updater.is_update_pending()
         if pending_update_dir:
             log.info(f"Aplicando update pendente no boot: {pending_update_dir}")
-            updater.apply_update(pending_update_dir)
-            os._exit(0)
+            if updater.apply_update(pending_update_dir):
+                os._exit(0)
+            else:
+                # Staging invalido/falhou: limpa o pending e SEGUE o boot normal.
+                # Nunca travar a abertura do app por um update pendente quebrado.
+                updater.clear_update_pending()
+                log.warning("Update pendente invalido — limpo; abrindo app normal")
     except Exception as e:
         log.error(f"Erro ao verificar update_pending no boot: {e}")
 
