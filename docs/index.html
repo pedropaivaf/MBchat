@@ -870,48 +870,111 @@
 
         <div class="docs-section fade-in" id="doc-banco">
             <h3>Banco de Dados</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat usa <strong>SQLite local em cada máquina</strong> — não há servidor central nem banco compartilhado. Cada PC guarda o próprio histórico, contatos e configurações. O banco roda em modo <strong>WAL (Write-Ahead Logging)</strong>, que permite leituras e escritas simultâneas com segurança e desempenho.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Motor e arquivos</h4>
             <table class="docs-table">
                 <thead>
-                    <tr>
-                        <th>Tabela</th>
-                        <th>Conteúdo</th>
-                    </tr>
+                    <tr><th>Item</th><th>Valor</th></tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td><code>messages</code></td>
-                        <td>Histórico de mensagens (texto, imagens, arquivos)</td>
-                    </tr>
-                    <tr>
-                        <td><code>contacts</code></td>
-                        <td>Contatos conhecidos (nome, IP, status, departamento)</td>
-                    </tr>
-                    <tr>
-                        <td><code>groups</code></td>
-                        <td>Grupos criados (nome, tipo, membros)</td>
-                    </tr>
-                    <tr>
-                        <td><code>group_members</code></td>
-                        <td>Membros de cada grupo</td>
-                    </tr>
-                    <tr>
-                        <td><code>reminders</code></td>
-                        <td>Lembretes (simples e programados)</td>
-                    </tr>
-                    <tr>
-                        <td><code>file_transfers</code></td>
-                        <td>Histórico de transferências de arquivos</td>
-                    </tr>
-                    <tr>
-                        <td><code>settings</code></td>
-                        <td>Preferências do usuário (tema, alertas, rede)</td>
-                    </tr>
-                    <tr>
-                        <td><code>polls / poll_votes</code></td>
-                        <td>Enquetes de grupo e votos</td>
-                    </tr>
+                    <tr><td>Motor</td><td>SQLite 3 (embutido no app, sem instalação)</td></tr>
+                    <tr><td>Banco principal</td><td><code>%APPDATA%\.mbchat\mbchat.db</code></td></tr>
+                    <tr><td>Write-Ahead Log</td><td><code>%APPDATA%\.mbchat\mbchat.db-wal</code></td></tr>
+                    <tr><td>Shared memory</td><td><code>%APPDATA%\.mbchat\mbchat.db-shm</code></td></tr>
+                    <tr><td>Temas personalizados</td><td><code>%APPDATA%\.mbchat\user_themes.json</code></td></tr>
                 </tbody>
             </table>
+            <div class="docs-note" style="border-left-color: #e0a800;">
+                <strong>⚠️ Os três arquivos <code>.db</code> + <code>.db-wal</code> + <code>.db-shm</code> são uma unidade atômica do WAL.</strong> Ao fazer backup manual (copiando arquivos), salve os três juntos — copiar só o <code>.db</code> com o app aberto pode resultar em banco incompleto ou corrompido. O <strong>Backup pelo próprio app</strong> (Ferramentas &gt; Backup do histórico) resolve isso usando a API de cópia consistente do SQLite. Veja <a href="#doc-backup">Backup e Restauração</a>.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Padrões do esquema (convenções)</h4>
+            <ul style="color: var(--gray-400); font-size: 0.9rem; line-height: 1.7; padding-left: 1.2rem;">
+                <li><strong>Migrações aditivas:</strong> colunas novas entram via <code>ALTER TABLE ... ADD COLUMN</code> protegido por <code>try/except</code> — nunca apagam dados nem quebram bancos antigos. Tabelas usam <code>CREATE TABLE IF NOT EXISTS</code>.</li>
+                <li><strong>Timestamps:</strong> sempre <code>REAL</code> (epoch Unix em segundos, ex.: <code>timestamp</code>, <code>created_at</code>, <code>remind_at</code>).</li>
+                <li><strong>Booleanos:</strong> <code>INTEGER</code> 0/1 (ex.: <code>is_sent</code>, <code>is_read</code>, <code>archived</code>, <code>completed</code>).</li>
+                <li><strong>Listas/estruturas:</strong> guardadas como <code>TEXT</code> em JSON (ex.: <code>polls.options</code>, <code>reminders.invited_uids</code>).</li>
+                <li><strong>Identidade:</strong> o <code>user_id</code> do usuário é <strong>persistente</strong> (salvo em <code>local_user</code>) — não muda ao trocar de Wi-Fi para Ethernet, evitando histórico fragmentado e usuários fantasmas.</li>
+                <li><strong>SQL parametrizado:</strong> todas as queries usam <code>?</code> (nunca concatenação de strings) — sem injeção de SQL.</li>
+                <li><strong>Histórico permanente:</strong> mensagens nunca são podadas (cresce sem limite). Grupos encerrados são <strong>arquivados</strong> (<code>archived=1</code>), não apagados, para preservar nome e tipo no histórico.</li>
+            </ul>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Conexão e PRAGMAs</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 0.6rem;">
+                Cada thread tem a própria conexão (<code>threading.local</code>), aberta com:
+            </p>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.82rem;overflow-x:auto;"><code>PRAGMA journal_mode=WAL      -- leituras simultâneas a escritas
+PRAGMA busy_timeout=30000    -- aguarda até 30s se o banco estiver ocupado
+PRAGMA foreign_keys=ON       -- integridade referencial ativa</code></pre>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Tabelas</h4>
+            <table class="docs-table">
+                <thead>
+                    <tr><th>Tabela</th><th>Colunas principais</th><th>Conteúdo</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>local_user</code></td><td>user_id, display_name, status, note, ramal, avatar_index</td><td>Identidade do usuário local (singleton id=1, user_id persistente)</td></tr>
+                    <tr><td><code>contacts</code></td><td>user_id (PK), display_name, ip_address, hostname, status, department, ramal, avatar_data</td><td>Peers conhecidos na rede</td></tr>
+                    <tr><td><code>messages</code></td><td>id (PK), msg_id, from_user, to_user, content, msg_type, timestamp, is_sent, is_read, reply_to_id, file_path</td><td>Histórico completo (texto, imagens, arquivos, sistema). Índices por usuários e por tempo</td></tr>
+                    <tr><td><code>file_transfers</code></td><td>file_id (UNIQUE), from_user, to_user, filename, filepath, filesize, status, progress, timestamp</td><td>Histórico de transferências (enviadas e recebidas)</td></tr>
+                    <tr><td><code>settings</code></td><td>key (PK), value</td><td>Preferências chave-valor (tema, alertas, rede, VPN, etc.)</td></tr>
+                    <tr><td><code>groups</code></td><td>group_id (PK), name, group_type (temp/fixed), creator_uid, archived</td><td>Grupos de chat (arquivados em vez de apagados)</td></tr>
+                    <tr><td><code>group_members</code></td><td>group_id, uid, display_name, ip, is_admin</td><td>Membros de cada grupo (chave composta group_id+uid)</td></tr>
+                    <tr><td><code>reactions</code></td><td>msg_id, emoji, from_user, ts</td><td>Reações emoji por mensagem e usuário</td></tr>
+                    <tr><td><code>polls</code> / <code>poll_votes</code></td><td>poll_id, group_id, question, options (JSON) / voter_uid, option_index</td><td>Enquetes de grupo e votos</td></tr>
+                    <tr><td><code>reminders</code></td><td>id (PK), text, remind_at, completed, recurrence_rule, share_status, invited_uids (JSON)</td><td>Lembretes pessoais, recorrentes e compartilhados</td></tr>
+                    <tr><td><code>manual_peers</code></td><td>ip (PK), note, created_at</td><td>Peers fora da LAN (VPN/Tailscale). Vazio = zero overhead na LAN</td></tr>
+                    <tr><td><code>block_list</code></td><td>user_id (PK), display_name, ip_address, blocked_at</td><td>Usuários bloqueados</td></tr>
+                    <tr><td><code>rooms</code></td><td>id (PK), name</td><td>Salas de reunião (Sala de Vidro, Marcus Barra, Certificado Digital)</td></tr>
+                    <tr><td><code>bookings</code></td><td>booking_id (PK), room_id (FK), title, creator_uid, start_ts, end_ts, status, is_deleted</td><td>Reservas de sala (Agendar &gt; Reunião). Índice por sala+horário</td></tr>
+                    <tr><td><code>booking_participants</code></td><td>booking_id (FK), uid, display_name, response</td><td>Convidados de cada reserva (UNIQUE booking_id+uid)</td></tr>
+                </tbody>
+            </table>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Esquema canônico (DDL das tabelas centrais)</h4>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.8rem;overflow-x:auto;"><code>CREATE TABLE IF NOT EXISTS local_user (
+    id INTEGER PRIMARY KEY CHECK (id = 1),   -- singleton
+    user_id TEXT NOT NULL,                    -- persistente (MAC+hostname)
+    display_name TEXT NOT NULL,
+    status TEXT DEFAULT 'online',
+    note TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    user_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    status TEXT DEFAULT 'offline',
+    last_seen REAL NOT NULL,
+    first_seen REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    msg_id TEXT NOT NULL,
+    from_user TEXT NOT NULL,
+    to_user TEXT NOT NULL,        -- user_id, 'group:...', 'broadcast'
+    content TEXT NOT NULL,
+    msg_type TEXT DEFAULT 'text', -- text | file | system
+    timestamp REAL NOT NULL,
+    is_sent INTEGER DEFAULT 0,
+    is_read INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_messages_users ON messages(from_user, to_user);
+CREATE INDEX IF NOT EXISTS idx_messages_time  ON messages(timestamp);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);</code></pre>
+            <div class="docs-note" style="margin-top: 1rem;">
+                <strong>Resumo do que importa:</strong> banco SQLite por máquina, em <code>%APPDATA%\.mbchat\</code>, modo WAL (3 arquivos atômicos), esquema evolui só por migrações aditivas, histórico permanente sem poda. O instalador oficial <strong>nunca toca</strong> nessa pasta — seus dados sobrevivem a updates e reinstalações.
+            </div>
         </div>
 
         <div class="docs-section fade-in" id="doc-portas">
