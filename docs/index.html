@@ -1231,6 +1231,9 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
             <div class="docs-note">
                 <strong>Dica:</strong> Ao desinstalar pelo Painel de Controle, escolha "SIM" para manter o histórico ou "NÃO" para apagar tudo automaticamente. A limpeza manual só é necessária se a desinstalação falhar ou se quiser remover absolutamente todos os rastros.
             </div>
+            <div class="docs-note" style="border-left-color: #e0a800;">
+                <strong>⚠️ Atenção — Revo Uninstaller e desinstaladores de terceiros:</strong> o desinstalador oficial do MB Chat <strong>preserva</strong> a pasta de dados <code>%APPDATA%\.mbchat\</code> (banco e histórico) quando você escolhe "SIM" para manter os dados — e a reinstalação posterior recupera tudo automaticamente. Já o <strong>Revo Uninstaller no modo Avançado</strong> varre o disco por arquivos "órfãos" e pode <strong>apagar essa pasta mesmo sem ela fazer parte do instalador</strong>, destruindo o histórico de forma irreversível. Se for usar o Revo, utilize sempre o modo <strong>Moderado</strong>. Em qualquer caso, faça um backup antes pelo próprio app em <strong>Ferramentas &gt; Backup do histórico...</strong> (veja <a href="#doc-backup">Backup e Restauração</a>).
+            </div>
         </div>
 
     </div><!-- docs-container -->
