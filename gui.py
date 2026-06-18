@@ -4372,6 +4372,7 @@ class ChatWindow(tk.Toplevel):
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text, is_mine}]
         self._msg_ranges_idx = []  # [(start_idx, end_idx)] por mensagem (para tag msg_N)
+        self._msg_hit_idx = []  # [(hit_start, end)] inclui a citacao — hit-test do clique
         self._img_click_handled = False
         self._link_counter = 0
 
@@ -5315,6 +5316,8 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.configure(state='disabled')
             return
 
+        # Topo do balao (antes da citacao) — usado no hit-test do clique direito
+        bubble_start = self.chat_text.index('end-1c')
         # Renderiza quote de reply se houver
         if reply_to:
             orig = self.messenger.db.get_message_by_id(reply_to)
@@ -5385,7 +5388,7 @@ class ChatWindow(tk.Toplevel):
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(header_start),
+                               self.chat_text.index(bubble_start),
                                self.chat_text.index(f'{body_end}'))
         start_mark = f'mstart_{n}'
         end_mark = f'mend_{n}'
@@ -5394,6 +5397,12 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.mark_gravity(start_mark, 'left')
         self.chat_text.mark_gravity(end_mark, 'right')
         self._msg_ranges_idx.append((start_mark, end_mark))
+        # Hit-test inclui a citacao (topo do balao) para que clicar numa
+        # mensagem-resposta resolva nela mesma — habilita "Responder".
+        hit_mark = f'hstart_{n}'
+        self.chat_text.mark_set(hit_mark, bubble_start)
+        self.chat_text.mark_gravity(hit_mark, 'left')
+        self._msg_hit_idx.append((hit_mark, end_mark))
         self.chat_text.tag_bind(msg_tag_name, '<Enter>',
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
@@ -5817,9 +5826,10 @@ class ChatWindow(tk.Toplevel):
         return self._find_msg_idx_at_index(click_idx)
 
     def _find_msg_idx_at_index(self, click_idx):
-        # Procura a ultima mensagem cujo start_mark esta <= click_idx
+        # Procura a ultima mensagem cujo start_mark esta <= click_idx.
+        # Usa _msg_hit_idx (inclui a citacao) p/ responder mensagens-resposta.
         best = -1
-        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+        for i, (sm, em) in enumerate(self._msg_hit_idx):
             try:
                 s = self.chat_text.index(sm)
                 e = self.chat_text.index(em)
@@ -7885,6 +7895,7 @@ class GroupChatWindow(tk.Toplevel):
 
         # Estado de copy-hover + selection mode (mesmo padrao da ChatWindow)
         self._msg_ranges_idx = []
+        self._msg_hit_idx = []  # [(hit_start, end)] inclui a citacao — hit-test do clique
         self._link_counter = 0
         self._selection_mode = False
         self._selection_set = set()
@@ -8825,6 +8836,8 @@ class GroupChatWindow(tk.Toplevel):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
 
+        # Topo do balao (antes da citacao) — usado no hit-test do clique direito
+        bubble_start = self.chat_text.index('end-1c')
         # Renderiza quote de reply
         if reply_to:
             orig = self.app.messenger.db.get_message_by_id(reply_to)
@@ -8877,7 +8890,7 @@ class GroupChatWindow(tk.Toplevel):
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(header_start),
+                               self.chat_text.index(bubble_start),
                                self.chat_text.index(body_end))
         start_mark = f'gmstart_{n}'
         end_mark = f'gmend_{n}'
@@ -8886,6 +8899,12 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.mark_gravity(start_mark, 'left')
         self.chat_text.mark_gravity(end_mark, 'right')
         self._msg_ranges_idx.append((start_mark, end_mark))
+        # Hit-test inclui a citacao (topo do balao) — habilita "Responder"
+        # em mensagens-resposta no grupo.
+        hit_mark = f'ghstart_{n}'
+        self.chat_text.mark_set(hit_mark, bubble_start)
+        self.chat_text.mark_gravity(hit_mark, 'left')
+        self._msg_hit_idx.append((hit_mark, end_mark))
         self.chat_text.tag_bind(msg_tag_name, '<Enter>',
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
@@ -9224,8 +9243,9 @@ class GroupChatWindow(tk.Toplevel):
         return self._find_msg_idx_at_index(click_idx)
 
     def _find_msg_idx_at_index(self, click_idx):
+        # Usa _msg_hit_idx (inclui a citacao) p/ responder mensagens-resposta.
         best = -1
-        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+        for i, (sm, em) in enumerate(self._msg_hit_idx):
             try:
                 s = self.chat_text.index(sm)
                 e = self.chat_text.index(em)
