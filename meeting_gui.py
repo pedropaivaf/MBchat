@@ -1629,7 +1629,7 @@ class MeetingWindow(tk.Toplevel):
 
     def _center(self):
         self.update_idletasks()
-        w, h = 1060, 660
+        w, h = 1060, 720
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         x = (sw - w) // 2

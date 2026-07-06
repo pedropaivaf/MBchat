@@ -99,26 +99,10 @@ Type: dirifempty; Name: "{app}"
 // anterior em modo silencioso, garantindo que nao sobre nada antes de instalar a nova.
 // Roda em ssInstall (antes dos arquivos serem copiados), ignora erros para nao bloquear
 // a instalacao se nao houver versao anterior.
-function GetUninstallerPath(): string;
-var
-  Key1, Key2, Path: string;
-begin
-  Result := '';
-  // Inno Setup AppId formato no registro: {AppId}_is1
-  Key1 := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1';
-  Key2 := 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1';
-
-  if RegQueryStringValue(HKEY_LOCAL_MACHINE, Key1, 'UninstallString', Path) then
-    Result := Path
-  else if RegQueryStringValue(HKEY_LOCAL_MACHINE, Key2, 'UninstallString', Path) then
-    Result := Path
-  else if RegQueryStringValue(HKEY_CURRENT_USER, Key1, 'UninstallString', Path) then
-    Result := Path;
-
-  // Remove aspas se vier com elas (o Inno salva entre aspas no registro)
-  if (Length(Result) >= 2) and (Result[1] = '"') then
-    Result := Copy(Result, 2, Length(Result) - 2);
-end;
+// GetUninstallerPath e UninstallPreviousVersion foram removidos.
+// O Inno Setup cuida de sobrescrever os arquivos sozinho sem precisar rodar
+// o desinstalador antigo. Isso previne que bugs de versões antigas travem
+// o processo de atualização.
 
 procedure KillMBChatProcesses();
 var
@@ -130,40 +114,10 @@ begin
   Sleep(800);
 end;
 
-procedure UninstallPreviousVersion();
-var
-  UninstallerPath: string;
-  ResultCode: Integer;
-begin
-  UninstallerPath := GetUninstallerPath();
-  if (UninstallerPath = '') or (not FileExists(UninstallerPath)) then
-  begin
-    // Entrada de registro orfa (aponta para unins000.exe inexistente): limpa para
-    // nao deixar cruft que confunde reinstalacoes futuras. No-op se nao existir.
-    RegDeleteKeyIncludingSubkeys(HKEY_LOCAL_MACHINE,
-      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
-    RegDeleteKeyIncludingSubkeys(HKEY_LOCAL_MACHINE,
-      'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
-    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER,
-      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1');
-    Exit;
-  end;
-
-  // Roda uninstaller anterior 100% silencioso. /NORESTART nunca reinicia,
-  // /SUPPRESSMSGBOXES suprime o dialog "manter historico?" (assume manter).
-  Exec(UninstallerPath,
-    '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPDATA',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(1500);
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
-    KillMBChatProcesses();
-    UninstallPreviousVersion();
-    // Mata de novo apos uninstall (caso o uninstaller tenha relancado algo)
     KillMBChatProcesses();
   end;
 end;

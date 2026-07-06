@@ -10589,6 +10589,16 @@ class LanMessengerApp:
             dst_conn = _sq.connect(tmp_db)
             with dst_conn:
                 src_conn.backup(dst_conn)
+            
+            # Gera um novo user_id para o backup, prevenindo clonagem de identidade
+            # quando restaurado em outro computador.
+            try:
+                from messenger import generate_user_id
+                dst_conn.execute("UPDATE local_user SET user_id = ?", (generate_user_id(),))
+                dst_conn.commit()
+            except Exception as e:
+                log.warning(f"Erro ao renovar user_id no backup: {e}")
+                
             dst_conn.close()
             src_conn.close()
             with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
