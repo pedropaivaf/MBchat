@@ -23,7 +23,7 @@ from network import (
     UDPDiscovery, TCPServer, TCPClient, FileSender, FileReceiver,
     generate_user_id, get_local_ip, get_machine_info,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
-    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK,
+    MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK, MT_REACTION,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
     MT_GROUP_ADMIN_SET, MT_GROUP_DELETE,
     MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
@@ -85,6 +85,7 @@ class Messenger:
         self.on_message = on_message            # Mensagem recebida
         self.on_status = on_status              # Status mudou
         self.on_typing = on_typing              # Indicador de digitacao
+        self.on_reaction = None                     # Callback(from_user, msg_id, emoji, added)
         self.on_file_incoming = on_file_incoming  # Arquivo chegando
         self.on_file_progress = on_file_progress  # Progresso do arquivo
         self.on_file_complete = on_file_complete  # Arquivo completo
@@ -122,6 +123,17 @@ class Messenger:
         else:
             # Primeira execucao: gera um ID novo (MAC+hostname+winuser)
             self.user_id = generate_user_id()
+
+        # Adiciona sufixo da instancia ao user_id se for informado (evita conflito de eco em testes locais)
+        import sys
+        instance_name = None
+        for i, arg in enumerate(sys.argv):
+            if arg == '--instance' and i + 1 < len(sys.argv):
+                instance_name = sys.argv[i + 1]
+                break
+        if instance_name:
+            if not self.user_id.endswith(f"_{instance_name}"):
+                self.user_id += f"_{instance_name}"
 
         # Migracao: usuarios pre-1.4.60 tem user_id no formato mac_host
         # (sem winuser). Renomeia tudo para o formato novo para que historico,
@@ -187,6 +199,9 @@ class Messenger:
             on_error=self._on_file_error_internal
         )
 
+        # Registra handler de fallback TCP para VPN
+        TCPClient.fallback_handler = self._tcp_fallback_handler
+
     # ========================================
     # LIFECYCLE — Iniciar e parar servicos
     # ========================================
@@ -202,6 +217,12 @@ class Messenger:
         self.discovery.file_port = getattr(self._file_receiver, 'port', TCP_PORT + 1)
 
         self.discovery.start()      # Comeca a enviar/receber announces UDP
+
+        # Remove contatos fantasma "[Desconhecido]" acumulados por bugs de discovery antigos
+        try:
+            self.db.cleanup_unknown_contacts()
+        except Exception:
+            pass
 
         # Carrega peers manuais persistidos (cenario VPN/fora-da-LAN).
         # Lista vazia = no-op (caminho da LAN intocado, zero overhead).
@@ -299,6 +320,62 @@ class Messenger:
     # TCP MESSAGES — Processamento de mensagens
     # ========================================
 
+    # Fallback handler para retransmitir mensagem via VPN/Anchor quando a conexao direta falha.
+    # Se nao conseguimos abrir socket direto, mas estamos em modo VPN com manual_peers configurados,
+    # retransmitimos a mensagem para o anchor, que se encarrega de retransmiti-la ao destino final.
+    def _tcp_fallback_handler(self, ip, port, message_dict):
+        if not self.is_vpn_enabled():
+            return False
+            
+        manual_peers = self.get_manual_peers()
+        if not manual_peers:
+            return False
+
+        # Evita loops de relay
+        if message_dict.get('is_relayed'):
+            return False
+            
+        relay_payload = dict(message_dict)
+        relay_payload['is_relayed'] = True
+        
+        # Tenta resolver o to_user a partir do IP se nao estiver no payload
+        if 'to_user' not in relay_payload:
+            contact_uid = None
+            try:
+                for uid, p in list(self.discovery.peers.items()):
+                    if p.get('ip') == ip:
+                        contact_uid = uid
+                        break
+            except Exception:
+                pass
+            if not contact_uid:
+                try:
+                    contacts = self.db.get_contacts()
+                    for c in contacts:
+                        if c.get('ip_address') == ip:
+                            contact_uid = c.get('user_id')
+                            break
+                except Exception:
+                    pass
+            if contact_uid:
+                relay_payload['to_user'] = contact_uid
+
+        if not relay_payload.get('to_user'):
+            return False
+
+        # Tenta enviar via anchors cadastrados (exceto se o proprio anchor for o destino)
+        for peer in manual_peers:
+            anchor_ip = peer.get('ip')
+            if anchor_ip and anchor_ip != ip:
+                ok = TCPClient.send_message(anchor_ip, port, relay_payload)
+                if ok:
+                    import logging as _logging
+                    _logging.getLogger('mbchat.messenger').info(
+                        'Message to %s (IP %s) relayed via anchor %s',
+                        relay_payload.get('to_user'), ip, anchor_ip)
+                    return True
+        return False
+
     # Callback central que roteia todas as mensagens TCP recebidas
     # Tipos tratados:
     # - MT_MESSAGE: mensagem de texto individual
@@ -319,6 +396,32 @@ class Messenger:
 
         # Fix 8: bloqueia mensagens de usuarios na block_list
         if from_user and self.db.is_blocked(from_user):
+            return
+
+        # VPN Relay/Forwarding: Se a mensagem e destinada a outro usuario, e eu sou a ponte (anchor),
+        # retransmite para o destinatario real no escritorio.
+        to_user = msg.get('to_user')
+        if to_user and to_user != self.user_id:
+            contact = self.db.get_contact(to_user)
+            if contact and contact.get('ip_address'):
+                target_ip = contact['ip_address']
+                relay_msg = dict(msg)
+                relay_msg['is_relayed'] = True
+                
+                # Envia assincrono para nao travar a thread do servidor TCP
+                def do_forward():
+                    TCPClient.send_message(target_ip, TCP_PORT, relay_msg)
+                threading.Thread(target=do_forward, daemon=True).start()
+                
+                import logging as _logging
+                _logging.getLogger('mbchat.messenger').info(
+                    'Relayed message from %s to %s (IP %s)',
+                    from_user, to_user, target_ip)
+            else:
+                import logging as _logging
+                _logging.getLogger('mbchat.messenger').warning(
+                    'Relay failed: target user %s is not in contacts or has no IP',
+                    to_user)
             return
 
         # Fix 2: IP pinning TCP — warning se IP diverge do cadastrado (não rejeita, VPN pode divergir)
@@ -365,6 +468,20 @@ class Messenger:
         elif msg_type == MT_TYPING:
             if self.on_typing:
                 self.on_typing(from_user, msg.get('is_typing', False))
+
+        # --- Reacao emoji ---
+        elif msg_type == MT_REACTION:
+            r_msg_id = msg.get('msg_id', '')
+            r_emoji  = msg.get('emoji', '')
+            r_remove = msg.get('remove', False)
+            if r_msg_id and r_emoji:
+                if r_remove:
+                    self.db.remove_reaction(r_msg_id, r_emoji, from_user)
+                    added = False
+                else:
+                    added = self.db.toggle_reaction(r_msg_id, r_emoji, from_user)
+                if self.on_reaction:
+                    self.on_reaction(from_user, r_msg_id, r_emoji, not r_remove and added)
 
         # --- Mudanca de status ---
         elif msg_type == MT_STATUS:
@@ -450,15 +567,15 @@ class Messenger:
                                        'creator_uid': creator_uid,
                                        'admins': admins}
 
-            # Se fixo, persiste no banco
-            if group_type == 'fixed':
-                self.db.save_group(group_id, group_name, 'fixed',
-                                   creator_uid=creator_uid)
-                for m in members:
-                    is_admin = 1 if m['uid'] in admins else 0
-                    self.db.save_group_member(group_id, m['uid'],
-                                              m['display_name'],
-                                              m.get('ip', ''), is_admin=is_admin)
+            # Persiste no banco SEMPRE (fixo E temporario) — o historico
+            # precisa do nome/tipo mesmo depois do grupo encerrar
+            self.db.save_group(group_id, group_name, group_type,
+                               creator_uid=creator_uid)
+            for m in members:
+                is_admin = 1 if m['uid'] in admins else 0
+                self.db.save_group_member(group_id, m['uid'],
+                                          m['display_name'],
+                                          m.get('ip', ''), is_admin=is_admin)
 
             # Notifica GUI para abrir janela do grupo
             if self.on_group_invite:
@@ -487,7 +604,7 @@ class Messenger:
             recovered = False
             if group_id and group_id not in self._groups:
                 # Tenta carregar do DB (caso seja fixo ja salvo)
-                rows = self.db.get_groups()
+                rows = self.db.get_groups(include_archived=True)
                 db_g = next((g for g in rows if g['group_id'] == group_id), None)
                 if db_g:
                     members = self.db.get_group_members(group_id)
@@ -521,13 +638,12 @@ class Messenger:
                              'ip': sender_ip},
                         ],
                     }
-                    if group_type == 'fixed':
-                        self.db.save_group(group_id, group_name, 'fixed')
-                        self.db.save_group_member(group_id, self.user_id,
-                                                  self.display_name,
-                                                  get_local_ip())
-                        self.db.save_group_member(group_id, from_user,
-                                                  display_name, sender_ip)
+                    self.db.save_group(group_id, group_name, group_type)
+                    self.db.save_group_member(group_id, self.user_id,
+                                              self.display_name,
+                                              get_local_ip())
+                    self.db.save_group_member(group_id, from_user,
+                                              display_name, sender_ip)
                     recovered = True
             # Persiste a mensagem no historico do grupo (idempotente por msg_id)
             try:
@@ -605,7 +721,7 @@ class Messenger:
                 if target_uid == self.user_id:
                     if group_id in self._groups:
                         del self._groups[group_id]
-                    self.db.delete_group(group_id)
+                    self.db.archive_group(group_id)  # preserva historico
             if self.on_group_kick:
                 self.on_group_kick(group_id, target_uid, group_name)
 
@@ -637,8 +753,8 @@ class Messenger:
             group_id = msg.get('group_id')
             if group_id in self._groups:
                 del self._groups[group_id]
-            # Apaga o grupo e seus membros do banco local sempre (se existirem)
-            self.db.delete_group(group_id)
+            # Arquiva (nao apaga): historico do grupo permanece acessivel
+            self.db.archive_group(group_id)
             if hasattr(self, 'on_group_deleted') and self.on_group_deleted:
                 self.on_group_deleted(group_id)
 
@@ -887,12 +1003,12 @@ class Messenger:
     # to_user_id: user_id do destinatario
     # content: Texto da mensagem
     # Retorna True se enviou com sucesso, False se falhou
-    def send_message(self, to_user_id, content, reply_to_id='', is_broadcast=False):
+    def send_message(self, to_user_id, content, reply_to_id='', is_broadcast=False, msg_id=None):
         contact = self.db.get_contact(to_user_id)
         if not contact:
             return False, None
 
-        msg_id = self._next_msg_id()
+        msg_id = msg_id or self._next_msg_id()
         timestamp = time.time()
 
         self.db.save_message(msg_id, self.user_id, to_user_id,
@@ -991,6 +1107,58 @@ class Messenger:
         return path
 
     # Envia indicador de digitacao para um peer
+    def send_reaction(self, to_user_id, msg_id, emoji, remove=False):
+        # Envia reacao (ou remoção) para um peer ou grupo
+        # Persiste localmente e propaga via TCP
+        local_uid = self.user_id
+        if remove:
+            self.db.remove_reaction(msg_id, emoji, local_uid)
+            added = False
+        else:
+            added = self.db.toggle_reaction(msg_id, emoji, local_uid)
+        payload = {
+            'type': MT_REACTION,
+            'from_user': local_uid,
+            'msg_id': msg_id,
+            'emoji': emoji,
+            'remove': not added,
+        }
+        peer_info = self.discovery.peers.get(to_user_id, {})
+        peer_ip   = peer_info.get('ip', '')
+        if peer_ip:
+            try:
+                TCPClient.send_message(peer_ip, TCP_PORT, payload)
+            except Exception:
+                pass
+        return added
+
+    def send_group_reaction(self, group_id, msg_id, emoji, remove=False):
+        # Envia reacao para todos os membros do grupo
+        local_uid = self.user_id
+        if remove:
+            self.db.remove_reaction(msg_id, emoji, local_uid)
+            added = False
+        else:
+            added = self.db.toggle_reaction(msg_id, emoji, local_uid)
+        group = self._groups.get(group_id)
+        if not group:
+            return added
+        payload = {
+            'type': MT_REACTION,
+            'from_user': local_uid,
+            'msg_id': msg_id,
+            'emoji': emoji,
+            'remove': not added,
+        }
+        for member in group['members']:
+            if member['uid'] == local_uid:
+                continue
+            try:
+                TCPClient.send_message(member['ip'], TCP_PORT, payload)
+            except Exception:
+                pass
+        return added
+
     def send_typing(self, to_user_id, is_typing=True):
         contact = self.db.get_contact(to_user_id)
         if not contact:
@@ -1053,9 +1221,16 @@ class Messenger:
             from PIL import Image
             from io import BytesIO
             img = Image.open(custom)
-            img.thumbnail((48, 48), Image.LANCZOS)  # Reduz mantendo proporcao
+            img.thumbnail((128, 128), Image.LANCZOS)  # 128px: downscale 3x ao exibir em 39px — maximo de nitidez
+            # PNG circular tem cantos transparentes — compoe sobre branco antes
+            # do JPEG (sem alpha) para nao virar franja/canto preto nos peers
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGBA')
+                bg = Image.new('RGB', img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
             buf = BytesIO()
-            img.convert('RGB').save(buf, format='JPEG', quality=70)
+            img.convert('RGB').save(buf, format='JPEG', quality=85)
             return base64.b64encode(buf.getvalue()).decode('ascii')
         except Exception:
             return ''  # PIL nao disponivel ou erro na imagem
@@ -1181,14 +1356,14 @@ class Messenger:
                                    'creator_uid': self.user_id,
                                    'admins': [self.user_id]}
 
-        # Se fixo, persiste no banco de dados
-        if group_type == 'fixed':
-            self.db.save_group(group_id, group_name, 'fixed',
-                               creator_uid=self.user_id)
-            for m in members_info:
-                is_admin = 1 if m['uid'] == self.user_id else 0
-                self.db.save_group_member(group_id, m['uid'],
-                                          m['display_name'], m.get('ip', ''), is_admin=is_admin)
+        # Persiste no banco SEMPRE (fixo E temporario) — o historico precisa
+        # do nome/tipo mesmo apos encerrar. Boot reativa apenas fixos ativos.
+        self.db.save_group(group_id, group_name, group_type,
+                           creator_uid=self.user_id)
+        for m in members_info:
+            is_admin = 1 if m['uid'] == self.user_id else 0
+            self.db.save_group_member(group_id, m['uid'],
+                                      m['display_name'], m.get('ip', ''), is_admin=is_admin)
 
         # Envia convite TCP para cada membro convidado
         for uid in member_ids:
@@ -1196,6 +1371,7 @@ class Messenger:
             if contact:
                 pkt = {
                     'type': MT_GROUP_INV,
+                    'to_user': uid,
                     'from_user': self.user_id,
                     'display_name': self.display_name,
                     'group_id': group_id,
@@ -1253,10 +1429,10 @@ class Messenger:
         # Salva membros para notificar antes de apagar
         members = group.get('members', [])
         
-        # Apaga localmente
+        # Apaga localmente (arquiva no banco — historico permanece)
         if group_id in self._groups:
             del self._groups[group_id]
-        self.db.delete_group(group_id)
+        self.db.archive_group(group_id)
         
         # Propaga
         pkt = {
@@ -1352,12 +1528,12 @@ class Messenger:
     # Usa mesh: cada membro envia diretamente para todos os outros
     # Nao ha servidor central intermediando
     def send_group_message(self, group_id, content, reply_to_id='',
-                           mentions=None):
+                           mentions=None, msg_id=None):
         group = self._groups.get(group_id)
         if not group:
             return
         timestamp = time.time()
-        msg_id = self._next_msg_id()
+        msg_id = msg_id or self._next_msg_id()
 
         # Persiste a mensagem enviada no historico local do grupo
         try:
@@ -1378,6 +1554,7 @@ class Messenger:
                 continue
             payload = {
                 'type': MT_GROUP_MSG,
+                'to_user': uid,
                 'from_user': self.user_id,
                 'display_name': self.display_name,
                 'group_id': group_id,
@@ -1471,7 +1648,7 @@ class Messenger:
                     'group_id': group_id,
                 })
             del self._groups[group_id]  # Remove da memoria
-        self.db.delete_group(group_id)  # Remove do banco (CASCADE nos membros)
+        self.db.archive_group(group_id)  # Arquiva (historico permanece)
 
     # ========================================
     # HISTORY — Acesso ao historico

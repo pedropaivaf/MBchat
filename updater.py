@@ -102,7 +102,9 @@ def check_update():
     return has_update, ver, notes
 
 
-def download_update(progress_cb=None):
+def download_update(arg1=None, progress_cb=None):
+    if callable(arg1):
+        progress_cb = arg1
     # Baixa o zip do update. Retorna pasta extraida ou None.
     os.makedirs(_UPDATE_DIR, exist_ok=True)
     zip_dst = os.path.join(_UPDATE_DIR, 'MBChat_update.zip')
@@ -162,22 +164,42 @@ def _download_from_github(dst, progress_cb=None):
         return None, None
 
 
-def apply_update(staging_dir):
+def apply_update(staging_dir, **kwargs):
     # staging_dir contem os arquivos extraidos do zip (MBChat.exe + _internal/).
     # Script PowerShell mata o processo, substitui a pasta inteira e relanca.
+    # kwargs aceita show_ui para compat com chamadas antigas (ignorado).
+    if not staging_dir or not os.path.isdir(staging_dir):
+        log.error(f'apply_update: staging_dir invalido: {staging_dir!r}')
+        # Marcador aponta para staging que sumiu/corrompeu: limpa para nao
+        # travar o boot num loop que nunca abre a GUI.
+        clear_update_pending()
+        return False
     target_exe = _get_long_path(sys.executable)
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
-    args = '""'
 
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
     ps_content = f'''
+# Auto-elevacao: se nao tem admin, relanca como admin via UAC.
+# Necessario porque C:\Program Files\MBChat precisa de permissao elevada
+# para deletar/copiar arquivos. O installer roda como admin (Inno Setup),
+# mas o updater roda como usuario normal.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {{
+    try {{
+        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        exit 0
+    }} catch {{
+        # Se UAC for negado, tenta sem admin mesmo (funciona se app esta em pasta de usuario)
+    }}
+}}
+
 $LogFile = "{log_path}"
 function Log($msg) {{ "{{0:yyyy-MM-dd HH:mm:ss}}" -f (Get-Date) + " $msg" | Out-File -Append -FilePath $LogFile }}
 
-Log "Update iniciado"
+Log "Update iniciado (admin=$isAdmin)"
 Log "Target dir: {target_dir}"
 Log "Staging dir: {staging_dir}"
 
@@ -249,34 +271,75 @@ foreach ($oldExe in $oldExes) {{
     if ((Test-Path $oldExe) -and ($oldExe -ne "{target_exe}")) {{
         try {{
             Remove-Item -Path $oldExe -Force -ErrorAction Stop
-            Log "Removido executavel antigo: $oldExe"
+            Log "Removido executavel antigo: ${{oldExe}}"
         }} catch {{
-            Log "Nao foi possivel remover $oldExe: $_"
+            Log "Nao foi possivel remover ${{oldExe}} - $_"
         }}
     }}
 }}
 
-# Lanca o app via Start-Process
-Log "Lancando app..."
-Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue
-Log "App lancado via Start-Process com args: {args}"
+# Lanca o app via CreateProcess (UseShellExecute=$false herda env vars do pai).
+# CRITICO: NUNCA usar Start-Process / start "" / explorer.exe — usam ShellExecute
+# que ignora env vars do pai e causa "Failed to load Python DLL" em maquinas
+# com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI). Veja CLAUDE.md.
+# Passa --show pro novo MBChat abrir a janela principal direto (em vez de iniciar
+# em tray). Sem isso o usuario clica OK no dialog mas o app fica "escondido" na
+# bandeja e ele pensa que nao reabriu.
+Log "Lancando app via CreateProcess..."
+$launched = $false
+try {{
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "{target_exe}"
+    $psi.Arguments = "--show"
+    $psi.WorkingDirectory = "{target_dir}"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $false
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    $launched = $true
+    Log "App lancado via CreateProcess OK (--show)"
+}} catch {{
+    Log "ERRO no CreateProcess: $_"
+}}
+
+# Fallback: se CreateProcess falhou por algum motivo, tenta Start-Process
+if (-not $launched) {{
+    try {{
+        Start-Process -FilePath "{target_exe}" -ArgumentList "--show" -ErrorAction Stop
+        Log "App lancado via Start-Process (fallback, --show)"
+    }} catch {{
+        Log "ERRO no fallback Start-Process: $_"
+    }}
+}}
 
 # Remove este script
 Start-Sleep -Seconds 2
 Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '''
-    with open(ps_path, 'w', encoding='utf-8') as f:
-        f.write(ps_content)
+    try:
+        with open(ps_path, 'w', encoding='utf-8') as f:
+            f.write(ps_content)
+    except Exception as e:
+        log.error(f'apply_update: falha ao escrever {ps_path}: {e}')
+        return False
 
-    CREATE_NO_WINDOW = 0x08000000
-    subprocess.Popen(
-        ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=CREATE_NO_WINDOW)
+    if not os.path.isfile(ps_path):
+        log.error('apply_update: update.ps1 nao foi criado, abortando.')
+        return False
+
+    try:
+        CREATE_NO_WINDOW = 0x08000000
+        subprocess.Popen(
+            ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW)
+    except Exception as e:
+        log.error(f'apply_update: falha ao lancar PowerShell: {e}')
+        return False
 
     log.info('Update script lancado, encerrando app...')
+    return True
 
 
 def check_update_async(callback):
@@ -309,3 +372,17 @@ def is_update_pending():
         except Exception:
             return None
     return None
+
+
+def clear_update_pending():
+    # Remove o marcador de update pendente. Usado quando o staging e invalido
+    # para evitar loop de boot que nunca abre a GUI (app "nao reabre").
+    pending_file = os.path.join(_UPDATE_DIR, 'update_pending.txt')
+    try:
+        if os.path.exists(pending_file):
+            os.remove(pending_file)
+        return True
+    except Exception as e:
+        log.error(f'Falha ao limpar update_pending: {e}')
+        return False
+

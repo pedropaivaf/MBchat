@@ -682,7 +682,7 @@ def _grab_clipboard_image():
 #     antialias: Fator de superamostragem (2 = dobro da resolução final).
 # Returns:
 #     PIL.Image RGBA com o avatar circular, ou None se PIL não estiver disponível.
-def _make_circular_avatar(img_or_path, size=36, antialias=2):
+def _make_circular_avatar(img_or_path, size=36, antialias=3):
     if not HAS_PIL:
         return None
     from PIL import ImageDraw
@@ -708,6 +708,113 @@ def _make_circular_avatar(img_or_path, size=36, antialias=2):
     # Reduz para o tamanho final com LANCZOS (melhor algoritmo para redução)
     img = img.resize((size, size), Image.LANCZOS)
     return img
+
+
+# Emojis de reacao rapida (1 clique no menu de contexto da mensagem)
+REACTION_EMOJIS = ('\U0001f44d', '\u2705', '\u2764\ufe0f',
+                   '\U0001f602', '\U0001f44f', '\U0001f62e')
+
+
+# Menu de contexto MODERNO de mensagem (estilo WhatsApp): linha de emojis
+# clicaveis no topo (reacao em 1 clique) + itens estilizados no tema.
+# Substitui o tk.Menu nativo cinza. items: [(icone_mdl2, texto, cb, enabled)].
+# on_emoji(char) aplica a reacao. Fecha por clique, Escape ou perda de foco
+# (FocusOut armado com atraso — mesmo fix do dropdown do sino).
+def _show_msg_context_menu(host, x_root, y_root, items, on_emoji):
+    bg     = BG_WHITE
+    fg     = FG_BLACK
+    muted  = FG_GRAY
+    hover  = BG_SELECT
+    border = '#d8dee9'
+    accent = FG_BLUE
+
+    menu = tk.Toplevel(host)
+    menu.withdraw()
+    menu.overrideredirect(True)
+    menu.attributes('-topmost', True)
+
+    outer = tk.Frame(menu, bg=border)
+    outer.pack(fill='both', expand=True)
+    inner = tk.Frame(outer, bg=bg)
+    inner.pack(fill='both', expand=True, padx=1, pady=1)
+
+    def _close(*_a):
+        try:
+            menu.destroy()
+        except Exception:
+            pass
+
+    # Linha de emojis — reacao aplicada com UM clique
+    erow = tk.Frame(inner, bg=bg)
+    erow.pack(fill='x', padx=6, pady=(6, 4))
+    menu._eimgs = []
+    for ch in REACTION_EMOJIS:
+        img = _render_color_emoji(ch, 20)
+        if img:
+            menu._eimgs.append(img)
+            lb = tk.Label(erow, image=img, bg=bg, cursor='hand2',
+                          padx=5, pady=4)
+        else:
+            lb = tk.Label(erow, text=ch, font=('Segoe UI Emoji', 12),
+                          bg=bg, cursor='hand2', padx=4, pady=3)
+        lb.pack(side='left', padx=1)
+        lb.bind('<Enter>', lambda e, w=lb: w.configure(bg=hover))
+        lb.bind('<Leave>', lambda e, w=lb: w.configure(bg=bg))
+        lb.bind('<Button-1>', lambda e, c=ch: (
+            _close(), host.after(10, lambda: on_emoji(c))))
+
+    tk.Frame(inner, bg=border, height=1).pack(fill='x', padx=8, pady=(2, 3))
+
+    for icon_char, text, cb, enabled in items:
+        row = tk.Frame(inner, bg=bg, cursor='hand2' if enabled else 'arrow')
+        row.pack(fill='x')
+        lbl_i = tk.Label(row, text=icon_char,
+                         font=('Segoe MDL2 Assets', 10),
+                         bg=bg, fg=accent if enabled else muted,
+                         width=2, anchor='center')
+        lbl_i.pack(side='left', padx=(10, 2), pady=6)
+        lbl_t = tk.Label(row, text=text, font=('Segoe UI', 9),
+                         bg=bg, fg=fg if enabled else muted, anchor='w')
+        lbl_t.pack(side='left', fill='x', expand=True, padx=(2, 18), pady=6)
+        if not enabled:
+            continue
+        def _enter(e, r=row, li=lbl_i, lt=lbl_t):
+            r.configure(bg=hover)
+            li.configure(bg=hover)
+            lt.configure(bg=hover)
+        def _leave(e, r=row, li=lbl_i, lt=lbl_t):
+            r.configure(bg=bg)
+            li.configure(bg=bg)
+            lt.configure(bg=bg)
+        def _click(e, c=cb):
+            _close()
+            host.after(10, c)
+        for w in (row, lbl_i, lbl_t):
+            w.bind('<Enter>', _enter)
+            w.bind('<Leave>', _leave)
+            w.bind('<Button-1>', _click)
+
+    # Posiciona no ponteiro, clampado na tela (nunca cortado)
+    menu.update_idletasks()
+    mw = menu.winfo_reqwidth()
+    mh = menu.winfo_reqheight()
+    sw = menu.winfo_screenwidth()
+    sh = menu.winfo_screenheight()
+    px = max(0, min(x_root, sw - mw - 4))
+    py = max(0, min(y_root, sh - mh - 4))
+    menu.geometry(f'+{px}+{py}')
+    menu.deiconify()
+    menu.lift()
+    menu.bind('<Escape>', _close)
+    def _arm_focus():
+        try:
+            if menu.winfo_exists():
+                menu.focus_force()
+                menu.bind('<FocusOut>', _close)
+        except Exception:
+            pass
+    menu.after(120, _arm_focus)
+    return menu
 
 
 # Cria um ícone da fonte Segoe MDL2 Assets como PhotoImage tkinter.
@@ -1221,6 +1328,28 @@ def _get_avatars_dir():
     return d
 
 
+# Apaga arquivos custom_avatar* antigos da pasta de avatares, mantendo apenas
+# o avatar atual (keep_path). Chamado ao APLICAR a mudanca (OK das Preferencias
+# / Salvar da Conta) — nunca no upload, para que Cancelar preserve a foto
+# anterior. Tambem remove legados .jpg/.gif/.bmp do fallback antigo sem PIL.
+def _cleanup_old_custom_avatars(keep_path=''):
+    try:
+        d = _get_avatars_dir()
+        keep = os.path.normcase(os.path.abspath(keep_path)) if keep_path else ''
+        for fn in os.listdir(d):
+            if not fn.lower().startswith('custom_avatar'):
+                continue
+            full = os.path.join(d, fn)
+            if keep and os.path.normcase(os.path.abspath(full)) == keep:
+                continue
+            try:
+                os.remove(full)
+            except Exception:
+                pass  # arquivo em uso/sem permissao — tenta de novo no proximo apply
+    except Exception:
+        pass
+
+
 # Diretorio com sons customizados (sounds/*.wav, sounds/*.mp3).
 # Compatibilidade PyInstaller: tenta sys._MEIPASS antes do diretorio do script.
 def _get_sounds_dir():
@@ -1440,6 +1569,251 @@ class SoundPlayer:
         except Exception:
             pass
 
+
+
+# =============================================================
+#  AVATAR CROP DIALOG — Editor circular de foto de perfil
+# =============================================================
+# Abre uma janela modal para o usuario recortar e ajustar a foto de perfil
+# antes de salvar. Requer PIL (HAS_PIL). Se PIL indisponivel, o caller deve
+# copiar o arquivo diretamente sem abrir este dialog.
+# Interface: arrastar para reposicionar, rolar para ampliar/reduzir.
+class AvatarCropDialog(tk.Toplevel):
+
+    _CANVAS   = 380   # dimensao do canvas quadrado
+    _OUT_SIZE = 512   # dimensao da imagem salva (512: fonte rica, nitida em qualquer uso)
+    _OVL_ALPHA = 160  # opacidade do overlay fora do circulo (0-255)
+
+    def __init__(self, parent, src_path, dest_path, on_done):
+        super().__init__(parent)
+        self._src    = src_path
+        self._dest   = dest_path
+        self._on_done = on_done  # callback(success: bool)
+        self._tk_img  = None
+
+        self.title('Ajustar foto de perfil')
+        self.resizable(False, False)
+        self.transient(parent)          # fica sempre sobre a janela pai
+        self.withdraw()                 # esconde ate estar pronto
+        self.protocol('WM_DELETE_WINDOW', self._cancel)
+
+        try:
+            from PIL import Image, ImageTk, ImageDraw
+            self._Image    = Image
+            self._ImageTk  = ImageTk
+            self._ImageDraw = ImageDraw
+            self._orig = Image.open(src_path).convert('RGBA')
+        except Exception:
+            self.destroy()
+            try:
+                messagebox.showwarning(
+                    'Foto de perfil',
+                    'Não foi possível abrir esta imagem.\n'
+                    'Use um arquivo JPG, PNG, GIF ou BMP.',
+                    parent=parent)
+            except Exception:
+                pass
+            on_done(False)
+            return
+
+        C = self._CANVAS
+        r = C // 2 - 20          # raio do circulo
+        self._radius = r
+        cx = cy = C // 2
+
+        # Escala inicial: imagem preenche o circulo pelo menor lado
+        ow, oh = self._orig.size
+        self._scale = (r * 2) / min(ow, oh)
+        self._ox = cx - (ow * self._scale) / 2
+        self._oy = cy - (oh * self._scale) / 2
+        self._drag_start = None
+
+        # Tema atual do app (mesmo contrato do ThemeBuilder: parent e
+        # Preferences/Account, ambos expoem .app — degrada sem crashar)
+        app = getattr(parent, 'app', None)
+        t = getattr(app, '_theme', None) or THEMES.get('MB Contabilidade', {})
+        ui_bg   = t.get('bg_window',  '#f5f7fa')
+        ui_mut  = t.get('fg_gray',    '#718096')
+        btn_bg  = t.get('btn_bg',     '#0f2a5c')
+        btn_fg  = t.get('btn_fg',     '#ffffff')
+        btn_hov = t.get('btn_active', '#1a3f7a')
+        sec_bg  = t.get('hover',      '#edf2f7')
+        sec_fg  = t.get('fg_black',   '#1a202c')
+
+        # ── layout ──
+        outer = tk.Frame(self, bg=ui_bg, padx=2, pady=2)
+        outer.pack(fill='both', expand=True)
+
+        tk.Label(outer,
+                 text='Arraste para reposicionar  •  Role para ampliar/reduzir',
+                 bg=ui_bg, fg=ui_mut,
+                 font=('Segoe UI', 8)).pack(pady=(8, 2))
+
+        # Canvas preto fixo: superficie de edicao de imagem (padrao em
+        # editores de foto, independe do tema)
+        self._cv = tk.Canvas(outer, width=C, height=C,
+                             bg='#000000', highlightthickness=0,
+                             cursor='fleur')
+        self._cv.pack(padx=10, pady=4)
+
+        btn_row = tk.Frame(outer, bg=ui_bg)
+        btn_row.pack(fill='x', padx=10, pady=(4, 10))
+
+        tk.Button(btn_row, text='Cancelar',
+                  font=('Segoe UI', 9), bg=sec_bg, fg=sec_fg,
+                  activebackground=ui_bg, activeforeground=sec_fg,
+                  bd=0, padx=14, pady=5,
+                  cursor='hand2', relief='flat',
+                  command=self._cancel).pack(side='right', padx=(4, 0))
+        tk.Button(btn_row, text='Salvar foto',
+                  font=('Segoe UI', 9, 'bold'), bg=btn_bg, fg=btn_fg,
+                  activebackground=btn_hov, activeforeground=btn_fg,
+                  bd=0, padx=14, pady=5,
+                  cursor='hand2', relief='flat',
+                  command=self._save).pack(side='right')
+
+        self._cv.bind('<ButtonPress-1>',   self._on_press)
+        self._cv.bind('<B1-Motion>',       self._on_drag)
+        self._cv.bind('<ButtonRelease-1>', self._on_release)
+        self._cv.bind('<MouseWheel>',      self._on_scroll)
+
+        self._render()
+        # Usa o tamanho requerido real (evita clipar botoes se a fonte renderizar maior)
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(),  C + 20)
+        h = max(self.winfo_reqheight(), C + 80)
+        _center_window(self, w, h)
+        _apply_rounded_corners(self)
+        self.deiconify()               # exibe ja posicionado (sem flash)
+        self.lift()                    # garante frente no Windows
+        self.focus_force()
+        # grab_set SO depois da janela estar mapeada pelo WM. No Windows,
+        # grab_set logo apos deiconify lanca TclError (window not viewable),
+        # abortava o __init__ inteiro e a janela nunca aparecia.
+        try:
+            self.wait_visibility()
+            self.grab_set()
+        except Exception:
+            pass  # sem modal e melhor que sem janela
+
+    # ── render ──────────────────────────────────────────────────────────────
+    def _render(self):
+        from PIL import Image
+        C  = self._CANVAS
+        cx = cy = C // 2
+        r  = self._radius
+
+        ow, oh = self._orig.size
+        nw = max(1, int(ow * self._scale))
+        nh = max(1, int(oh * self._scale))
+        try:
+            scaled = self._orig.resize((nw, nh), Image.LANCZOS)
+        except Exception:
+            scaled = self._orig.resize((nw, nh))
+
+        base = Image.new('RGBA', (C, C), (0, 0, 0, 255))
+        base.paste(scaled, (int(self._ox), int(self._oy)))
+
+        overlay = Image.new('RGBA', (C, C), (0, 0, 0, 0))
+        draw = self._ImageDraw.Draw(overlay)
+        draw.rectangle([0, 0, C, C], fill=(0, 0, 0, self._OVL_ALPHA))
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 0))
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r],
+                     outline=(255, 255, 255, 200), width=2)
+
+        comp = Image.alpha_composite(base, overlay)
+        self._tk_img = self._ImageTk.PhotoImage(comp)
+        self._cv.create_image(0, 0, anchor='nw', image=self._tk_img)
+
+    # ── interacao ────────────────────────────────────────────────────────────
+    def _on_press(self, e):
+        self._drag_start = (e.x, e.y)
+
+    def _on_drag(self, e):
+        if self._drag_start is None:
+            return
+        self._ox += e.x - self._drag_start[0]
+        self._oy += e.y - self._drag_start[1]
+        self._drag_start = (e.x, e.y)
+        self._render()
+
+    def _on_release(self, e):
+        self._drag_start = None
+
+    def _on_scroll(self, e):
+        factor = 1.1 if e.delta > 0 else 0.9
+        cx = cy = self._CANVAS // 2
+        self._ox = cx - (cx - self._ox) * factor
+        self._oy = cy - (cy - self._oy) * factor
+        self._scale *= factor
+        ow, oh = self._orig.size
+        min_s = (self._radius * 2) / max(ow, oh) * 0.3
+        self._scale = max(min_s, min(self._scale, 10.0))
+        self._render()
+
+    # ── salvar ───────────────────────────────────────────────────────────────
+    def _save(self):
+        from PIL import Image
+        C  = self._CANVAS
+        cx = cy = C // 2
+        r  = self._radius
+
+        # Converte coordenadas do circulo para espaco da imagem original
+        x0 = (cx - r - self._ox) / self._scale
+        y0 = (cy - r - self._oy) / self._scale
+        x1 = (cx + r - self._ox) / self._scale
+        y1 = (cy + r - self._oy) / self._scale
+
+        ow, oh = self._orig.size
+        x0 = max(0.0, x0); y0 = max(0.0, y0)
+        x1 = min(float(ow), x1); y1 = min(float(oh), y1)
+        if x1 <= x0 or y1 <= y0:
+            return
+
+        cropped = self._orig.crop((int(x0), int(y0), int(x1), int(y1)))
+        cw, ch = cropped.size
+        side   = min(cw, ch)
+        cropped = cropped.crop(((cw - side) // 2, (ch - side) // 2,
+                                (cw - side) // 2 + side, (ch - side) // 2 + side))
+        out = cropped.resize((self._OUT_SIZE, self._OUT_SIZE), Image.LANCZOS)
+        # Recorte CIRCULAR de verdade: mascara alpha no PNG — cantos ficam
+        # transparentes, exatamente o que o usuario enquadrou no circulo.
+        # Mascara desenhada em 4x e reduzida com LANCZOS: borda lisa, sem serrilha.
+        S = self._OUT_SIZE
+        big = S * 4
+        mask = self._Image.new('L', (big, big), 0)
+        self._ImageDraw.Draw(mask).ellipse([0, 0, big - 1, big - 1], fill=255)
+        mask = mask.resize((S, S), Image.LANCZOS)
+        out.putalpha(mask)
+
+        try:
+            out.save(self._dest, 'PNG')
+        except Exception as ex:
+            import logging
+            logging.getLogger('mbchat').warning(f'AvatarCropDialog._save: {ex}')
+            self._close(False)
+            return
+
+        self._close(True)
+
+    def _cancel(self):
+        self._close(False)
+
+    # Fecha o dialog devolvendo o grab modal ao pai (Preferences/Account sao
+    # modais — sem isso o pai perdia a modalidade apos o crop fechar).
+    def _close(self, success):
+        parent = self.master
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+        try:
+            if parent is not None and parent.winfo_exists():
+                parent.grab_set()
+        except Exception:
+            pass
+        self._on_done(success)
 
 # =============================================================
 #  PREFERENCES WINDOW — Idêntica ao original
@@ -1905,9 +2279,25 @@ class PreferencesWindow(tk.Toplevel):
                        ('Todos', '*.*')])
         if not path:
             return
-        ext = os.path.splitext(path)[1]
-        dest = os.path.join(_get_avatars_dir(), f'custom_avatar{ext}')
-        shutil.copy2(path, dest)
+        # Nome unico por upload: troca de foto gera path NOVO — o arquivo da
+        # foto anterior fica intacto ate o OK (Cancelar nao corrompe nada) e a
+        # deteccao de mudanca no _save_all dispara o re-broadcast pra rede.
+        ts = int(time.time())
+        dest = os.path.join(_get_avatars_dir(), f'custom_avatar_{ts}.png')
+        if HAS_PIL:
+            _done = {'ok': False}
+            def _cb(success, _r=_done): _r['ok'] = success
+            dlg = AvatarCropDialog(self, path, dest, _cb)
+            # Imagem invalida: o dialog se destroi no __init__ e wait_window
+            # em janela destruida lanca TclError (visto no mbchat.log)
+            if dlg.winfo_exists():
+                self.wait_window(dlg)
+            if not _done['ok']:
+                return
+        else:
+            ext = os.path.splitext(path)[1]
+            dest = os.path.join(_get_avatars_dir(), f'custom_avatar_{ts}{ext}')
+            shutil.copy2(path, dest)
         self.var_custom_avatar.set(dest)
         self._lbl_custom_path.config(text=os.path.basename(path))
         for c in self._avatar_canvases:
@@ -2293,7 +2683,7 @@ class PreferencesWindow(tk.Toplevel):
         old_autostart = db.get_setting('autostart', '0')
         old_font = db.get_setting('font_size', '10')
         old_avatar_idx = db.get_setting('avatar_index', '0')
-        old_avatar_custom = db.get_setting('avatar_custom', '')
+        old_avatar_custom = db.get_setting('custom_avatar', '')
 
         # Persiste cada configuração individualmente no banco SQLite
         db.set_setting('autostart', '1' if self.var_autostart.get() else '0')
@@ -2359,6 +2749,8 @@ class PreferencesWindow(tk.Toplevel):
                           or new_avatar_custom != old_avatar_custom)
         if avatar_changed:
             self.messenger.change_avatar(new_avatar_idx, new_avatar_custom)
+            # Apaga fotos antigas do disco (remocao real + sem orfaos ao trocar)
+            _cleanup_old_custom_avatars(new_avatar_custom)
 
         # Departamento ja foi salvo e propagado via _on_dept_changed.
         # Re-checar se o widget ainda existe (usuario pode ter trocado de aba,
@@ -2678,9 +3070,24 @@ class AccountWindow(tk.Toplevel):
                        ('Todos', '*.*')])
         if not path:
             return
-        ext = os.path.splitext(path)[1]
-        dest = os.path.join(_get_avatars_dir(), f'custom_avatar{ext}')
-        shutil.copy2(path, dest)
+        # Nome unico por upload — mesmo racional do PreferencesWindow:
+        # preserva a foto anterior ate Salvar e garante propagacao da troca.
+        ts = int(time.time())
+        dest = os.path.join(_get_avatars_dir(), f'custom_avatar_{ts}.png')
+        if HAS_PIL:
+            _done = {'ok': False}
+            def _cb(success, _r=_done): _r['ok'] = success
+            dlg = AvatarCropDialog(self, path, dest, _cb)
+            # Imagem invalida: o dialog se destroi no __init__ e wait_window
+            # em janela destruida lanca TclError (visto no mbchat.log)
+            if dlg.winfo_exists():
+                self.wait_window(dlg)
+            if not _done['ok']:
+                return
+        else:
+            ext = os.path.splitext(path)[1]
+            dest = os.path.join(_get_avatars_dir(), f'custom_avatar_{ts}{ext}')
+            shutil.copy2(path, dest)
         self.var_custom_avatar.set(dest)
         self._lbl_custom_path.config(text=os.path.basename(path))
         for c in self._avatar_canvases:
@@ -2729,6 +3136,8 @@ class AccountWindow(tk.Toplevel):
         self.messenger.change_avatar(
             self.var_avatar_index.get(),
             self.var_custom_avatar.get())
+        # Apaga fotos antigas do disco (remocao real + sem orfaos ao trocar)
+        _cleanup_old_custom_avatars(self.var_custom_avatar.get())
         self.app._update_avatar()
         # Departamento ja foi salvo e propagado via _on_dept_changed,
         # mas garante consistencia caso tenha sido alterado por outro meio.
@@ -3952,6 +4361,10 @@ class ChatWindow(tk.Toplevel):
                                      lmargin1=12, lmargin2=12,
                                      rmargin=40,
                                      spacing1=0, spacing3=4)
+        self.chat_text.tag_configure('reaction_line',
+                                     foreground='#64748b',
+                                     font=('Segoe UI', 9),
+                                     lmargin1=12, spacing1=0, spacing3=2)
 
         try: self.chat_text.tag_raise('sel')
         except tk.TclError: pass
@@ -3959,6 +4372,7 @@ class ChatWindow(tk.Toplevel):
         # Dados de mensagens para reply (msg_id, sender, text_preview)
         self._msg_data = []  # [{msg_id, sender, text, is_mine}]
         self._msg_ranges_idx = []  # [(start_idx, end_idx)] por mensagem (para tag msg_N)
+        self._msg_hit_idx = []  # [(hit_start, end)] inclui a citacao — hit-test do clique
         self._img_click_handled = False
         self._link_counter = 0
 
@@ -4069,11 +4483,9 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
         self.bind('<Escape>', self._on_escape_selection, add='+')
 
-        # Menu de contexto no chat (Responder / Copiar / Selecionar)
-        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
-        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
-        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
+        # Menu de contexto moderno da mensagem: emojis de reacao no topo
+        # (1 clique) + Responder/Copiar/Selecionar no tema do sistema.
+        # Construido sob demanda por _show_msg_context_menu.
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -4904,6 +5316,8 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.configure(state='disabled')
             return
 
+        # Topo do balao (antes da citacao) — usado no hit-test do clique direito
+        bubble_start = self.chat_text.index('end-1c')
         # Renderiza quote de reply se houver
         if reply_to:
             orig = self.messenger.db.get_message_by_id(reply_to)
@@ -4974,7 +5388,7 @@ class ChatWindow(tk.Toplevel):
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(header_start),
+                               self.chat_text.index(bubble_start),
                                self.chat_text.index(f'{body_end}'))
         start_mark = f'mstart_{n}'
         end_mark = f'mend_{n}'
@@ -4983,6 +5397,12 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.mark_gravity(start_mark, 'left')
         self.chat_text.mark_gravity(end_mark, 'right')
         self._msg_ranges_idx.append((start_mark, end_mark))
+        # Hit-test inclui a citacao (topo do balao) para que clicar numa
+        # mensagem-resposta resolva nela mesma — habilita "Responder".
+        hit_mark = f'hstart_{n}'
+        self.chat_text.mark_set(hit_mark, bubble_start)
+        self.chat_text.mark_gravity(hit_mark, 'left')
+        self._msg_hit_idx.append((hit_mark, end_mark))
         self.chat_text.tag_bind(msg_tag_name, '<Enter>',
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
@@ -5006,6 +5426,18 @@ class ChatWindow(tk.Toplevel):
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
                                'text': text, 'is_mine': is_mine,
                                'timestamp': timestamp or time.time()})
+        # Insere âncora de reações (inicialmente vazia) com marks para atualização futura
+        if msg_id:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            self.chat_text.insert('end', '\n')
+            pos = self.chat_text.index('end-1c')
+            self.chat_text.mark_set(rmark + '_s', pos)
+            self.chat_text.mark_set(rmark + '_e', pos)
+            self.chat_text.mark_gravity(rmark + '_s', 'left')
+            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            rxns = self.messenger.db.get_reactions(msg_id) if msg_id else {}
+            if rxns:
+                self._render_reaction_mark(msg_id, rxns)
         self.chat_text.insert('end', '\n')   # linha em branco entre mensagens
         self.chat_text.configure(state='disabled')  # bloqueia edição novamente
         self.chat_text.see('end')            # rola para mostrar a última mensagem
@@ -5172,12 +5604,18 @@ class ChatWindow(tk.Toplevel):
         idx = self.chat_text.index(f'@{event.x},{event.y}')
         self._ctx_click_index = idx
         self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        # "Responder" habilitado para qualquer mensagem (própria ou recebida)
         msg_idx = self._ctx_msg_idx
-        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
-            self._chat_ctx.entryconfigure(0, state='disabled')
-        else:
-            self._chat_ctx.entryconfigure(0, state='normal')
-        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+        has_id = (0 <= msg_idx < len(self._msg_data)
+                  and bool(self._msg_data[msg_idx].get('msg_id')))
+        _show_msg_context_menu(
+            self, event.x_root, event.y_root,
+            items=[
+                ('\uE97A', 'Responder', self._ctx_reply, has_id),
+                ('\uE8C8', 'Copiar', self._ctx_copy, True),
+                ('\uE8B3', 'Selecionar', self._ctx_select, True),
+            ],
+            on_emoji=self._ctx_react)
 
     # Encontra indice da mensagem na posicao da linha clicada
     def _find_msg_at_line(self, click_line):
@@ -5210,6 +5648,39 @@ class ChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    # Contexto: Reagir com emoji à mensagem clicada (chat individual)
+    def _ctx_react(self, emoji):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        msg_id = data.get('msg_id', '')
+        if not msg_id:
+            return
+        try:
+            self.messenger.send_reaction(self.peer_id, msg_id, emoji)
+            rxns = self.messenger.db.get_reactions(msg_id)
+            self._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em _ctx_react')
+
+    # Atualiza linha de reações para msg_id usando marks no Text widget
+    def _render_reaction_mark(self, msg_id, rxns):
+        try:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            ms = rmark + '_s'
+            me = rmark + '_e'
+            if ms not in self.chat_text.mark_names():
+                return
+            self.chat_text.configure(state='normal')
+            self.chat_text.delete(ms, me)
+            if rxns:
+                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
+                self.chat_text.insert(ms, line, 'reaction_line')
+            self.chat_text.configure(state='disabled')
+        except Exception:
+            log.exception('Erro em _render_reaction_mark')
 
     # Contexto: Entra em modo selecao com a mensagem clicada ja marcada
     def _ctx_select(self):
@@ -5355,9 +5826,10 @@ class ChatWindow(tk.Toplevel):
         return self._find_msg_idx_at_index(click_idx)
 
     def _find_msg_idx_at_index(self, click_idx):
-        # Procura a ultima mensagem cujo start_mark esta <= click_idx
+        # Procura a ultima mensagem cujo start_mark esta <= click_idx.
+        # Usa _msg_hit_idx (inclui a citacao) p/ responder mensagens-resposta.
         best = -1
-        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+        for i, (sm, em) in enumerate(self._msg_hit_idx):
             try:
                 s = self.chat_text.index(sm)
                 e = self.chat_text.index(em)
@@ -5598,7 +6070,7 @@ class ChatWindow(tk.Toplevel):
                                  msg_id=local_id, reply_to=reply_to_id)
 
             def _do_send(lid=local_id, cnt=content, rid=reply_to_id):
-                ok, _ = self.messenger.send_message(self.peer_id, cnt, rid)
+                ok, _ = self.messenger.send_message(self.peer_id, cnt, rid, msg_id=lid)
                 self.after(0, lambda: self._update_msg_status(lid, ok))
 
             threading.Thread(target=_do_send, daemon=True).start()
@@ -7337,6 +7809,10 @@ class GroupChatWindow(tk.Toplevel):
                                      rmargin=40,
                                      spacing1=0, spacing3=4)
 
+        self.chat_text.tag_configure('reaction_line',
+                                     foreground='#64748b',
+                                     font=('Segoe UI', 9),
+                                     lmargin1=12, spacing1=0, spacing3=2)
         # Tag para @mencao destacada
         self.chat_text.tag_configure('mention',
                                      foreground='#2451a0',
@@ -7419,6 +7895,7 @@ class GroupChatWindow(tk.Toplevel):
 
         # Estado de copy-hover + selection mode (mesmo padrao da ChatWindow)
         self._msg_ranges_idx = []
+        self._msg_hit_idx = []  # [(hit_start, end)] inclui a citacao — hit-test do clique
         self._link_counter = 0
         self._selection_mode = False
         self._selection_set = set()
@@ -7449,11 +7926,9 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.bind('<ButtonRelease-1>', self._on_chat_release, add='+')
         self.bind('<Escape>', self._on_escape_selection, add='+')
 
-        # Menu de contexto no chat (Responder / Copiar / Selecionar)
-        self._chat_ctx = tk.Menu(self, tearoff=0, font=('Segoe UI', 9))
-        self._chat_ctx.add_command(label='Responder', command=self._ctx_reply)
-        self._chat_ctx.add_command(label='Copiar', command=self._ctx_copy)
-        self._chat_ctx.add_command(label='Selecionar', command=self._ctx_select)
+        # Menu de contexto moderno da mensagem: emojis de reacao no topo
+        # (1 clique) + Responder/Copiar/Selecionar no tema do sistema.
+        # Construido sob demanda por _show_msg_context_menu.
         self.chat_text.bind('<Button-3>', self._on_chat_right_click)
         self._ctx_click_index = None
 
@@ -8361,6 +8836,8 @@ class GroupChatWindow(tk.Toplevel):
         ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
         self.chat_text.configure(state='normal')
 
+        # Topo do balao (antes da citacao) — usado no hit-test do clique direito
+        bubble_start = self.chat_text.index('end-1c')
         # Renderiza quote de reply
         if reply_to:
             orig = self.app.messenger.db.get_message_by_id(reply_to)
@@ -8413,7 +8890,7 @@ class GroupChatWindow(tk.Toplevel):
         n = len(self._msg_data)
         msg_tag_name = f'msg_{n}'
         self.chat_text.tag_add(msg_tag_name,
-                               self.chat_text.index(header_start),
+                               self.chat_text.index(bubble_start),
                                self.chat_text.index(body_end))
         start_mark = f'gmstart_{n}'
         end_mark = f'gmend_{n}'
@@ -8422,6 +8899,12 @@ class GroupChatWindow(tk.Toplevel):
         self.chat_text.mark_gravity(start_mark, 'left')
         self.chat_text.mark_gravity(end_mark, 'right')
         self._msg_ranges_idx.append((start_mark, end_mark))
+        # Hit-test inclui a citacao (topo do balao) — habilita "Responder"
+        # em mensagens-resposta no grupo.
+        hit_mark = f'ghstart_{n}'
+        self.chat_text.mark_set(hit_mark, bubble_start)
+        self.chat_text.mark_gravity(hit_mark, 'left')
+        self._msg_hit_idx.append((hit_mark, end_mark))
         self.chat_text.tag_bind(msg_tag_name, '<Enter>',
                                 lambda e, idx=n: self._on_msg_hover_enter(idx))
         self.chat_text.tag_bind(msg_tag_name, '<Leave>',
@@ -8443,6 +8926,18 @@ class GroupChatWindow(tk.Toplevel):
         self._msg_data.append({'msg_id': msg_id, 'sender': sender,
                                'text': text, 'is_mine': is_mine,
                                'timestamp': timestamp or time.time()})
+        # Âncora de reações do grupo
+        if msg_id:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            self.chat_text.insert('end', '\n')
+            pos = self.chat_text.index('end-1c')
+            self.chat_text.mark_set(rmark + '_s', pos)
+            self.chat_text.mark_set(rmark + '_e', pos)
+            self.chat_text.mark_gravity(rmark + '_s', 'left')
+            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            rxns = self.app.messenger.db.get_reactions(msg_id) if msg_id else {}
+            if rxns:
+                self._render_reaction_mark(msg_id, rxns)
         self.chat_text.insert('end', '\n')
         self.chat_text.configure(state='disabled')
         self.chat_text.see('end')
@@ -8557,12 +9052,18 @@ class GroupChatWindow(tk.Toplevel):
             self._img_click_handled = False
             return
         self._ctx_msg_idx = self._find_msg_idx_at_xy(event.x, event.y)
+        # "Responder" habilitado para qualquer mensagem (própria ou recebida)
         msg_idx = self._ctx_msg_idx
-        if 0 <= msg_idx < len(self._msg_data) and self._msg_data[msg_idx].get('is_mine'):
-            self._chat_ctx.entryconfigure(0, state='disabled')
-        else:
-            self._chat_ctx.entryconfigure(0, state='normal')
-        self._chat_ctx.tk_popup(event.x_root, event.y_root)
+        has_id = (0 <= msg_idx < len(self._msg_data)
+                  and bool(self._msg_data[msg_idx].get('msg_id')))
+        _show_msg_context_menu(
+            self, event.x_root, event.y_root,
+            items=[
+                ('\uE97A', 'Responder', self._ctx_reply, has_id),
+                ('\uE8C8', 'Copiar', self._ctx_copy, True),
+                ('\uE8B3', 'Selecionar', self._ctx_select, True),
+            ],
+            on_emoji=self._ctx_react)
 
     def _ctx_reply(self):
         idx = getattr(self, '_ctx_msg_idx', -1)
@@ -8581,6 +9082,39 @@ class GroupChatWindow(tk.Toplevel):
         if text:
             self.clipboard_clear()
             self.clipboard_append(text)
+
+    # Contexto: Reagir com emoji à mensagem clicada (grupo)
+    def _ctx_react(self, emoji):
+        idx = getattr(self, '_ctx_msg_idx', -1)
+        if idx < 0 or idx >= len(self._msg_data):
+            return
+        data = self._msg_data[idx]
+        msg_id = data.get('msg_id', '')
+        if not msg_id:
+            return
+        try:
+            self.app.messenger.send_group_reaction(self._group_id, msg_id, emoji)
+            rxns = self.app.messenger.db.get_reactions(msg_id)
+            self._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em GroupChat _ctx_react')
+
+    # Atualiza linha de reações (group) — mesmo mecanismo do chat individual
+    def _render_reaction_mark(self, msg_id, rxns):
+        try:
+            rmark = f'rx_{msg_id.replace("-","_").replace(".","_")}'
+            ms = rmark + '_s'
+            me = rmark + '_e'
+            if ms not in self.chat_text.mark_names():
+                return
+            self.chat_text.configure(state='normal')
+            self.chat_text.delete(ms, me)
+            if rxns:
+                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
+                self.chat_text.insert(ms, line, 'reaction_line')
+            self.chat_text.configure(state='disabled')
+        except Exception:
+            log.exception('Erro em GroupChat _render_reaction_mark')
 
     def _ctx_select(self):
         idx = getattr(self, '_ctx_msg_idx', -1)
@@ -8709,8 +9243,9 @@ class GroupChatWindow(tk.Toplevel):
         return self._find_msg_idx_at_index(click_idx)
 
     def _find_msg_idx_at_index(self, click_idx):
+        # Usa _msg_hit_idx (inclui a citacao) p/ responder mensagens-resposta.
         best = -1
-        for i, (sm, em) in enumerate(self._msg_ranges_idx):
+        for i, (sm, em) in enumerate(self._msg_hit_idx):
             try:
                 s = self.chat_text.index(sm)
                 e = self.chat_text.index(em)
@@ -9244,10 +9779,11 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.delete('1.0', 'end')
         self._entry_img_map.clear()
         if content:
+            local_id = str(uuid.uuid4())
             self._append_message(self.app.messenger.display_name, content, True,
-                                 reply_to=reply_to_id, mentions=mentions)
+                                 reply_to=reply_to_id, mentions=mentions, msg_id=local_id)
             threading.Thread(target=self.app.messenger.send_group_message,
-                             args=(self.group_id, content, reply_to_id, mentions),
+                             args=(self.group_id, content, reply_to_id, mentions, local_id),
                              daemon=True).start()
         if pending_img:
             self._send_clipboard_image(pending_img)
@@ -9599,6 +10135,13 @@ class LanMessengerApp:
     def _deferred_init(self):
         self._init_messenger()
 
+        # Varre fotos de avatar orfas (upload cancelado em sessao anterior)
+        try:
+            _cleanup_old_custom_avatars(
+                self.messenger.db.get_setting('custom_avatar', ''))
+        except Exception:
+            pass
+
         # Carregar ramal salvo
         try:
             self.ramal_var.set(self.messenger.ramal or '')
@@ -9741,6 +10284,7 @@ class LanMessengerApp:
             on_group_admin_set=self._safe(self._on_group_admin_set),
             on_group_deleted=self._safe(self._on_group_deleted),
         )
+        self.messenger.on_reaction = self._safe(self._on_reaction)
         self.messenger.start()
         if hasattr(self.messenger, 'discovery'):
             self.messenger.discovery.on_newer_version = self._safe(self._on_newer_version)
@@ -9788,21 +10332,11 @@ class LanMessengerApp:
 
         menubar.add_command(label=_t('menu_preferences'), command=self._show_preferences)
 
-        m2 = tk.Menu(menubar, tearoff=0, font=FONT, cursor='hand2')
-        m2.add_command(label=_t('menu_history'),
-                       command=self._show_all_history)
-        m2.add_command(label=_t('menu_transfers'),
-                       command=self._show_transfers)
-        m2.add_command(label='Lembretes',
-                       command=self._show_reminders)
-        m2.add_separator()
-        m2.add_command(label=_t('menu_check_update'),
-                       command=self._manual_check_update)
-        menubar.add_cascade(label=_t('menu_tools'), menu=m2)
-
-        m_agenda = tk.Menu(menubar, tearoff=0, font=FONT)
-        m_agenda.add_command(label='Reunião', command=self._open_meeting_window)
-        menubar.add_cascade(label='Agendar', menu=m_agenda)
+        # Dropdowns modernos (custom) no lugar do tk.Menu nativo
+        menubar.add_command(label=_t('menu_tools'),
+                            command=self._open_tools_menu)
+        menubar.add_command(label='Agendar',
+                            command=self._open_agenda_menu)
 
         # "Sobre" e um botao direto no menubar (sem submenu). Clicar abre o dialog.
         menubar.add_command(label=_t('menu_help'), command=self._show_about)
@@ -9870,7 +10404,7 @@ class LanMessengerApp:
                         background=t['bg_white'],
                         foreground=t['fg_black'],
                         fieldbackground=t['bg_white'],
-                        rowheight=44)
+                        rowheight=50)
         style.configure('Contacts.Treeview.Heading',
                         background=t['bg_group'],
                         foreground=t.get('fg_group', '#4a5568'))
@@ -9910,12 +10444,16 @@ class LanMessengerApp:
             self.avatar_canvas.configure(bg=navy)
         if hasattr(self, 'note_entry'):
             self.note_entry.configure(bg=navy, fg='#c8d6e5',
-                                      insertbackground='#c8d6e5')
+                                      insertbackground='#ffffff')
             try:
                 self.note_entry.master.configure(bg=navy)
                 self.note_entry.master.master.configure(bg=navy)
-                if hasattr(self, 'note_line'):
-                    self.note_line.configure(bg=navy_light)
+                self._note_underline.configure(bg=navy_light)
+                self._note_pencil.configure(bg=navy)
+                self._note_cancel_btn.configure(bg=navy)
+                for _ch in self.note_entry.master.winfo_children():
+                    if isinstance(_ch, tk.Button):
+                        _ch.configure(bg=navy, activebackground=navy_light)
             except Exception:
                 pass
         if hasattr(self, 'status_combo'):
@@ -10027,23 +10565,240 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Exporta backup completo do historico (banco + temas + avatares) em um
+    # unico .zip. Usa a API de backup do SQLite: copia CONSISTENTE mesmo com
+    # o app aberto (WAL e consolidado na copia — zero risco de corromper).
+    def _backup_history(self):
+        import zipfile
+        import sqlite3 as _sq
+        ts = datetime.now().strftime('%Y%m%d_%H%M')
+        dest = filedialog.asksaveasfilename(
+            parent=self.root,
+            title='Salvar backup do historico',
+            defaultextension='.zip',
+            initialfile=f'MBChat_backup_{ts}.zip',
+            filetypes=[('Backup MB Chat', '*.zip')])
+        if not dest:
+            return
+        tmp_db = ''
+        try:
+            data_dir = _get_data_dir()
+            db_path = os.path.join(data_dir, 'mbchat.db')
+            tmp_db = os.path.join(data_dir, f'_backup_tmp_{os.getpid()}.db')
+            src_conn = _sq.connect(db_path)
+            dst_conn = _sq.connect(tmp_db)
+            with dst_conn:
+                src_conn.backup(dst_conn)
+            dst_conn.close()
+            src_conn.close()
+            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(tmp_db, 'mbchat.db')
+                themes = os.path.join(data_dir, 'user_themes.json')
+                if os.path.exists(themes):
+                    zf.write(themes, 'user_themes.json')
+                avdir = os.path.join(data_dir, 'avatars')
+                if os.path.isdir(avdir):
+                    for fn in os.listdir(avdir):
+                        fp = os.path.join(avdir, fn)
+                        if os.path.isfile(fp):
+                            zf.write(fp, f'avatars/{fn}')
+            messagebox.showinfo(
+                'Backup do historico',
+                'Backup salvo com sucesso!\n\n'
+                f'{dest}\n\n'
+                'Para usar em outro computador (ou apos reinstalar): '
+                'Ferramentas > Restaurar backup...',
+                parent=self.root)
+        except Exception as ex:
+            log.exception('backup_history')
+            messagebox.showerror('Backup do historico',
+                                 f'Falha ao gerar backup:\n{ex}',
+                                 parent=self.root)
+        finally:
+            try:
+                if tmp_db and os.path.exists(tmp_db):
+                    os.remove(tmp_db)
+            except Exception:
+                pass
+
+    # Restaura um backup .zip: o banco e deixado como mbchat_restore.db e o
+    # main() faz a troca NO PROXIMO BOOT (antes de abrir conexoes — nunca
+    # troca o banco por baixo de um app aberto). Temas/avatares sao
+    # restaurados imediatamente.
+    def _restore_history(self):
+        import zipfile
+        src = filedialog.askopenfilename(
+            parent=self.root,
+            title='Restaurar backup do historico',
+            filetypes=[('Backup MB Chat', '*.zip')])
+        if not src:
+            return
+        try:
+            data_dir = _get_data_dir()
+            with zipfile.ZipFile(src) as zf:
+                names = zf.namelist()
+                if 'mbchat.db' not in names:
+                    messagebox.showerror(
+                        'Restaurar backup',
+                        'Arquivo invalido: nao contem mbchat.db.',
+                        parent=self.root)
+                    return
+                if not messagebox.askyesno(
+                        'Restaurar backup',
+                        'O historico ATUAL sera substituido pelo backup na '
+                        'proxima abertura do MB Chat.\n\nContinuar?',
+                        icon='warning', parent=self.root):
+                    return
+                with zf.open('mbchat.db') as f, \
+                     open(os.path.join(data_dir, 'mbchat_restore.db'),
+                          'wb') as out:
+                    shutil.copyfileobj(f, out)
+                for n in names:
+                    if n == 'user_themes.json':
+                        zf.extract(n, data_dir)
+                    elif n.startswith('avatars/') and not n.endswith('/'):
+                        zf.extract(n, data_dir)
+            messagebox.showinfo(
+                'Restaurar backup',
+                'Backup preparado!\n\nFeche e abra o MB Chat para concluir '
+                'a restauracao do historico.',
+                parent=self.root)
+        except Exception as ex:
+            log.exception('restore_history')
+            messagebox.showerror('Restaurar backup',
+                                 f'Falha ao restaurar:\n{ex}',
+                                 parent=self.root)
+
+    # Dropdown moderno que substitui o tk.Menu nativo (visual antigo do
+    # Windows). Toplevel overrideredirect estilizado no tema: borda 1px,
+    # itens com icone MDL2 + hover, separador fino. Fecha por clique,
+    # Escape ou perda de foco (FocusOut armado com atraso — mesmo fix do
+    # dropdown do sino: o evento residual do clique fechava na hora).
+    # items: tuplas (icone_mdl2, texto, callback) ou ('-',) para separador.
+    def _open_modern_menu(self, items):
+        try:
+            if getattr(self, '_modern_menu', None) and \
+               self._modern_menu.winfo_exists():
+                self._modern_menu.destroy()
+        except Exception:
+            pass
+
+        t = getattr(self, '_theme', None) or THEMES.get('MB Contabilidade', {})
+        bg     = t.get('bg_white', '#ffffff')
+        fg     = t.get('fg_black', '#1a202c')
+        hover  = t.get('bg_select', '#e8f0fe')
+        border = t.get('border', '#e2e8f0')
+        accent = t.get('accent', '#0f2a5c')
+
+        menu = tk.Toplevel(self.root)
+        menu.withdraw()
+        menu.overrideredirect(True)
+        menu.attributes('-topmost', True)
+        self._modern_menu = menu
+
+        outer = tk.Frame(menu, bg=border)
+        outer.pack(fill='both', expand=True)
+        inner = tk.Frame(outer, bg=bg)
+        inner.pack(fill='both', expand=True, padx=1, pady=1)
+        tk.Frame(inner, bg=bg, width=160, height=1).pack()  # largura minima
+
+        def _close(*_a):
+            try:
+                menu.destroy()
+            except Exception:
+                pass
+
+        for it in items:
+            if it[0] == '-':
+                tk.Frame(inner, bg=border, height=1).pack(fill='x', padx=8,
+                                                          pady=4)
+                continue
+            icon_char, text, cb = it
+            row = tk.Frame(inner, bg=bg, cursor='hand2')
+            row.pack(fill='x')
+            lbl_i = tk.Label(row, text=icon_char,
+                             font=('Segoe MDL2 Assets', 10),
+                             bg=bg, fg=accent, width=2, anchor='center')
+            lbl_i.pack(side='left', padx=(8, 2), pady=6)
+            lbl_t = tk.Label(row, text=text, font=('Segoe UI', 9),
+                             bg=bg, fg=fg, anchor='w')
+            lbl_t.pack(side='left', fill='x', expand=True, padx=(2, 12),
+                       pady=6)
+            def _enter(e, r=row, li=lbl_i, lt=lbl_t):
+                r.configure(bg=hover)
+                li.configure(bg=hover)
+                lt.configure(bg=hover)
+            def _leave(e, r=row, li=lbl_i, lt=lbl_t):
+                r.configure(bg=bg)
+                li.configure(bg=bg)
+                lt.configure(bg=bg)
+            def _click(e, c=cb):
+                _close()
+                self.root.after(10, c)
+            for w in (row, lbl_i, lbl_t):
+                w.bind('<Enter>', _enter)
+                w.bind('<Leave>', _leave)
+                w.bind('<Button-1>', _click)
+
+        # Posicao: alinhado ao clique na menubar, logo abaixo dela (o topo
+        # da area cliente da janela = base da menubar nativa). A caixa fica
+        # contida na largura da janela principal — nunca passa da borda direita.
+        menu.update_idletasks()
+        mw = menu.winfo_reqwidth()
+        mh = menu.winfo_reqheight()
+        rx = self.root.winfo_rootx()
+        rw = self.root.winfo_width()
+        px = self.root.winfo_pointerx() - 24
+        px = min(px, rx + rw - mw - 2)
+        px = max(px, rx + 2)
+        py = self.root.winfo_rooty()
+        sw = menu.winfo_screenwidth()
+        sh = menu.winfo_screenheight()
+        px = max(0, min(px, sw - mw - 4))
+        py = max(0, min(py, sh - mh - 4))
+        menu.geometry(f'+{px}+{py}')
+        menu.deiconify()
+        menu.lift()
+        menu.bind('<Escape>', _close)
+        def _arm_focus():
+            try:
+                if menu.winfo_exists():
+                    menu.focus_force()
+                    menu.bind('<FocusOut>', _close)
+            except Exception:
+                pass
+        menu.after(120, _arm_focus)
+
+    # Menu Ferramentas (dropdown moderno)
+    def _open_tools_menu(self):
+        self._open_modern_menu([
+            ('\uE81C', _t('menu_history'), self._show_all_history),
+            ('\uE723', _t('menu_transfers'), self._show_transfers),
+            ('\uE7ED', 'Lembretes', self._show_reminders),
+            ('-',),
+            ('\uE74E', 'Backup do histórico...', self._backup_history),
+            ('\uE896', 'Restaurar backup...', self._restore_history),
+            ('-',),
+            ('\uE895', _t('menu_check_update'), self._manual_check_update),
+        ])
+
+    # Menu Agendar (dropdown moderno)
+    def _open_agenda_menu(self):
+        self._open_modern_menu([
+            ('\uE787', 'Reunião', self._open_meeting_window),
+        ])
+
     def _build_ui(self):
         # Menu Bar
         menubar = tk.Menu(self.root, font=FONT, cursor='hand2')
 
         menubar.add_command(label=_t('menu_preferences'), command=self._show_preferences)
 
-        m2 = tk.Menu(menubar, tearoff=0, font=FONT)
-        m2.add_command(label=_t('menu_history'), command=self._show_all_history)
-        m2.add_command(label=_t('menu_transfers'), command=self._show_transfers)
-        m2.add_command(label='Lembretes', command=self._show_reminders)
-        m2.add_separator()
-        m2.add_command(label=_t('menu_check_update'), command=self._manual_check_update)
-        menubar.add_cascade(label=_t('menu_tools'), menu=m2)
-
-        m_agenda = tk.Menu(menubar, tearoff=0, font=FONT)
-        m_agenda.add_command(label='Reunião', command=self._open_meeting_window)
-        menubar.add_cascade(label='Agendar', menu=m_agenda)
+        # Dropdowns modernos (custom) no lugar do tk.Menu nativo
+        menubar.add_command(label=_t('menu_tools'),
+                            command=self._open_tools_menu)
+        menubar.add_command(label='Agendar',
+                            command=self._open_agenda_menu)
 
         menubar.add_command(label=_t('menu_help'), command=self._show_about)
 
@@ -10139,11 +10894,30 @@ class LanMessengerApp:
         note_row = tk.Frame(user_frame, bg=NAVY)
         note_row.pack(fill='x', padx=10, pady=(0, 8))
 
+        # Visual "recado" (flat + underline): fundo transparente no header,
+        # lapis a esquerda e sublinhado fino que acende no foco. Diferencia
+        # da barra de busca (caixa clara preenchida com lupa) logo abaixo.
         note_border = tk.Frame(note_row, bg=NAVY, bd=0)
         note_border.pack(fill='x')
 
-        self.note_line = tk.Frame(note_row, bg='#3b5c91', height=1)
-        self.note_line.pack(fill='x', padx=4, pady=(0, 0))
+        # Icone de lapis: sinaliza "recado editavel" (MDL2 nativa do Windows)
+        self._note_pencil = tk.Label(note_border, text='\uE70F',
+                                     font=('Segoe MDL2 Assets', 9),
+                                     bg=NAVY, fg='#8aa0cc', cursor='hand2')
+        self._note_pencil.pack(side='left', padx=(2, 5))
+        self._note_pencil.bind('<Button-1>',
+                               lambda e: self.note_entry.focus_set())
+
+        # X de cancelar edicao — sem pack inicial; aparece junto do botao
+        # emoji durante a edicao. Restaura o texto salvo e descarta mudancas.
+        self._note_cancel_btn = tk.Label(note_border, text='\uE711',
+                                         font=('Segoe MDL2 Assets', 9),
+                                         bg=NAVY, fg='#8aa0cc', cursor='hand2')
+        self._note_cancel_btn.bind('<Button-1>', self._note_cancel_edit)
+        self._note_cancel_btn.bind('<Enter>', lambda e:
+                                   self._note_cancel_btn.configure(fg='#f56565'))
+        self._note_cancel_btn.bind('<Leave>', lambda e:
+                                   self._note_cancel_btn.configure(fg='#8aa0cc'))
 
         # Emoji button colorido para a nota — empacotado PRIMEIRO (side='right')
         # para garantir que reserve espaço antes do Text expandir
@@ -10153,28 +10927,43 @@ class LanMessengerApp:
         if self._note_emoji_btn_img:
             btn_note_emoji = tk.Button(note_border, image=self._note_emoji_btn_img,
                                        relief='flat', bd=0, cursor='hand2',
-                                       bg=NAVY, activebackground=NAVY,
+                                       bg=NAVY, activebackground='#1a3f7a',
                                        command=self._show_note_emoji_picker)
         else:
             btn_note_emoji = tk.Button(note_border, text='\u270e', font=('Segoe UI', 10),
                                        relief='flat', bd=0, cursor='hand2',
-                                       bg=NAVY, fg='#c8d6e5', activebackground=NAVY,
+                                       bg=NAVY, fg='#c8d6e5', activebackground='#1a3f7a',
                                        command=self._show_note_emoji_picker)
-        btn_note_emoji.pack(side='right', padx=2)
+        # Sem pack inicial: o botao so aparece durante a edicao do recado
+        # (clique no lapis ou no texto) — _show/_hide_note_emoji_btn controlam
+        self._note_emoji_btn = btn_note_emoji
 
         self.note_entry = tk.Text(note_border, font=FONT, bg=NAVY,
                                    fg='#c8d6e5', relief='flat', bd=0,
-                                   insertbackground='#c8d6e5',
+                                   insertbackground='#ffffff',
                                    height=1, width=1, wrap='none', undo=False,
                                    pady=4, padx=4)
         self.note_entry.pack(side='left', fill='x', expand=True)
+
+        # Sublinhado fino abaixo do texto — substitui a caixa preenchida
+        self._note_underline = tk.Frame(note_row, bg='#1a3f7a', height=1)
+        self._note_underline.pack(fill='x')
 
         self.note_entry.insert('1.0', _t('note_placeholder'))
         self._last_saved_note = ''
         self.note_entry.bind('<FocusIn>', self._note_focus_in)
         self.note_entry.bind('<FocusOut>', self._note_focus_out)
         self.note_entry.bind('<Return>', self._note_save)
+        self.note_entry.bind('<Escape>', self._note_cancel_edit)
         self.note_entry.bind('<<Modified>>', self._on_note_modified)
+        # Underline acende no foco + botao emoji visivel so na edicao
+        # (add='+' preserva os handlers acima)
+        self.note_entry.bind('<FocusIn>', lambda e: (
+            self._note_underline.configure(bg='#7cb8f0'),
+            self._show_note_emoji_btn()), add='+')
+        self.note_entry.bind('<FocusOut>', lambda e: (
+            self._note_underline.configure(bg='#1a3f7a'),
+            self.root.after(200, self._hide_note_emoji_btn)), add='+')
 
         # Barra de acoes rodape: Transmitir | Criar Grupo (2 colunas 50/50)
         # Divider horizontal sutil acima separando da caixa de notas.
@@ -10284,7 +11073,7 @@ class LanMessengerApp:
         _setup_scrollbar_style()
         style.configure('Contacts.Treeview', background='#ffffff',
                          foreground='#1a202c', fieldbackground='#ffffff',
-                         font=('Segoe UI', 10), rowheight=44, borderwidth=0,
+                         font=('Segoe UI', 10), rowheight=50, borderwidth=0,
                          indent=5)
         style.configure('Contacts.Treeview.Heading', background='#e2e2e2',
                          foreground='#4a5568', font=FONT_BOLD)
@@ -10583,7 +11372,7 @@ class LanMessengerApp:
 
     # Cria imagem de avatar circular com status dot para o treeview.
     def _create_contact_avatar(self, uid, name, status='online'):
-        size = 36
+        size = 39
         dot_size = 10
         dot_colors = {
             'online': '#48bb78', 'away': '#ecc94b',
@@ -10670,8 +11459,8 @@ class LanMessengerApp:
             name_font = ImageFont.truetype(font_name, 16)
             note_font = ImageFont.truetype('segoeui.ttf', 13)
             ramal_font = ImageFont.truetype('segoeui.ttf', 12)
-            # Setor: fonte bem pequena (9px) para ficar discreta acima do nome
-            sector_font = ImageFont.truetype('segoeui.ttf', 9)
+            # Setor: fonte pequena (10px) — legivel sem roubar espaco do nome
+            sector_font = ImageFont.truetype('segoeui.ttf', 10)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
             emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
@@ -10745,10 +11534,10 @@ class LanMessengerApp:
         # Monta imagem composta.
         # Setor acima do nome aumenta a altura para caber as duas linhas sem
         # apertar o avatar (36px). Sem setor, mantem 46px original.
-        av_size = 36
+        av_size = 39
         gap = 10
         has_sector = bool(sector_text)
-        height = 52 if has_sector else 46
+        height = 54 if has_sector else 50
         total_w = av_size + gap + max(name_w + ramal_w, sector_w) + total_note_w + 10
 
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
@@ -10764,8 +11553,8 @@ class LanMessengerApp:
         # Com setor: nome em cima (y=6), setor logo abaixo (y=28).
         # Sem setor: nome centralizado como antes.
         if has_sector:
-            text_y = 6
-            sector_y = 30
+            text_y = 8
+            sector_y = 34
             draw.text((av_size + gap, sector_y), sector_text,
                       fill=sector_color, font=sector_font)
         else:
@@ -11069,6 +11858,49 @@ class LanMessengerApp:
         except Exception:
             pass
 
+    # Cancela a edicao do recado: restaura o ultimo texto salvo (descarta o
+    # que foi digitado) e tira o foco. O _note_focus_out roda em seguida e,
+    # como o texto == _last_saved_note, nao salva nem propaga nada; campo
+    # vazio vira placeholder pelo proprio focus_out.
+    def _note_cancel_edit(self, event=None):
+        try:
+            self.note_entry.delete('1.0', 'end')
+            if self._last_saved_note:
+                self.note_entry.insert('1.0', self._last_saved_note)
+                self.note_entry.config(fg='#ffffff')
+            self.root.focus_set()
+        except Exception:
+            pass
+        return 'break'
+
+    # Mostra o botao de emoji da nota (apenas durante a edicao do recado).
+    # before=note_entry reproduz a ordem de pack original (reserva espaco a direita).
+    def _show_note_emoji_btn(self):
+        try:
+            if not self._note_cancel_btn.winfo_ismapped():
+                self._note_cancel_btn.pack(side='right', padx=(0, 3),
+                                           before=self.note_entry)
+            if not self._note_emoji_btn.winfo_ismapped():
+                self._note_emoji_btn.pack(side='right', padx=2,
+                                          before=self.note_entry)
+        except Exception:
+            pass
+
+    # Esconde o botao de emoji quando a edicao termina. Nao esconde se o
+    # picker esta aberto ou se o foco continua na nota/botao (ex.: clique
+    # no proprio botao gera FocusOut da nota antes do command disparar).
+    def _hide_note_emoji_btn(self):
+        try:
+            if getattr(self, '_note_picker_open', False):
+                return
+            f = self.root.focus_get()
+            if f in (self._note_emoji_btn, self.note_entry):
+                return
+            self._note_emoji_btn.pack_forget()
+            self._note_cancel_btn.pack_forget()
+        except Exception:
+            pass
+
     # Insere emoji como imagem colorida no campo de nota.
     def _note_insert_emoji(self, emoji_char, pos='insert'):
         if emoji_char in self._note_emoji_cache:
@@ -11143,6 +11975,7 @@ class LanMessengerApp:
         self.messenger.change_ramal(ramal)
 
     def _show_note_emoji_picker(self):
+        self._note_picker_open = True   # segura o botao emoji visivel
         popup = tk.Toplevel(self.root)
         popup.withdraw()  # esconde ate posicionar (sem flash no canto)
         popup.title('Emoticons')
@@ -11659,6 +12492,11 @@ class LanMessengerApp:
             except Exception:
                 popup.destroy()
         popup.bind('<FocusOut>', lambda e: popup.after(100, _check_focus))
+        # Fechou o picker (qualquer caminho): libera e reavalia o botao emoji
+        popup.bind('<Destroy>', lambda e: (
+            setattr(self, '_note_picker_open', False),
+            self.root.after(150, self._hide_note_emoji_btn)
+        ) if e.widget is popup else None)
 
         # Mostra ja posicionado (sem flash no canto superior esquerdo)
         try:
@@ -11712,6 +12550,8 @@ class LanMessengerApp:
                     if 'offline' in tags:          # contato esta offline?
                         return None               # retorna None para bloquear acao
                 return uid  # retorna o uid do contato selecionado
+        log.debug('[GET_PEER] item=%r nao encontrado em peer_items (total=%d)',
+                  item, len(self.peer_items))
         return None  # item nao encontrado em peer_items
 
     def _sort_tree_children(self, parent):
@@ -11921,8 +12761,15 @@ class LanMessengerApp:
     def _remove_contact(self, uid):
         if uid in self.peer_items:
             iid = self.peer_items[uid]
-            self.tree.item(iid, tags=('offline',))
-            self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+            try:
+                self.tree.item(iid, tags=('offline',))
+            except Exception:
+                pass
+            try:
+                self.tree.detach(iid)  # esconde do TreeView (offline nao aparece)
+            except Exception:
+                # iid pode estar invalido se o tree foi reconstruido; remove do mapa
+                self.peer_items.pop(uid, None)
         # Se o usuario esta com a janela de chat aberta com esse peer,
         # mostra mensagem de sistema cinza no chat (LAN Messenger style).
         if uid in self.chat_windows:
@@ -12150,24 +12997,51 @@ class LanMessengerApp:
 
     # Trata duplo clique no TreeView: abre chat (contato) ou janela de grupo.
     def _on_tree_dbl(self, e):
-        sel = self.tree.selection()  # item selecionado no TreeView
-        if sel and sel[0] in self._group_tree_items.values():
-            self._on_tree_dbl_group(sel[0])
+        # identify_row e mais robusto que selection() — funciona mesmo quando
+        # a selecao nao foi atualizada a tempo (ex: double-click rapido) ou
+        # quando o item ficou com tag 'offline' presa (peer VPN visivel).
+        item = self.tree.identify_row(e.y)
+        sel = self.tree.selection()
+        log.debug('[DBL] identify_row=%r sel=%r peer_items=%d',
+                  item, sel, len(self.peer_items))
+        if not item:
+            # Fallback: tenta pela selecao
+            if sel and sel[0] in self._group_tree_items.values():
+                self._on_tree_dbl_group(sel[0])
             return
-        uid = self._get_selected_peer()
+        if item in self._group_tree_items.values():
+            self._on_tree_dbl_group(item)
+            return
+        if item in (self.group_general, self.group_groups):
+            return
+        if item in self._dept_nodes.values():
+            return
+        # Busca uid pelo iid direto (O(n) mas lista e pequena)
+        iid_to_uid = {iid: uid for uid, iid in self.peer_items.items()}
+        uid = iid_to_uid.get(item)
+        log.debug('[DBL] item=%r uid=%r tags=%r',
+                  item, uid, self.tree.item(item, 'tags') if item else ())
+        if uid:
+            self._open_chat(uid)
+            return
+        # Fallback: selection-based (cobre edge cases onde identify_row diverge)
+        uid = self._get_selected_peer(allow_offline=True)
+        log.debug('[DBL] fallback uid=%r', uid)
         if uid:
             self._open_chat(uid)
 
-    # Trata clique direito no TreeView: exibe menu de contexto para contatos online.
+    # Trata clique direito no TreeView: exibe menu de contexto para contatos.
     def _on_tree_right(self, e):
         item = self.tree.identify_row(e.y)  # identifica o item na posicao Y do mouse
         # Ignora nos de secao (Geral, Offline, Grupos, departamentos)
         section_nodes = {self.group_general, self.group_groups}
         section_nodes.update(self._dept_nodes.values())
         if item and item not in section_nodes:
-            # Block right-click on offline contacts
-            tags = self.tree.item(item, 'tags')
-            if 'offline' in tags:
+            # Permite menu de contexto para contatos online E peers VPN com tag
+            # 'offline' presa (visivel mas marcado como offline por fallback).
+            # Bloqueia apenas se o item NAO esta mapeado em peer_items.
+            iid_to_uid = {iid: uid for uid, iid in self.peer_items.items()}
+            if item not in iid_to_uid:
                 return
             self.tree.selection_set(item)
             self.ctx_menu.tk_popup(e.x_root, e.y_root)
@@ -12599,7 +13473,7 @@ class LanMessengerApp:
                 gid = peer_id[6:]
                 g = self.messenger._groups.get(gid)
                 if not g:
-                    rows = db.get_groups()
+                    rows = db.get_groups(include_archived=True)
                     db_g = next((x for x in rows if x['group_id'] == gid), None)
                     name = db_g['name'] if db_g else gid
                 else:
@@ -12628,13 +13502,16 @@ class LanMessengerApp:
             _name_cache[peer_id] = name
             return name
 
-        # Lista de contatos (snapshot na abertura). Depois ordena A-Z por display_name
-        # (case-insensitive, usando locale). Mantem o last_ts so por referencia.
+        # Lista de contatos (snapshot na abertura), ordenada pela conversa
+        # mais RECENTE primeiro (last_ts DESC): quem mandou/recebeu mensagem
+        # por ultimo fica no topo; conversas antigas descem para o final.
         _raw_contacts = db.get_history_contacts()
-        # Pre-resolve nome e ordena alfabeticamente
-        def _sort_key(c):
-            return _resolve_name(c['peer']).lower()
-        all_contacts = sorted(_raw_contacts, key=_sort_key)
+        all_contacts = sorted(_raw_contacts,
+                              key=lambda c: c.get('last_ts') or 0,
+                              reverse=True)
+        # last_ts por peer (inclui 'group:GID') para ordenar grupos tambem
+        _last_by_peer = {c['peer']: (c.get('last_ts') or 0)
+                         for c in _raw_contacts}
 
         def _parse_date(s):
             s = s.strip()
@@ -12863,15 +13740,30 @@ class LanMessengerApp:
             
             mode = mode_var.get()
             if mode == 'Grupos':
-                groups = db.get_groups(group_type='fixed')
-                for g in groups:
-                    gid = f"group:{g['group_id']}"
-                    if visible_peers is not None and gid not in visible_peers:
+                # Todos os grupos com mensagens trocadas — fixos E temporarios
+                # (incluindo encerrados/arquivados) — mais recentes no topo.
+                # Rotulo visual de tipo: (fixo) / (temporario).
+                reg = {g['group_id']: g
+                       for g in db.get_groups(include_archived=True)}
+                gpeers = [c['peer'] for c in all_contacts
+                          if c['peer'].startswith('group:')]
+                gpeers.sort(key=lambda p: _last_by_peer.get(p, 0),
+                            reverse=True)
+                for gid_peer in gpeers:
+                    if visible_peers is not None and gid_peer not in visible_peers:
                         continue
-                    name = g['name']
+                    gid = gid_peer[6:]
+                    g = reg.get(gid)
+                    if g:
+                        sufixo = (' (fixo)' if g.get('group_type') == 'fixed'
+                                  else ' (temporário)')
+                        name = f"{g['name']}{sufixo}"
+                    else:
+                        name = f'Grupo {gid[:8]} (encerrado)'
                     if name_q and name_q not in name.lower():
                         continue
-                    contacts_tree.insert('', 'end', iid=gid, values=(name,))
+                    contacts_tree.insert('', 'end', iid=gid_peer,
+                                         values=(name,))
                     shown += 1
             else:
                 for c in all_contacts:
@@ -12899,11 +13791,10 @@ class LanMessengerApp:
             d_from_ts = d_from.timestamp() if d_from else None
             d_to_ts = d_to.replace(hour=23, minute=59, second=59).timestamp() if d_to else None
 
-            # Semantica: BUSCA POR PALAVRA filtra a lista de contatos (mostra so quem mencionou
-            # a palavra) + destaca matches no painel direito. FILTRO DE DATA afeta apenas o
-            # painel direito (mensagens do contato selecionado no intervalo). Assim o usuario
-            # pode escolher um contato e ver o que conversaram num periodo, mesmo que o contato
-            # nao tenha mensagens naquele periodo (ele continua visivel na lista).
+            # Semantica: BUSCA POR PALAVRA e/ou FILTRO DE DATA refiltram a
+            # lista de contatos — aparecem apenas as conversas que tem mensagem
+            # batendo com a palavra E dentro do periodo De/Ate. O painel direito
+            # mostra as mensagens do contato selecionado com os mesmos filtros.
             if query:
                 matching_peers = db.get_peers_with_match(
                     search_text=query, date_from=d_from_ts, date_to=d_to_ts)
@@ -12911,14 +13802,18 @@ class LanMessengerApp:
                     search_text=query, date_from=d_from_ts, date_to=d_to_ts)
                 shown = _populate_tree(visible_peers=matching_peers)
                 count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens')
+            elif d_from_ts or d_to_ts:
+                # So periodo: lista mostra apenas quem trocou mensagens
+                # (enviadas ou recebidas) dentro do De/Ate
+                period_peers = db.get_peers_with_match(
+                    date_from=d_from_ts, date_to=d_to_ts)
+                shown = _populate_tree(visible_peers=period_peers)
+                total_match = db.count_matching_messages(
+                    date_from=d_from_ts, date_to=d_to_ts)
+                count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens no período')
             else:
                 shown = _populate_tree(visible_peers=None)
-                if d_from_ts or d_to_ts:
-                    total_match = db.count_matching_messages(
-                        date_from=d_from_ts, date_to=d_to_ts)
-                    count_lbl.config(text=f'{shown} conversas  ·  {total_match} mensagens no período')
-                else:
-                    count_lbl.config(text=f'{shown} conversas')
+                count_lbl.config(text=f'{shown} conversas')
 
             # Re-renderiza painel direito com mesmos filtros se contato ainda visivel
             current = _current_peer[0]
@@ -13969,12 +14864,16 @@ class LanMessengerApp:
         self._schedule_periodic_update_check()
 
     def _schedule_periodic_update_check(self, interval_ms=30 * 60 * 1000):
-        # Verifica novamente em background; só notifica se ainda não há update pendente
+        # Verifica novamente em background; só notifica se ainda não há update pendente.
+        # Nao faz chamada a API do GitHub se _pending_update ja esta preenchido
+        # (notificado via P2P) — evita esgotar rate limit de 60 req/h compartilhado
+        # por todos os 30 PCs da LAN que usam o mesmo IP externo.
         def _on_result(has_update, ver, notes=''):
             if has_update and not self._pending_update:
                 self.root.after(0, lambda: self._show_update_bar(ver, notes))
         def _run():
-            updater.check_update_async(_on_result)
+            if not self._pending_update:  # ja sabemos do update via P2P? poupa a API
+                updater.check_update_async(_on_result)
             self.root.after(interval_ms, _run)
         self.root.after(interval_ms, _run)
 
@@ -15607,16 +16506,25 @@ class LanMessengerApp:
             import threading
             def _download_bg():
                 import updater
-                if not updater.is_update_pending():
+                success = False
+                if updater.is_update_pending():
+                    success = True
+                else:
                     # Tenta baixar silenciosamente
                     share_path = ''
                     try: share_path = self.messenger.db.get_setting('update_share_path', '')
                     except Exception: pass
                     staging = updater.download_update(share_path)
                     if staging:
-                        updater.mark_update_ready(staging)
+                        if updater.mark_update_ready(staging):
+                            success = True
                 # Notifica a interface de que o update esta pronto para instalar
-                self.root.after(0, _on_ready)
+                if success:
+                    self.root.after(0, _on_ready)
+                else:
+                    def _on_failed():
+                        self._is_downloading_update = False
+                    self.root.after(0, _on_failed)
             def _on_ready():
                 self._update_ready_to_install = True
                 self._is_downloading_update = False
@@ -15630,6 +16538,7 @@ class LanMessengerApp:
     def _check_firewall_on_startup(self):
         if not getattr(sys, 'frozen', False):
             return  # dev mode — nao mexer
+        import network
         def _bg():
             try:
                 if network.firewall_rules_present():
@@ -15665,6 +16574,7 @@ class LanMessengerApp:
         threading.Thread(target=_bg, daemon=True).start()
 
     def _prompt_firewall_fix(self):
+        import network
         try:
             resp = messagebox.askyesno(
                 APP_NAME,
@@ -16420,6 +17330,127 @@ class LanMessengerApp:
         updater.apply_update(new_exe_path, show_ui=show_ui)
         os._exit(0)
 
+    # Dialog de progresso ao clicar "Reiniciar para Atualizar" no sino.
+    # Mostra ao usuario que o update esta acontecendo (em vez de fechar direto),
+    # evitando o problema de usuario tentar reabrir o app manualmente porque acha
+    # que travou. Como o download ja terminou (silencioso), o que sobra e o passo
+    # de aplicar (PS script substitui arquivos + relanca via CreateProcess --show).
+    #
+    # UX:
+    #   1. Toplevel centralizado, sem borda, com barra azul animada
+    #   2. Texto "Preparando atualizacao..." -> "Quase pronto..." -> "Concluido!"
+    #   3. Barra fica verde, botao OK aparece
+    #   4. Click OK -> _quit() -> apply_update (PS script) -> relanca com --show
+    def _show_install_progress_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.title('MB Chat - Atualizacao')
+        try:
+            win.overrideredirect(True)
+        except Exception:
+            pass
+        win.configure(bg='#ffffff', highlightbackground='#e2e8f0',
+                      highlightcolor='#e2e8f0', highlightthickness=1)
+        win.attributes('-topmost', True)
+
+        tk.Label(win, text='Atualizando o MB Chat',
+                 font=('Segoe UI', 12, 'bold'),
+                 bg='#ffffff', fg='#0f172a').pack(pady=(20, 5))
+
+        lbl_sub = tk.Label(win, text='Preparando arquivos...',
+                           font=('Segoe UI', 9),
+                           bg='#ffffff', fg='#64748b')
+        lbl_sub.pack(pady=(0, 10))
+
+        canvas = tk.Canvas(win, width=280, height=8, bg='#f1f5f9',
+                           bd=0, highlightthickness=0)
+        canvas.pack(pady=5)
+        bar_id = canvas.create_rectangle(0, 0, 0, 8, fill='#3b82f6', outline='')
+
+        lbl_pct = tk.Label(win, text='0%',
+                           font=('Segoe UI', 8, 'bold'),
+                           bg='#ffffff', fg='#3b82f6')
+        lbl_pct.pack(pady=(5, 0))
+
+        lbl_warn = tk.Label(win,
+                            text='Aguarde - nao feche esta janela.\nO app vai reabrir sozinho ao terminar.',
+                            font=('Segoe UI', 8),
+                            bg='#ffffff', fg='#94a3b8', justify='center')
+        lbl_warn.pack(pady=(10, 10))
+
+        # Centraliza
+        try:
+            win.update_idletasks()
+            sx = win.winfo_screenwidth()
+            sy = win.winfo_screenheight()
+            x = (sx - 380) // 2
+            y = (sy - 240) // 2
+            win.geometry(f'380x240+{max(0, x)}+{max(0, y)}')
+        except Exception:
+            win.geometry('380x240')
+        win.deiconify()
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        # Botao OK (criado oculto, aparece quando barra chega em 100%)
+        def _on_ok():
+            btn_ok.config(state='disabled')
+            lbl_pct.config(text='Reiniciando...', fg='#10b981')
+            lbl_warn.config(text='Aguarde alguns segundos.\nO MB Chat vai reabrir.',
+                            fg='#64748b')
+            # Da 400ms pra UI atualizar antes de fechar
+            self.root.after(400, self._quit)
+
+        btn_ok = tk.Button(win, text='  OK  ',
+                           font=('Segoe UI', 11, 'bold'),
+                           bg='#10b981', fg='#0f172a',
+                           activebackground='#059669', activeforeground='#0f172a',
+                           relief='solid', bd=2, padx=30, pady=8,
+                           highlightbackground='#064e3b', highlightthickness=1,
+                           cursor='hand2', command=_on_ok)
+
+        # Animacao da barra: 0 -> 100% em ~2.5s (50 steps de 50ms)
+        # Como o download ja terminou, isso e progresso visual de "aplicando"
+        # mesmo. O PS script roda DEPOIS que o usuario clica OK e o app fecha.
+        state = {'step': 0}
+        steps_total = 50
+
+        def _tick():
+            state['step'] += 1
+            s = state['step']
+            pct = int((s / steps_total) * 100)
+            fill_w = int((s / steps_total) * 280)
+            try:
+                canvas.coords(bar_id, 0, 0, fill_w, 8)
+                lbl_pct.config(text=f'{pct}%')
+            except Exception:
+                return
+            # Mensagens em fases
+            if pct < 35:
+                lbl_sub.config(text='Preparando arquivos...')
+            elif pct < 70:
+                lbl_sub.config(text='Verificando integridade...')
+            elif pct < 100:
+                lbl_sub.config(text='Quase pronto...')
+            else:
+                # Concluido!
+                lbl_sub.config(text='Atualizacao concluida!', fg='#10b981')
+                lbl_pct.config(text='100%', fg='#10b981')
+                try:
+                    canvas.itemconfig(bar_id, fill='#10b981')
+                except Exception:
+                    pass
+                lbl_warn.config(text='Clique OK para reiniciar o MB Chat\ne abrir a nova versao.',
+                                fg='#0f172a', font=('Segoe UI', 9, 'bold'))
+                btn_ok.pack(pady=(8, 15))
+                return
+            self.root.after(50, _tick)
+
+        # Comeca a animacao
+        self.root.after(100, _tick)
+
     # Exibe dialog 'MB Chat' com informacoes do aplicativo.
     # Dividido em helpers pequenos por responsabilidade: header (icone+titulo+versao),
     # body (subtitulo+features) e footer (botoes Autor/OK).
@@ -16878,6 +17909,14 @@ class LanMessengerApp:
         self._update_bell_badge(n)
 
     def _on_newer_version(self, peer_version):
+        # Disparado pela rede quando um peer anuncia versao maior que a local.
+        # Garantia: 1 toast Windows POR VERSAO, com 3 camadas de dedup pra evitar
+        # spam (usuarios reclamavam de notificacao insistente que atrapalhava o trabalho):
+        #   1. network.py: dedup in-memory por versao (so chama callback 1x por versao)
+        #   2. _update_session_versions (aqui): dedup in-memory na sessao da GUI
+        #   3. update_toast_shown_for (DB): dedup persistente entre sessoes
+        # O sino (bell badge) continua marcado independente do toast, ate o usuario
+        # clicar em "Reiniciar para Atualizar" ou aplicar o update por outro caminho.
         def parse_v(v):
             try: return tuple(int(x) for x in str(v).strip().lstrip('v').split('-')[0].split('.'))
             except Exception: return (0, 0, 0)
@@ -16887,23 +17926,44 @@ class LanMessengerApp:
         if peer_v <= my_v:
             return
 
+        # === Atualiza sino (idempotente, sem popup) ===
+        # Sempre atualiza o bell badge se a versao detectada for maior que a pendente.
+        # Isso garante que o usuario sempre veja no sino qual versao esta disponivel.
         current_pend = self._pending_update.get('version', '0.0.0') if self._pending_update else '0.0.0'
-        if peer_v <= parse_v(current_pend):
-            return
+        if peer_v > parse_v(current_pend):
+            self.root.after(0, lambda: self._show_update_bar(peer_version, 'Nova atualização disponível na rede!'))
 
-        self.root.after(0, lambda: self._show_update_bar(peer_version, 'Nova atualização disponível na rede!'))
+        # === Camada 2: dedup in-memory na GUI ===
+        # Mesmo que a network.py falhe em algum caso de borda, aqui garante que
+        # nao mostraremos toast 2x para a mesma versao nesta sessao.
+        if not hasattr(self, '_update_session_versions'):
+            self._update_session_versions = set()
+        if peer_v in self._update_session_versions:
+            return  # ja mostrou toast nesta sessao
+        self._update_session_versions.add(peer_v)
+
+        # === Camada 3: dedup persistente entre sessoes (DB) ===
+        # Evita o toast voltar a aparecer toda vez que o app reinicia (ate o user
+        # de fato atualizar). update_toast_shown_for so e ultrapassado por uma
+        # versao MAIOR (ou seja, quando sai uma nova release apos esta).
         try:
             shown_for = self.messenger.db.get_setting('update_toast_shown_for', '')
         except Exception:
             shown_for = ''
-            
-        if parse_v(peer_version) > parse_v(shown_for):
-            self._show_toast_generic('Atualização Disponível',
-                                     f'A versão {peer_version} acaba de ser liberada. Clique no sininho para atualizar!')
-            try:
-                self.messenger.db.set_setting('update_toast_shown_for', peer_version)
-            except Exception:
-                pass
+
+        if peer_v <= parse_v(shown_for):
+            return  # ja notificou em sessao anterior, sino ja basta
+
+        # Marca DB ANTES do toast (defensivo: se algo der ruim no toast,
+        # mesmo assim nao tenta de novo no proximo announce)
+        try:
+            self.messenger.db.set_setting('update_toast_shown_for', peer_version)
+        except Exception:
+            pass
+
+        self._show_toast_generic(
+            'MB Chat - Atualização disponível',
+            f'Versão {peer_version} liberada. Clique no sino do app para atualizar.')
 
     def _open_bell_dropdown(self):
         # Re-check em background ao abrir o sino (se não há update pendente)
@@ -16965,7 +18025,9 @@ class LanMessengerApp:
                 def _do_restart():
                     self._pending_update = None
                     popup.destroy()
-                    self._quit()  # Aplica o update via _quit()
+                    # Mostra dialog de progresso para o usuario nao ficar no escuro
+                    # (antes fechava direto e usuario nao sabia se tinha que reabrir)
+                    self._show_install_progress_dialog()
                 tk.Button(upd_body, text='🟢 Reiniciar para Atualizar',
                           font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white',
                           relief='flat', bd=0, padx=12, pady=5, cursor='hand2',
@@ -17290,6 +18352,22 @@ class LanMessengerApp:
     def _on_typing(self, from_user, is_typing):
         if from_user in self.chat_windows:                    # janela do remetente aberta?
             self.chat_windows[from_user].set_typing(is_typing)  # atualiza indicador
+
+    # Callback: reação emoji recebida via TCP (MT_REACTION).
+    # Atualiza a linha de reações na janela de chat aberta, se houver.
+    def _on_reaction(self, from_user, msg_id, emoji, added):
+        try:
+            rxns = self.messenger.db.get_reactions(msg_id)
+            # Janelas de chat individual
+            for cw in self.chat_windows.values():
+                if hasattr(cw, '_render_reaction_mark'):
+                    cw._render_reaction_mark(msg_id, rxns)
+            # Janelas de grupo
+            for gw in getattr(self, 'group_windows', {}).values():
+                if hasattr(gw, '_render_reaction_mark'):
+                    gw._render_reaction_mark(msg_id, rxns)
+        except Exception:
+            log.exception('Erro em _on_reaction')
 
     def _on_file_incoming(self, file_id, from_user, display_name,
                           filename, filesize):
@@ -17893,7 +18971,9 @@ class LanMessengerApp:
             pending = updater.is_update_pending()
             if pending:
                 log.info("Aplicando update via PowerShell no encerramento...")
-                updater.apply_update(pending)
+                if not updater.apply_update(pending):
+                    updater.clear_update_pending()
+                    log.warning("Update pendente invalido no encerramento — limpo")
         except Exception as e:
             log.error(f"Falha ao acionar script de update no encerramento: {e}")
             
@@ -18140,8 +19220,15 @@ def _remove_autostart():
 # de colisao entre logins distintos na mesma maquina.
 def _compute_single_instance_port():
     try:
-        import getpass, hashlib
+        import getpass, hashlib, sys
         user = (getpass.getuser() or 'default').lower()
+        instance_name = ''
+        for i, arg in enumerate(sys.argv):
+            if arg == '--instance' and i + 1 < len(sys.argv):
+                instance_name = sys.argv[i + 1]
+                break
+        if instance_name:
+            user += f"_{instance_name}"
         h = int(hashlib.md5(user.encode('utf-8')).hexdigest()[:8], 16)
         return 50200 + (h % 1000)
     except Exception:
@@ -18330,6 +19417,26 @@ def main():
     # Vamos limpar processos MBChat.exe zumbis que possam ter ficado travados antes.
     _cleanup_zombie_processes()
 
+    # Restauracao de backup preparada por Ferramentas > Restaurar backup:
+    # troca o banco AGORA, antes de qualquer conexao SQLite (somos a unica
+    # instancia, entao nao ha WAL aberto — swap 100% seguro).
+    try:
+        _data_dir = _get_data_dir()
+        _restore = os.path.join(_data_dir, 'mbchat_restore.db')
+        if os.path.exists(_restore):
+            _target = os.path.join(_data_dir, 'mbchat.db')
+            for _suf in ('', '-wal', '-shm'):
+                try:
+                    os.remove(_target + _suf)
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+            os.replace(_restore, _target)
+            log.info('Backup restaurado: mbchat.db substituido no boot')
+    except Exception:
+        log.exception('Falha ao aplicar mbchat_restore.db no boot')
+
     # Se o computador foi reiniciado ou o usuario fechou o app ontem com update pronto,
     # aplica de forma invisível agora ANTES de subir o Tcl/Tkinter.
     try:
@@ -18337,8 +19444,13 @@ def main():
         pending_update_dir = updater.is_update_pending()
         if pending_update_dir:
             log.info(f"Aplicando update pendente no boot: {pending_update_dir}")
-            updater.apply_update(pending_update_dir)
-            os._exit(0)
+            if updater.apply_update(pending_update_dir):
+                os._exit(0)
+            else:
+                # Staging invalido/falhou: limpa o pending e SEGUE o boot normal.
+                # Nunca travar a abertura do app por um update pendente quebrado.
+                updater.clear_update_pending()
+                log.warning("Update pendente invalido — limpo; abrindo app normal")
     except Exception as e:
         log.error(f"Erro ao verificar update_pending no boot: {e}")
 

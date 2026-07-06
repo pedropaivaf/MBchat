@@ -6,10 +6,10 @@ import sys
 def generate_version_info(output_path=None):
     here = os.path.dirname(os.path.abspath(__file__))
     if output_path is None:
-        output_path = os.path.join(here, 'file_version_info.txt')
+        output_path = os.path.join(os.path.dirname(here), 'file_version_info.txt')
 
     # Le versao de version.py
-    ver_file = os.path.join(here, 'version.py')
+    ver_file = os.path.join(os.path.dirname(here), 'version.py')
     version = '0.0.0'
     with open(ver_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -21,7 +21,14 @@ def generate_version_info(output_path=None):
     parts = version.split('.')
     while len(parts) < 4:
         parts.append('0')
-    major, minor, patch, build = [int(p) for p in parts[:4]]
+        
+    import re
+    clean_parts = []
+    for p in parts[:4]:
+        m = re.match(r'^\d+', p)
+        clean_parts.append(m.group(0) if m else '0')
+        
+    major, minor, patch, build = [int(p) for p in clean_parts]
     ver_str = f'{major}.{minor}.{patch}.{build}'
 
     content = f'''# UTF-8

@@ -103,6 +103,26 @@ Apos o build+release, atualizar o changelog no cofre Obsidian:
 Tipos: Major Feature, Feature, Bugfix, Refactor, Build, Docs, UI, Performance, QA, Hotfix, UX
 Emojis: ver legenda no proprio changelog
 
+## Avatar, Recado, Menus modernos, Historico permanente e Backup (v1.8.28)
+
+1. **Editor de foto de perfil (`AvatarCropDialog`, gui.py)**: "Enviar foto" (Preferencias>Conta e janela Conta) abre editor com circulo fixo, arrastar para posicionar e scroll para zoom, no tema do sistema. Salva PNG **512px com mascara alpha CIRCULAR** (cantos transparentes). Nome de arquivo unico por upload (`custom_avatar_<ts>.png`): troca de foto dispara `avatar_changed` no `_save_all` (chave correta: `custom_avatar`) e Cancelar preserva a foto anterior. `_cleanup_old_custom_avatars(keep)` apaga antigas ao aplicar e orfaos no boot. Imagem invalida (ex. HEIC): aviso ao usuario; `wait_window` so roda `if dlg.winfo_exists()` (TclError visto em producao). `grab_set` apos `wait_visibility()` — chamar logo apos `deiconify` lanca "window not viewable" e abortava o `__init__` (janela nunca aparecia).
+
+2. **Nitidez de avatares**: thumbnail de rede **128px JPEG q85** em `_generate_avatar_thumbnail` (messenger). Gerado no BOOT do messenger — basta o peer abrir a versao nova para todos verem nitido. PNG circular e composto sobre BRANCO antes do JPEG (sem franja). `_make_circular_avatar` antialias 3x. Fonte do setor na lista: 10px.
+
+3. **Recado (nota do header)**: visual flat — lapis MDL2 + underline 1px que acende no foco (`#7cb8f0`). Botao emoji e **X de cancelar** so aparecem DURANTE a edicao (FocusIn mostra; FocusOut com `after(200)` + guarda `_note_picker_open` esconde). X/Esc restauram `_last_saved_note` ANTES de tirar o foco — o autosave do `_note_focus_out` ve texto igual e nao propaga nada.
+
+4. **Menus modernos**: "Ferramentas" e "Agendar" usam `_open_modern_menu` (Toplevel overrideredirect no tema, icones MDL2, hover, separador; FocusOut armado com atraso de 120ms — mesmo fix do dropdown do sino). Largura contida na janela principal (nunca passa da borda direita). O tk.Menu nativo foi removido em `_build_ui` E `_rebuild_ui_language`.
+
+5. **Historico de Mensagens**: contatos ordenados por `last_ts` DESC (mais recente no topo — era A-Z); filtro De/Ate sem busca refiltra a LISTA via `get_peers_with_match(date_from, date_to)`; modo Grupos lista TODOS os grupos com mensagens, rotulados **(fixo)** / **(temporario)** / "(encerrado)" para legados sem registro.
+
+6. **HISTORICO PERMANENTE — fix critico**: `cleanup_unknown_contacts` (roda no start) APAGAVA mensagens enviadas a grupos (`to_user='group:...'`) e broadcasts a cada boot (peers inexistentes em contacts/group_members). Query agora exclui `group:%`, `broadcast`, `system`, `all`. **NAO reverter.** Nao existe nenhuma outra poda — historico cresce sem limite.
+
+7. **Grupos persistentes**: `save_group` roda SEMPRE (temp E fixed) no create/invite/recovery de mensagem. Migration: coluna `groups.archived` (default 0). Sair/deletar/kick chama `db.archive_group` (UPDATE archived=1) em vez de DELETE — nome+tipo ficam para o historico. Boot reativa apenas `get_groups('fixed')` com `archived=0` (novo default `include_archived=False`); historico consulta com `include_archived=True`. `INSERT OR REPLACE` do save_group reativa (archived volta ao default 0) quando o usuario re-entra.
+
+8. **Backup/Restauracao integrados (menu Ferramentas)**: `_backup_history` gera zip com o banco copiado pela **API `sqlite3.Connection.backup`** (consistente com o app ABERTO — resolve o problema do WAL) + `user_themes.json` + `avatars/`. `_restore_history` valida o zip e deixa `mbchat_restore.db` na pasta de dados; `main()` faz o swap no boot (apos single-instance check, ANTES de abrir conexoes) apagando `.db/-wal/-shm` antigos. Documentado na landing (`#doc-backup`).
+
+9. **REGRA DE EDICAO DE ARQUIVOS GRANDES**: o Edit tool TRUNCA arquivos grandes (aconteceu 2x: messenger.py e o final de gui.py). Editar gui.py/messenger.py/database.py SEMPRE via script python (ler arquivo -> `.replace()` com assert de unicidade -> `ast.parse` -> gravar com `newline=''`).
+
 ## Blindagem de rede e auto-fix de firewall (v1.4.59)
 
 Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-recuperaveis:
@@ -394,7 +414,7 @@ Commit: `a3a0363` — branch main, aguardando validação e release pelo usuári
 
 **Problema:** `FileSender` sempre conectava em `peer_ip:50102` (hardcoded `TCP_PORT+1`). Se a porta 50102 estiver ocupada na maquina do destinatario, o `FileReceiver` faz bind em porta fallback (50112, 50122...) e o sender conecta num port errado → "Connection refused" imediato → status "Erro".
 
-**Causa raiz confirmada em producao:** cassiana.dalton (192.168.0.111) — `TcpTestSucceeded: False` na porta 50102, firewall bloqueando inbound TCP 50102.
+**Causa raiz confirmada em producao:** PC de usuario interno — `TcpTestSucceeded: False` na porta 50102, firewall bloqueando inbound TCP 50102.
 
 **Fix implementado:**
 1. `network.py _make_packet`: adiciona `'file_port': getattr(self, 'file_port', TCP_PORT+1)` ao announce UDP
@@ -473,11 +493,302 @@ Problemas resolvidos:
 - NUNCA usar [System.Diagnostics.Process] no updater.py para relançar o aplicativo. Mantenha Start-Process.
 - NUNCA forçar requests à API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.
 
-## Transfer�ncia de Arquivos (v1.8.23+)
-- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transfer�ncia.
-- **Scroll Wheel Global:** O scroll na tela de transfer�ncias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inv�s do Canvas.
+## Transfer�ncia de Arquivos (v1.8.23+)
+- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transfer�ncia.
+- **Scroll Wheel Global:** O scroll na tela de transfer�ncias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inv�s do Canvas.
 - **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
-- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transfer�ncias por nome do arquivo ou do contato.
+- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transfer�ncias por nome do arquivo ou do contato.
 
 ## Regra de Versionamento
 Ao desenvolver localmente, use o sufixo '-dev' na versao em version.py (ex: 1.8.23-dev). Isso impede que a rede P2P notifique erroneamente uma atualizacao aos outros usuarios durante a sua fase de teste. No momento do build/lancamento final da release, retire esse sufixo.
+
+## Fix do relancamento pos-update (commit 3b08738, alvo v1.8.26)
+
+### Problema diagnosticado em producao (26/mai/2026)
+
+Auto-update v1.8.24 -> v1.8.25 falhou em todas as 30 maquinas, forcando reinstalacao manual via web installer. Investigacao mostrou DOIS bugs encadeados:
+
+1. **Download silencioso quebrado em v1.8.24**: `gui.py:_show_update_bar._download_bg()` chamava `updater.download_update(share_path)` passando string onde a funcao esperava callable. Erro `'str' object is not callable` interno em `_download_from_github`, swallowed pelo try/except, retorno None. Resultado: `update_pending.txt` nunca era criado.
+
+2. **Botao mentindo na UI**: em v1.8.24, `_on_ready()` era chamado mesmo se download falhasse → `_update_ready_to_install = True` → botao "Reiniciar para Atualizar" aparecia para o usuario clicar. Click → `_quit()` → `is_update_pending() = None` → `apply_update` nao roda → app fechava sem nunca reabrir.
+
+**Diagnostico via `%APPDATA%\MBChat\mbchat.log`**:
+```
+[INFO] Baixando update v1.8.25 do GitHub...
+[WARNING] Download GitHub falhou: 'str' object is not callable
+```
+
+Ambos os bugs ja estao corrigidos em v1.8.25 (commits 8cafc18 + 5623eed). `download_update(arg1=None, progress_cb=None)` aceita string ou callable. `_show_update_bar` so chama `_on_ready` se `success=True`.
+
+### Bug remanescente em v1.8.25 — relancamento via Start-Process
+
+`updater.apply_update()` em v1.8.25 gera script PowerShell que relanca o novo MBChat.exe via `Start-Process`. Em maquinas com conta Windows `nome.sobrenome` (todas as 30 da MB), Windows gera 8.3 short name `PEDRO~1.PAI` para o path do usuario. PyInstaller frozen exe carrega env vars com 8.3 paths para %TEMP%. `Start-Process` herda essas vars e o novo MBChat falha com "Failed to load Python DLL".
+
+**Fix em v1.8.26 (commit 3b08738)** — `updater.py:apply_update`:
+- Relanca via `[System.Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess) — herda env LONGO do pai
+- Fallback para `Start-Process` se CreateProcess falhar (raro)
+- Funcao aceita `**kwargs` (corrige `apply_update(path, show_ui=...)` em gui.py:16424)
+- Valida `staging_dir` antes de gerar script (evita PS quebrado)
+
+**ATENCAO**: O paragrafo anterior no CLAUDE.md ("Regras estritas...") dizendo "NUNCA usar [System.Diagnostics.Process]" e "Mantenha Start-Process" estava errado para o caso de contas com 8.3 paths. A regra correta e:
+1. Tentar **CreateProcess** primeiro (resolve 8.3 paths, herda env do pai)
+2. **Start-Process** como fallback (cobre casos sem 8.3 e maquinas onde CreateProcess falha)
+
+### Mecanica da transicao v1.8.25 -> v1.8.26
+
+O `apply_update` que executa o salto e o da v1.8.25 (codigo congelado dentro do MBChat.exe instalado). A correcao do CreateProcess so vale DEPOIS da v1.8.26 estar rodando. Por isso o salto v1.8.25 -> v1.8.26 ainda pode deixar app fechado em maquinas com 8.3. Mas:
+
+- **Arquivos sao substituidos** (PS script copia _internal/ novo antes de tentar relancar)
+- App fica em v1.8.26 no disco
+- Usuario abre pelo icone do menu Iniciar (Explorer = env limpo) -> abre normal
+- A partir de v1.8.26 -> v1.8.27+ tudo automatico
+
+## Deploy em massa via SMB+schtasks (tools/deploy_mbchat.ps1)
+
+Quando o auto-update do botao nao for confiavel (caso de v1.8.25 -> v1.8.26 com contas 8.3), use o script de deploy em massa do PC de admin no dominio para forcar a instalacao do web installer (Inno Setup) em todas as maquinas de uma vez. Nao depende de WinRM — usa apenas SMB + schtasks.
+
+**Pre-requisitos:**
+- Estar logado em conta de administrador de dominio (ou ter PSCredential para os PCs)
+- Cada PC alvo precisa: share C$ acessivel ao admin, servico Schedule ativo (default)
+- Installer ja gerado localmente: `python build.py --version 1.8.26 --release` (ou apenas o build sem release: ver Regra de Versionamento)
+
+**Como rodar:**
+
+1. Copiar `tools/pcs.txt.example` para `tools/pcs.txt` e listar os 30 hosts (1 por linha, hostname ou IP).
+   - `tools/pcs.txt` esta no `.gitignore` — nao vai pro repo.
+2. Rodar do PC de admin no dominio:
+```powershell
+# Deploy real
+.\tools\deploy_mbchat.ps1 `
+    -InstallerPath ".\dist\MBChat_Setup.exe" `
+    -PcListFile ".\tools\pcs.txt"
+
+# Com credencial explicita
+$cred = Get-Credential
+.\tools\deploy_mbchat.ps1 -InstallerPath "..." -PcListFile "..." -Credential $cred
+
+# Apenas testar conectividade (sem instalar)
+.\tools\deploy_mbchat.ps1 -InstallerPath "..." -PcListFile "..." -DryRun
+```
+
+**O que o script faz para cada PC:**
+
+1. **Ping** — se offline, pula e marca falha
+2. **Test C$** — Test-Path \\PC\C$\Windows (com PSCredential opcional)
+3. **Copy** — copia MBChat_Setup.exe para `\\PC\C$\Windows\Temp\`
+4. **Run** — cria schtask one-shot via `schtasks /create /s PC /ru SYSTEM /rl HIGHEST`, dispara, aguarda terminar (poll status 5s, timeout 180s default), deleta task
+5. **Verify** — le versao do MBChat.exe instalado via `(Get-Item ...).VersionInfo.FileVersion`
+6. **Cleanup** — remove installer do C:\Windows\Temp\
+
+**Flags Inno Setup usadas:**
+- `/VERYSILENT` — sem UI nenhuma
+- `/SUPPRESSMSGBOXES` — suprime qualquer dialog (msgbox de uninstall data assume default)
+- `/CLOSEAPPLICATIONS` — fecha MBChat.exe antes (alem do `CloseApplications=force` em installer.iss)
+- `/NORESTART` — nunca reinicia Windows
+- `/LOG="C:\Windows\Temp\MBChat_Setup.log"` — log no PC alvo para debug
+
+**Output:**
+- Console colorido com status de cada PC ([OK v1.8.26], [OFFLINE], [SEM C$], [COPY FAIL], [INSTALL FAIL])
+- Lista de PCs com falha no final (para retry/manual)
+- CSV `deploy_report_YYYYMMDD_HHMMSS.csv` com colunas: PC, Ping, Share, Copy, Install, Version, Error
+
+**Por que schtasks /s e nao WinRM/PSExec:**
+- WinRM pode estar desabilitado em ambiente sem GPO de WinRM
+- PsExec exige download separado e tem fama de "ferramenta de hacker" (alguns AVs marcam)
+- schtasks /s e nativo do Windows, funciona em qualquer Windows Pro com share C$ acessivel
+- Ja documentado no CLAUDE.md (secao firewall) como o mecanismo padrao de fix remoto
+
+**Pos-deploy:**
+
+Depois que todos os PCs rodaram o installer:
+1. Apos uns 30s, todos os MBChat.exe ja iniciaram automaticamente (atalho de autostart `--silent`)
+2. Conferir no proprio MB Chat (peer list) que todos voltaram online com a nova versao
+3. Painel admin → "Monitor de Versoes" mostra a versao de cada peer e destaca em vermelho os atrasados
+
+## Backup e Restauracao do Historico
+
+### Onde ficam os dados do usuario
+
+```
+%APPDATA%\.mbchat\          ← pasta oculta, DOT no nome (nao confundir com %APPDATA%\MBChat\)
+├── mbchat.db               ← banco SQLite: mensagens, contatos, configuracoes, lembretes
+├── mbchat.db-wal           ← WAL do SQLite — OBRIGATORIO salvar junto com .db
+├── mbchat.db-shm           ← shared memory — OBRIGATORIO salvar junto com .db
+└── user_themes.json        ← temas personalizados criados pelo usuario
+```
+
+**ATENCAO**: os tres arquivos (`mbchat.db`, `mbchat.db-wal`, `mbchat.db-shm`) formam uma unidade atomica do SQLite em WAL mode. Salvar so o `.db` sem os outros dois pode resultar em banco corrompido ou historico incompleto.
+
+### Procedimento de backup manual
+
+1. Fechar o MBChat completamente (sair pelo icone na bandeja — nao so minimizar)
+2. Copiar a pasta inteira `%APPDATA%\.mbchat\` para local seguro (pendrive, rede, nuvem)
+3. Arquivos baixados via transferencia ficam em `Documentos\MBFiles\` — salvar separado se necessario
+
+### Restauracao apos reinstalacao
+
+1. Fechar o MBChat (se aberto)
+2. Copiar os arquivos de volta para `%APPDATA%\.mbchat\`
+3. Abrir o MBChat — historico completo restaurado
+
+### AVISO: Revo Uninstaller modo Avancado
+
+O Revo Uninstaller no modo **Avancado** varre o disco por arquivos "orfaos" e pode deletar a pasta `%APPDATA%\.mbchat\` mesmo o nosso installer nao a tocando (o Inno Setup preserva a pasta de dados por design).
+
+**Sempre fazer backup antes de usar Revo Uninstaller ou qualquer desinstalador de terceiros.**
+**Usar modo Moderado no Revo, nunca Avancado, para preservar historico.**
+
+### Banco corrompido (DatabaseError: database disk image is malformed)
+
+Causa mais comum: copia do `.db` enquanto o MBChat estava aberto (WAL nao foi checkpointed).
+Fix: se tiver os tres arquivos (`.db` + `.db-wal` + `.db-shm`) da mesma sessao, restaurar os tres juntos e abrir o MBChat — o SQLite faz o checkpoint automaticamente e recupera os dados.
+Se so tiver o `.db` sem os WAL files e estiver corrompido, os dados sao irrecuperaveis.
+
+## Clean install no webinstaller (installer.iss)
+
+Em 27/mai/2026 o `installer.iss` foi reforcado para garantir **instalacao 100% limpa por cima** de qualquer versao anterior, **preservando o banco de dados e configuracoes** do usuario (que ficam em `%APPDATA%\.mbchat\`, intocado pelo installer).
+
+### O que o installer faz quando roda por cima de v1.8.24/v1.8.25:
+
+**Fase 1 - Pre-install (Pascal `CurStepChanged(ssInstall)`):**
+1. `taskkill /f /im MBChat.exe` — mata o app em qualquer lugar (mais robusto que o `CloseApplications=force` sozinho)
+2. Le do registro `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1` (e WOW6432Node + HKCU como fallback) o caminho do `unins000.exe`
+3. Roda o uninstaller anterior com `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPDATA` — desinstala a versao antiga sem prompt nenhum, e o `/SUPPRESSMSGBOXES` faz o MsgBox "manter historico?" retornar IDYES default → preserva os dados
+4. `taskkill` de novo (defensivo, caso o uninstaller tenha relancado algo)
+
+**Fase 2 - InstallDelete (limpeza de resquicios em locais nao-padrao):**
+
+Apaga EXEs/folders/scripts orfaos que podem ter sobrado de versoes muito antigas (--onefile, builds manuais, instalacoes per-user em LocalAppData, scripts de update interrompidos):
+- `{userdesktop}\MBChat.exe`, `{commondesktop}\MBChat.exe`
+- `{userappdata}\MBChat\MBChat.exe`, `{userappdata}\MBChat\MBChat_new.exe`, `{userappdata}\MBChat_new.exe`
+- `{localappdata}\Programs\MBChat\` (pasta INTEIRA, nao so o EXE) + `_internal`
+- `{userappdata}\MBChat\update_staging`, `{userappdata}\MBChat\MBChat_update.zip`, `{userappdata}\MBChat\update.ps1`, `{userappdata}\MBChat\update_pending.txt`
+- Atalhos orfaos: `{userdesktop}\MB Chat.lnk`, `{userdesktop}\MBChat.lnk`, `{commondesktop}\MBChat.lnk`, `{userstartup}\MBChat.lnk`
+
+**Fase 3 - Install normal:**
+
+Copia novo MBChat.exe + `_internal` para `C:\Program Files\MBChat\` com flag `ignoreversion`.
+
+**Fase 4 - Post-install:**
+
+Cria/recria regras de firewall via `netsh` (`[Run]` section).
+
+### O que NUNCA e tocado pelo installer:
+
+- `%APPDATA%\.mbchat\` (com ponto, pasta oculta) — contem o banco SQLite `mbchat.db` e settings → **DB e historico preservados**
+- `%APPDATA%\MBChat\mbchat.log` (log do app — apaga so se uninstall escolher "Remover TUDO")
+
+### Caminhos de pastas usadas pelo MBChat (importante nao confundir):
+
+- `%APPDATA%\.mbchat\` (lowercase, com dot) — **dados do usuario** (DB SQLite, settings, user_themes.json, etc.) — **NUNCA mexer**
+- `%APPDATA%\MBChat\` (capitalized, sem dot) — **cache do updater** (zip baixado, script PS, staging, log) — pode limpar
+- `C:\Program Files\MBChat\` — **binarios** (MBChat.exe, _internal/, unins000.exe) — substitui no install
+
+### Fluxo completo apos esse fix:
+
+1. **v1.8.24 → v1.8.25 (com novo installer.iss)**: rodar webinstaller novo → clean install, DB preservado, regras firewall recriadas, atalhos corretos
+2. **v1.8.25 → v1.8.26 (auto-update via botao "Reiniciar para Atualizar")**: silent download funciona (fix de v1.8.25), `apply_update` usa CreateProcess (fix em updater.py do commit 3b08738), relanca limpo em contas `nome.sobrenome`
+3. **v1.8.25 → v1.8.26 (silencioso no proximo reboot do PC)**: `update_pending.txt` ja foi criado pelo silent download; ao abrir o app de novo, `is_update_pending()` retorna o path, `apply_update` roda com CreateProcess
+4. **v1.8.26 → v1.8.27+**: tudo silencioso, sem manutencao manual
+
+### Por que NAO precisa rodar o webinstaller novamente depois da v1.8.25 (com fixes):
+
+A partir da v1.8.25 com `updater.py` corrigido (CreateProcess) e `installer.iss` corrigido (clean install), TODOS os componentes do auto-update funcionam:
+- Silent download em background (fixo desde v1.8.25)
+- Botao "Reiniciar para Atualizar" (so aparece quando download terminou de verdade — checagem `if success` no `_show_update_bar`)
+- `_quit()` aplica update se `update_pending.txt` existe
+- `main()` aplica update no boot se `update_pending.txt` existe
+- PowerShell relanca via `[System.Diagnostics.Process]::Start` com `UseShellExecute=$false` (resolve 8.3 paths)
+- Fallback `Start-Process` caso CreateProcess falhe
+
+Resultado: **o webinstaller so e necessario uma vez (para sair da v1.8.24)**. A partir da v1.8.25 com fixes, todos os updates futuros sao automaticos.
+
+## Auto-update — fixes finais e validacao (commits 9a254a2 + 92c0903)
+
+### Bugs encontrados e corrigidos durante testes em 27/mai/2026
+
+1. **PS syntax error** — `$oldExe: $_` no script PowerShell gerado por `apply_update()` causava `InvalidVariableReferenceWithDrive`. O `:` apos `$oldExe` era interpretado como drive specifier. Fix: `${{oldExe}}` no template f-string → gera `${oldExe}` no PS output.
+
+2. **Acesso negado em Program Files** — o PS script rodava como usuario normal, sem permissao pra deletar/copiar em `C:\Program Files\MBChat\_internal\`. Fix: auto-elevacao UAC no inicio do script PS (`IsInRole(Administrator)` + `Start-Process -Verb RunAs`). Se user negar UAC, tenta sem admin (funciona se app estiver em pasta de usuario).
+
+3. **Notificacao toast spam** — cada peer ja atualizado mandava announce a cada 30s, gerando N toasts por ciclo. Fix: 3 camadas de dedup (network.py in-memory set + gui.py in-memory set + DB persistente). Toast aparece 1x por versao, sino fica marcado ate usuario clicar.
+
+4. **Botao OK invisivel** — no dialog de progresso ("Atualizacao concluida!"), o botao OK era branco sobre verde com `relief='flat'`. Usuarios nao viam. Fix: fonte 11 preta, `relief='solid'`, `bd=2`, padding generoso.
+
+5. **App nao reabria apos update** — alem do PS syntax error, o `--show` flag nao era passado ao relancamento. Fix: `$psi.Arguments = "--show"` no CreateProcess + fallback Start-Process.
+
+### Validacao em teste local (27/mai/2026)
+
+Ambos os fluxos testados com simulacao v1.8.25 → v1.8.26 (staging local + announce UDP fake):
+
+**Fluxo 1 — Botao (sino → progress → OK → fecha → reabre):**
+1. Peer anuncia versao nova via UDP → toast 1x + sino vermelho
+2. Sino mostra "Nova versao X disponivel" + botao verde "Reiniciar para Atualizar"
+3. Click → dialog de progresso centralizado (barra animada 0→100% em ~2.5s)
+4. "Atualizacao concluida!" → botao OK grande preto com borda
+5. Click OK → `_quit()` → `apply_update` gera PS → PS auto-eleva UAC → mata MBChat, copia _internal novo, sanity check, cleanup, relanca via CreateProcess com `--show`
+6. App reabre como versao nova (~4-5 segundos total)
+
+**Fluxo 2 — Boot (reboot do PC → app abre atualizado):**
+1. `update_pending.txt` existe (criado pelo download silencioso)
+2. `main()` detecta pending → `apply_update()` → gera PS + `os._exit(0)`
+3. PS auto-eleva, copia arquivos, relanca
+4. App abre como versao nova
+
+**Compatibilidade:** Windows 10 e Windows 11 (testado em Win11, PS syntax e UAC funcionam em ambos).
+
+### Procedimento de lancamento de nova versao (para uso no escritorio)
+
+**Passo 1 — Build + Release (do PC de dev ou admin):**
+```bash
+git pull
+python build.py --version 1.8.26 --release
+```
+Isso faz: bump version.py → build PyInstaller → installer Inno Setup → zip → cria GitHub Release v1.8.26 com assets.
+
+**Passo 2 — Deploy em massa via installer (opcao A — recomendado para primeira vez):**
+Rodar do PC admin no dominio com `tools\deploy_mbchat.ps1` (ver secao anterior).
+Ou: colocar `MBChat_Setup.exe` no servidor/share que todos acessam e pedir pra executar.
+
+**Passo 3 — Verificacao:**
+Apos deploy, conferir no MB Chat que todos os peers aparecem com a versao nova (painel admin ou peer list).
+
+**A partir dai:** v1.8.27, v1.8.28 etc. sao 100% automaticos. O usuario ve o sino, clica Reiniciar para Atualizar, ve a barra de progresso, clica OK, app reabre atualizado. Ou simplesmente reinicia o PC e o app ja abre na versao nova. Nunca mais precisa de instalador manual.
+
+## Peer VPN visivel mas duplo-clique nao abre chat (incidente 27/mai/2026)
+
+### Sintoma
+Usuario interno (ex: usuario.lan, 192.168.0.x) ve o peer VPN (ex: usuario.vpn, 10.0.0.x) na lista mas duplo-clique nao faz nada e clique-direito nao exibe menu. Afeta apenas o par especifico — outros usuarios conseguem interagir normalmente.
+
+### Causa raiz
+O banco local do usuario afetado acumulou registros duplicados ou com user_id desatualizado para o peer VPN — residuo de antes da v1.6.9 (persistent user_id). 
+
+O `_load_saved_contacts` (gui.py) na inicializacao carrega o registro do banco como `status='online'` (ultimo estado salvo), cria um tree item (iid1) e registra `peer_items[uid_antigo] = iid1`. Quando o peer anuncia via VPN com seu uid ATUAL (persistente desde v1.6.9), o `_add_contact` cria um SEGUNDO item (iid2) com `peer_items[uid_atual] = iid2`. O usuario ve iid1 (carregado do banco) na lista — que NAO esta em peer_items com o uid correto. O `_get_selected_peer` itera peer_items procurando `iid == iid1` mas so encontra uid_antigo (cujo mapeamento pode estar inconsistente). Resultado: retorna None, nada acontece.
+
+### Fix imediato (sem nova release)
+Deletar o registro do peer no banco do usuario afetado — forcando redescoberta via UDP:
+
+```powershell
+taskkill /f /im MBChat.exe
+Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-tools-win-x64-3460100.zip" -OutFile "$env:TEMP\sq.zip"
+Expand-Archive "$env:TEMP\sq.zip" -DestinationPath "$env:TEMP\sq" -Force
+$sq = Get-ChildItem "$env:TEMP\sq" -Recurse -Filter "sqlite3.exe" | Select-Object -First 1 -ExpandProperty FullName
+cd "$env:APPDATA\.mbchat"
+& $sq mbchat.db "DELETE FROM contacts WHERE ip_address='IP_DO_PEER_VPN';"
+Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"
+```
+
+Historico de mensagens (tabela `messages`) NAO e afetado. Apenas o registro de descoberta e removido.
+
+### Fix estrutural (v1.8.27)
+`_on_tree_dbl` trocou `selection()` por `identify_row(e.y)` como lookup principal, tornando o duplo-clique robusto a qualquer mapeamento inconsistente entre iid e peer_items. Mesmo que o registro do banco fique corrompido, o chat abre normalmente apos v1.8.27.
+
+`_on_tree_right` remove o bloqueio por tag `offline` — so bloqueia se o iid nao estiver em peer_items, evitando que peers VPN fiquem sem menu de contexto.
+
+### Log diagnostico
+A partir de v1.8.27, cada duplo-clique registra no `%APPDATA%\MBChat\mbchat.log`:
+```
+[DEBUG] [DBL] identify_row='I005' sel=('I003',) peer_items=28
+[DEBUG] [DBL] item='I005' uid='usuario.vpn@...' tags=('online',)
+```
+Se `uid=None` e `tags=('offline',)` — registro inconsistente no banco, aplicar fix acima.

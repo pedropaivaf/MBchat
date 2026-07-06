@@ -6,12 +6,12 @@ import os
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ICON_PNG = os.path.join(HERE, 'assets', 'mbchat_icon.png')
+ICON_PNG = os.path.join(os.path.dirname(HERE), 'assets', 'mbchat_icon.png')
 
 
 def save_icon(output_path=None):
     if output_path is None:
-        output_path = os.path.join(HERE, 'assets', 'mbchat.ico')
+        output_path = os.path.join(os.path.dirname(HERE), 'assets', 'mbchat.ico')
 
     if not os.path.exists(ICON_PNG):
         print(f'ERRO: Icone PNG nao encontrado em {ICON_PNG}')

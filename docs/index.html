@@ -408,8 +408,8 @@
         .docs-topbar-arrow svg { width: 18px; height: 18px; }
 
         .docs-topbar-inner {
-            max-width: 900px;
-            margin: 0 auto;
+            max-width: none;
+            margin: 0;
             display: flex;
             gap: 0;
             padding: 0 2rem;
@@ -458,8 +458,8 @@
         }
 
         .docs-container {
-            max-width: 900px;
-            margin: 0 auto;
+            max-width: none;
+            margin: 0;
             padding: 0 2rem 4rem;
         }
 
@@ -820,6 +820,8 @@
             <a href="#doc-vpn">VPN / Home-office</a>
             <a href="#doc-multiuser">Multi-usuário</a>
             <a href="#doc-firewall">Firewall</a>
+            <a href="#doc-vpn-peer-clique">Peer VPN sem clique</a>
+            <a href="#doc-backup">Backup</a>
             <a href="#doc-desinstalar">Desinstalação</a>
         </div>
         <button class="docs-topbar-arrow right" id="docs-arrow-right" aria-label="Rolar para direita">
@@ -868,48 +870,111 @@
 
         <div class="docs-section fade-in" id="doc-banco">
             <h3>Banco de Dados</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                O MB Chat usa <strong>SQLite local em cada máquina</strong> — não há servidor central nem banco compartilhado. Cada PC guarda o próprio histórico, contatos e configurações. O banco roda em modo <strong>WAL (Write-Ahead Logging)</strong>, que permite leituras e escritas simultâneas com segurança e desempenho.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Motor e arquivos</h4>
             <table class="docs-table">
                 <thead>
-                    <tr>
-                        <th>Tabela</th>
-                        <th>Conteúdo</th>
-                    </tr>
+                    <tr><th>Item</th><th>Valor</th></tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td><code>messages</code></td>
-                        <td>Histórico de mensagens (texto, imagens, arquivos)</td>
-                    </tr>
-                    <tr>
-                        <td><code>contacts</code></td>
-                        <td>Contatos conhecidos (nome, IP, status, departamento)</td>
-                    </tr>
-                    <tr>
-                        <td><code>groups</code></td>
-                        <td>Grupos criados (nome, tipo, membros)</td>
-                    </tr>
-                    <tr>
-                        <td><code>group_members</code></td>
-                        <td>Membros de cada grupo</td>
-                    </tr>
-                    <tr>
-                        <td><code>reminders</code></td>
-                        <td>Lembretes (simples e programados)</td>
-                    </tr>
-                    <tr>
-                        <td><code>file_transfers</code></td>
-                        <td>Histórico de transferências de arquivos</td>
-                    </tr>
-                    <tr>
-                        <td><code>settings</code></td>
-                        <td>Preferências do usuário (tema, alertas, rede)</td>
-                    </tr>
-                    <tr>
-                        <td><code>polls / poll_votes</code></td>
-                        <td>Enquetes de grupo e votos</td>
-                    </tr>
+                    <tr><td>Motor</td><td>SQLite 3 (embutido no app, sem instalação)</td></tr>
+                    <tr><td>Banco principal</td><td><code>%APPDATA%\.mbchat\mbchat.db</code></td></tr>
+                    <tr><td>Write-Ahead Log</td><td><code>%APPDATA%\.mbchat\mbchat.db-wal</code></td></tr>
+                    <tr><td>Shared memory</td><td><code>%APPDATA%\.mbchat\mbchat.db-shm</code></td></tr>
+                    <tr><td>Temas personalizados</td><td><code>%APPDATA%\.mbchat\user_themes.json</code></td></tr>
                 </tbody>
             </table>
+            <div class="docs-note" style="border-left-color: #e0a800;">
+                <strong>⚠️ Os três arquivos <code>.db</code> + <code>.db-wal</code> + <code>.db-shm</code> são uma unidade atômica do WAL.</strong> Ao fazer backup manual (copiando arquivos), salve os três juntos — copiar só o <code>.db</code> com o app aberto pode resultar em banco incompleto ou corrompido. O <strong>Backup pelo próprio app</strong> (Ferramentas &gt; Backup do histórico) resolve isso usando a API de cópia consistente do SQLite. Veja <a href="#doc-backup">Backup e Restauração</a>.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Padrões do esquema (convenções)</h4>
+            <ul style="color: var(--gray-400); font-size: 0.9rem; line-height: 1.7; padding-left: 1.2rem;">
+                <li><strong>Migrações aditivas:</strong> colunas novas entram via <code>ALTER TABLE ... ADD COLUMN</code> protegido por <code>try/except</code> — nunca apagam dados nem quebram bancos antigos. Tabelas usam <code>CREATE TABLE IF NOT EXISTS</code>.</li>
+                <li><strong>Timestamps:</strong> sempre <code>REAL</code> (epoch Unix em segundos, ex.: <code>timestamp</code>, <code>created_at</code>, <code>remind_at</code>).</li>
+                <li><strong>Booleanos:</strong> <code>INTEGER</code> 0/1 (ex.: <code>is_sent</code>, <code>is_read</code>, <code>archived</code>, <code>completed</code>).</li>
+                <li><strong>Listas/estruturas:</strong> guardadas como <code>TEXT</code> em JSON (ex.: <code>polls.options</code>, <code>reminders.invited_uids</code>).</li>
+                <li><strong>Identidade:</strong> o <code>user_id</code> do usuário é <strong>persistente</strong> (salvo em <code>local_user</code>) — não muda ao trocar de Wi-Fi para Ethernet, evitando histórico fragmentado e usuários fantasmas.</li>
+                <li><strong>SQL parametrizado:</strong> todas as queries usam <code>?</code> (nunca concatenação de strings) — sem injeção de SQL.</li>
+                <li><strong>Histórico permanente:</strong> mensagens nunca são podadas (cresce sem limite). Grupos encerrados são <strong>arquivados</strong> (<code>archived=1</code>), não apagados, para preservar nome e tipo no histórico.</li>
+            </ul>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Conexão e PRAGMAs</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 0.6rem;">
+                Cada thread tem a própria conexão (<code>threading.local</code>), aberta com:
+            </p>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.82rem;overflow-x:auto;"><code>PRAGMA journal_mode=WAL      -- leituras simultâneas a escritas
+PRAGMA busy_timeout=30000    -- aguarda até 30s se o banco estiver ocupado
+PRAGMA foreign_keys=ON       -- integridade referencial ativa</code></pre>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Tabelas</h4>
+            <table class="docs-table">
+                <thead>
+                    <tr><th>Tabela</th><th>Colunas principais</th><th>Conteúdo</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>local_user</code></td><td>user_id, display_name, status, note, ramal, avatar_index</td><td>Identidade do usuário local (singleton id=1, user_id persistente)</td></tr>
+                    <tr><td><code>contacts</code></td><td>user_id (PK), display_name, ip_address, hostname, status, department, ramal, avatar_data</td><td>Peers conhecidos na rede</td></tr>
+                    <tr><td><code>messages</code></td><td>id (PK), msg_id, from_user, to_user, content, msg_type, timestamp, is_sent, is_read, reply_to_id, file_path</td><td>Histórico completo (texto, imagens, arquivos, sistema). Índices por usuários e por tempo</td></tr>
+                    <tr><td><code>file_transfers</code></td><td>file_id (UNIQUE), from_user, to_user, filename, filepath, filesize, status, progress, timestamp</td><td>Histórico de transferências (enviadas e recebidas)</td></tr>
+                    <tr><td><code>settings</code></td><td>key (PK), value</td><td>Preferências chave-valor (tema, alertas, rede, VPN, etc.)</td></tr>
+                    <tr><td><code>groups</code></td><td>group_id (PK), name, group_type (temp/fixed), creator_uid, archived</td><td>Grupos de chat (arquivados em vez de apagados)</td></tr>
+                    <tr><td><code>group_members</code></td><td>group_id, uid, display_name, ip, is_admin</td><td>Membros de cada grupo (chave composta group_id+uid)</td></tr>
+                    <tr><td><code>reactions</code></td><td>msg_id, emoji, from_user, ts</td><td>Reações emoji por mensagem e usuário</td></tr>
+                    <tr><td><code>polls</code> / <code>poll_votes</code></td><td>poll_id, group_id, question, options (JSON) / voter_uid, option_index</td><td>Enquetes de grupo e votos</td></tr>
+                    <tr><td><code>reminders</code></td><td>id (PK), text, remind_at, completed, recurrence_rule, share_status, invited_uids (JSON)</td><td>Lembretes pessoais, recorrentes e compartilhados</td></tr>
+                    <tr><td><code>manual_peers</code></td><td>ip (PK), note, created_at</td><td>Peers fora da LAN (VPN/Tailscale). Vazio = zero overhead na LAN</td></tr>
+                    <tr><td><code>block_list</code></td><td>user_id (PK), display_name, ip_address, blocked_at</td><td>Usuários bloqueados</td></tr>
+                    <tr><td><code>rooms</code></td><td>id (PK), name</td><td>Salas de reunião (Sala de Vidro, Marcus Barra, Certificado Digital)</td></tr>
+                    <tr><td><code>bookings</code></td><td>booking_id (PK), room_id (FK), title, creator_uid, start_ts, end_ts, status, is_deleted</td><td>Reservas de sala (Agendar &gt; Reunião). Índice por sala+horário</td></tr>
+                    <tr><td><code>booking_participants</code></td><td>booking_id (FK), uid, display_name, response</td><td>Convidados de cada reserva (UNIQUE booking_id+uid)</td></tr>
+                </tbody>
+            </table>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Esquema canônico (DDL das tabelas centrais)</h4>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.8rem;overflow-x:auto;"><code>CREATE TABLE IF NOT EXISTS local_user (
+    id INTEGER PRIMARY KEY CHECK (id = 1),   -- singleton
+    user_id TEXT NOT NULL,                    -- persistente (MAC+hostname)
+    display_name TEXT NOT NULL,
+    status TEXT DEFAULT 'online',
+    note TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    user_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    status TEXT DEFAULT 'offline',
+    last_seen REAL NOT NULL,
+    first_seen REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    msg_id TEXT NOT NULL,
+    from_user TEXT NOT NULL,
+    to_user TEXT NOT NULL,        -- user_id, 'group:...', 'broadcast'
+    content TEXT NOT NULL,
+    msg_type TEXT DEFAULT 'text', -- text | file | system
+    timestamp REAL NOT NULL,
+    is_sent INTEGER DEFAULT 0,
+    is_read INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_messages_users ON messages(from_user, to_user);
+CREATE INDEX IF NOT EXISTS idx_messages_time  ON messages(timestamp);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);</code></pre>
+            <div class="docs-note" style="margin-top: 1rem;">
+                <strong>Resumo do que importa:</strong> banco SQLite por máquina, em <code>%APPDATA%\.mbchat\</code>, modo WAL (3 arquivos atômicos), esquema evolui só por migrações aditivas, histórico permanente sem poda. O instalador oficial <strong>nunca toca</strong> nessa pasta — seus dados sobrevivem a updates e reinstalações.
+            </div>
         </div>
 
         <div class="docs-section fade-in" id="doc-portas">
@@ -1069,6 +1134,112 @@
             </ol>
         </div>
 
+        <div class="docs-section fade-in" id="doc-vpn-peer-clique">
+            <h3>Peer VPN visível mas duplo-clique não abre chat</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Sintoma: um colega em home-office (VPN) aparece na lista de contatos mas duplo-clique não abre nada e clique-direito não exibe menu. Afeta apenas a relação entre dois usuários específicos — outros conseguem clicar normalmente.
+            </p>
+            <div class="docs-note" style="border-left-color: #f59e0b;">
+                <strong>Causa raiz:</strong> O banco local do usuário afetado acumulou registros duplicados ou com identidade trocada para esse peer — geralmente resquício de antes da v1.6.9 (user_id persistente). O <code>_load_saved_contacts</code> na inicialização carrega o registro errado, criando um mapeamento inconsistente entre o item do TreeView e o <code>peer_items</code> em memória. O duplo-clique não consegue localizar o UID pelo IID clicado e retorna silenciosamente.
+            </div>
+            <h4 style="color: var(--navy-900); margin: 1rem 0 0.5rem; font-size: 1rem;">Fix — sem nova instalação</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 0.5rem;">Rodar no PC afetado (PowerShell como administrador não é necessário):</p>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;font-size:0.82rem;overflow-x:auto;"><code># 1. Fecha o app
+taskkill /f /im MBChat.exe
+
+# 2. Baixa sqlite3 portátil (1 arquivo, ~2 MB) e deleta o registro corrompido
+Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-tools-win-x64-3460100.zip" -OutFile "$env:TEMP\sq.zip"
+Expand-Archive "$env:TEMP\sq.zip" -DestinationPath "$env:TEMP\sq" -Force
+$sq = Get-ChildItem "$env:TEMP\sq" -Recurse -Filter "sqlite3.exe" | Select-Object -First 1 -ExpandProperty FullName
+cd "$env:APPDATA\.mbchat"
+# Confirma que o registro existe antes de deletar:
+&amp; $sq mbchat.db "SELECT user_id, display_name, ip_address, status FROM contacts WHERE display_name LIKE '%NomeDoPeer%';"
+# Deleta pelo IP VPN ou pelo nome:
+&amp; $sq mbchat.db "DELETE FROM contacts WHERE ip_address='IP_DO_PEER_VPN';"
+# OU: &amp; $sq mbchat.db "DELETE FROM contacts WHERE display_name LIKE '%NomeDoPeer%';"
+
+# 3. Reabre — o peer será redescoberto via UDP em ~30s
+Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
+            <div class="docs-note">
+                <strong>Segurança:</strong> Deletar da tabela <code>contacts</code> não apaga o histórico de mensagens (tabela <code>messages</code>). O histórico fica íntegro; apenas o peer será redescoberto como se fosse o primeiro contato.
+            </div>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-top: 0.75rem;">
+                A partir da <strong>v1.8.27</strong> o duplo-clique usa <code>identify_row(e.y)</code> em vez de <code>selection()</code>, tornando o app resiliente a esse mapeamento inconsistente — mesmo que o registro fique corrompido, o chat abre normalmente.
+            </p>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-backup">
+            <h3>Backup e Restauração do Histórico</h3>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                A partir da <strong>v1.8.28</strong>, o backup é feito pelo próprio MB Chat — com o app aberto, em um único arquivo <code>.zip</code>, sem mexer em pastas ocultas. O método manual continua valendo como alternativa.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Backup pelo próprio app (recomendado)</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Abrir <strong>Ferramentas &gt; Backup do histórico...</strong></li>
+                <li>Escolher onde salvar o <code>MBChat_backup_AAAAMMDD_HHMM.zip</code> (pendrive, rede, nuvem)</li>
+                <li>Pronto — o zip contém o banco completo (mensagens, contatos, grupos, lembretes, configurações), os temas personalizados e a foto de perfil</li>
+            </ol>
+            <div class="docs-note" style="margin-top: 0.8rem;">
+                <strong>✅ Pode fazer com o app aberto:</strong> o backup usa a API nativa de cópia do SQLite, que gera um arquivo consistente mesmo durante o uso — sem risco de corromper o banco.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Restaurar pelo app (reinstalação ou outro computador)</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Instalar o MB Chat normalmente no computador de destino</li>
+                <li>Abrir <strong>Ferramentas &gt; Restaurar backup...</strong> e selecionar o <code>.zip</code></li>
+                <li>Confirmar a substituição do histórico atual</li>
+                <li>Fechar e abrir o MB Chat — a troca acontece na abertura, antes de qualquer conexão, e o histórico completo aparece restaurado</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Método manual (alternativa)</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
+                Todo o histórico fica em <strong>uma única pasta oculta</strong> no perfil Windows. Copiar essa pasta inteira para um local seguro também é um backup válido.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.2rem 0 0.6rem;">Onde ficam os dados</h4>
+            <table class="docs-table">
+                <thead><tr><th>Arquivo</th><th>Caminho</th><th>Conteúdo</th></tr></thead>
+                <tbody>
+                    <tr><td><code>mbchat.db</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Banco SQLite — mensagens, contatos, lembretes, configurações</td></tr>
+                    <tr><td><code>mbchat.db-wal</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>WAL do SQLite — <strong>obrigatório salvar junto</strong></td></tr>
+                    <tr><td><code>mbchat.db-shm</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Shared memory — <strong>obrigatório salvar junto</strong></td></tr>
+                    <tr><td><code>user_themes.json</code></td><td><code>%APPDATA%\.mbchat\</code></td><td>Temas personalizados criados pelo usuário</td></tr>
+                    <tr><td>Arquivos recebidos</td><td><code>%USERPROFILE%\Documentos\MBFiles\</code></td><td>Arquivos, imagens e documentos recebidos via chat</td></tr>
+                </tbody>
+            </table>
+
+            <div class="docs-note" style="margin-top: 1rem;">
+                <strong>⚠️ Atenção:</strong> Os três arquivos <code>.db</code>, <code>.db-wal</code> e <code>.db-shm</code> formam uma unidade do SQLite em WAL mode. Salvar só o <code>.db</code> sem os outros dois pode resultar em banco corrompido ou histórico incompleto.
+            </div>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Como fazer backup</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Fechar o MB Chat completamente pelo ícone na bandeja (não só minimizar)</li>
+                <li>Abrir o Explorador de Arquivos e navegar até <code>%APPDATA%\.mbchat\</code></li>
+                <li>Copiar a pasta <code>.mbchat</code> inteira para um local seguro (pendrive, rede, nuvem)</li>
+                <li>Opcionalmente copiar também a pasta <code>%USERPROFILE%\Documentos\MBFiles\</code> (arquivos recebidos)</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Como restaurar</h4>
+            <ol style="color: var(--gray-300); line-height: 1.8; padding-left: 1.2rem;">
+                <li>Instalar o MB Chat normalmente</li>
+                <li>Fechar o app antes de copiar</li>
+                <li>Copiar os arquivos do backup de volta para <code>%APPDATA%\.mbchat\</code></li>
+                <li>Abrir o MB Chat — histórico completo restaurado automaticamente</li>
+            </ol>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Aviso: Revo Uninstaller e desinstaladores de terceiros</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem;">
+                O Revo Uninstaller no modo <strong>Avançado</strong> varre o disco por arquivos "órfãos" e pode deletar a pasta <code>%APPDATA%\.mbchat\</code> mesmo sem ela fazer parte do instalador oficial (que preserva os dados por design). Sempre faça backup antes de usar desinstaladores de terceiros. Se for usar o Revo, utilize o modo <strong>Moderado</strong> para preservar o histórico.
+            </p>
+
+            <h4 style="color: var(--navy-light); margin: 1.5rem 0 0.6rem;">Banco corrompido</h4>
+            <p style="color: var(--gray-400); font-size: 0.9rem;">
+                Se ao abrir o app o histórico aparecer vazio ou der erro, o banco pode estar corrompido — geralmente por cópia feita com o app aberto. Se você tiver os três arquivos (<code>.db</code> + <code>.db-wal</code> + <code>.db-shm</code>) do mesmo backup, restaure os três juntos: o SQLite fará o checkpoint automático na próxima abertura e recuperará os dados. Somente o <code>.db</code> sem os outros dois é irrecuperável.
+            </p>
+        </div>
+
         <div class="docs-section fade-in" id="doc-desinstalar">
             <h3>Desinstalação Completa</h3>
             <p style="color: var(--gray-400); font-size: 0.9rem; margin-bottom: 1rem;">
@@ -1122,6 +1293,9 @@
             </table>
             <div class="docs-note">
                 <strong>Dica:</strong> Ao desinstalar pelo Painel de Controle, escolha "SIM" para manter o histórico ou "NÃO" para apagar tudo automaticamente. A limpeza manual só é necessária se a desinstalação falhar ou se quiser remover absolutamente todos os rastros.
+            </div>
+            <div class="docs-note" style="border-left-color: #e0a800;">
+                <strong>⚠️ Atenção — Revo Uninstaller e desinstaladores de terceiros:</strong> o desinstalador oficial do MB Chat <strong>preserva</strong> a pasta de dados <code>%APPDATA%\.mbchat\</code> (banco e histórico) quando você escolhe "SIM" para manter os dados — e a reinstalação posterior recupera tudo automaticamente. Já o <strong>Revo Uninstaller no modo Avançado</strong> varre o disco por arquivos "órfãos" e pode <strong>apagar essa pasta mesmo sem ela fazer parte do instalador</strong>, destruindo o histórico de forma irreversível. Se for usar o Revo, utilize sempre o modo <strong>Moderado</strong>. Em qualquer caso, faça um backup antes pelo próprio app em <strong>Ferramentas &gt; Backup do histórico...</strong> (veja <a href="#doc-backup">Backup e Restauração</a>).
             </div>
         </div>
 
@@ -1212,6 +1386,17 @@
         rightBtn.addEventListener('click', () => scrollByStep(1));
         inner.addEventListener('scroll', updateArrows, { passive: true });
         window.addEventListener('resize', updateArrows);
+
+        // Roda do mouse sobre a barra de abas = rolagem horizontal das abas.
+        // So intercepta se houver overflow; fora disso a pagina rola normal.
+        inner.addEventListener('wheel', (e) => {
+            if (inner.scrollWidth <= inner.clientWidth) return;
+            const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+            if (!delta) return;
+            e.preventDefault();
+            inner.scrollLeft += delta;
+            updateArrows();
+        }, { passive: false });
         // Checa inicialmente após render
         setTimeout(updateArrows, 100);
         setTimeout(updateArrows, 500);
