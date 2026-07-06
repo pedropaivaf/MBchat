@@ -16262,7 +16262,7 @@ class LanMessengerApp:
         dlg.transient(parent_win)
         dlg.grab_set()
         dlg.configure(bg='#ffffff')
-        _center_window(dlg, 380, 520 if invited_uids else 480)
+        _center_window(dlg, 380, 580 if invited_uids else 540)
         _apply_rounded_corners(dlg)
         
         dlg.option_add('*TCombobox*Listbox.font', ('Segoe UI', 10))
