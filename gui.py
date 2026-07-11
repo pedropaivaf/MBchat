@@ -4199,7 +4199,7 @@ class ChatWindow(tk.Toplevel):
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=1, width=1,
-                             wrap='char', padx=8, pady=6,
+                             wrap='word', padx=14, pady=10,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
@@ -4239,8 +4239,8 @@ class ChatWindow(tk.Toplevel):
         self.chat_text = tk.Text(chat_frame, font=('Segoe UI', 10),
                                  bg=chat_bg, fg=t.get('fg_msg', '#1a202c'),
                                  relief='flat', bd=0,
-                                 wrap='word', state='disabled', padx=10,
-                                 pady=8, cursor='arrow',
+                                 wrap='word', state='disabled', padx=16,
+                                 pady=12, cursor='arrow',
                                  selectbackground='#1e66d0',
                                  selectforeground='#ffffff',
                                  inactiveselectbackground='#1e66d0')
@@ -5434,7 +5434,7 @@ class ChatWindow(tk.Toplevel):
             self.chat_text.mark_set(rmark + '_s', pos)
             self.chat_text.mark_set(rmark + '_e', pos)
             self.chat_text.mark_gravity(rmark + '_s', 'left')
-            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            self.chat_text.mark_gravity(rmark + '_e', 'left')
             rxns = self.messenger.db.get_reactions(msg_id) if msg_id else {}
             if rxns:
                 self._render_reaction_mark(msg_id, rxns)
@@ -5675,9 +5675,24 @@ class ChatWindow(tk.Toplevel):
                 return
             self.chat_text.configure(state='normal')
             self.chat_text.delete(ms, me)
+            
+            if not hasattr(self, '_rx_img_cache'):
+                self._rx_img_cache = {}
+                
             if rxns:
-                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
-                self.chat_text.insert(ms, line, 'reaction_line')
+                self.chat_text.mark_gravity(me, 'right')
+                for e, u in rxns.items():
+                    if not u: continue
+                    if e not in self._rx_img_cache:
+                        self._rx_img_cache[e] = _render_color_emoji(e, 14)
+                    
+                    img = self._rx_img_cache[e]
+                    if img:
+                        self.chat_text.image_create(me, image=img, padx=2)
+                        self.chat_text.insert(me, f' {len(u)}   ', 'reaction_line')
+                    else:
+                        self.chat_text.insert(me, f'{e} {len(u)}   ', 'reaction_line')
+                self.chat_text.mark_gravity(me, 'left')
             self.chat_text.configure(state='disabled')
         except Exception:
             log.exception('Erro em _render_reaction_mark')
@@ -6090,6 +6105,14 @@ class ChatWindow(tk.Toplevel):
         self.chat_text.delete(ranges[0], ranges[1])
         self.chat_text.insert(ranges[0], symbol, (tag,))
         self.chat_text.tag_config(tag, foreground=color, font=('Segoe UI', 8))
+        if not ok:
+            def _show_log(e):
+                from tkinter import messagebox
+                msg = "Ocorreu um erro ao enviar a mensagem.\nO destinatário pode estar offline, o IP pode ter mudado, ou houve uma falha de conexão na rede (Timeout)."
+                messagebox.showerror("Mensagem não enviada", msg, parent=self)
+            self.chat_text.tag_bind(tag, '<Button-1>', _show_log)
+            self.chat_text.tag_bind(tag, '<Enter>', lambda e: self.chat_text.config(cursor='hand2'))
+            self.chat_text.tag_bind(tag, '<Leave>', lambda e: self.chat_text.config(cursor='arrow'))
         self.chat_text.config(state='disabled')
 
     # Abre diálogo de seleção de arquivo e inicia transferência p2p para o contato.
@@ -7662,7 +7685,7 @@ class GroupChatWindow(tk.Toplevel):
                              bg=t.get('bg_input', '#f7fafc'),
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=1, width=1,
-                             wrap='char', padx=8, pady=6,
+                             wrap='word', padx=14, pady=10,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
         self.entry.pack(fill='both', expand=True, padx=1, pady=1)
@@ -7720,7 +7743,7 @@ class GroupChatWindow(tk.Toplevel):
                                   fg=t.get('fg_msg', '#1a202c'),
                                   relief='flat', bd=0,
                                   wrap='word', state='disabled',
-                                  padx=10, pady=8,
+                                  padx=16, pady=12,
                                   selectbackground='#1e66d0',
                                   selectforeground='#ffffff',
                                   inactiveselectbackground='#1e66d0')
@@ -8934,7 +8957,7 @@ class GroupChatWindow(tk.Toplevel):
             self.chat_text.mark_set(rmark + '_s', pos)
             self.chat_text.mark_set(rmark + '_e', pos)
             self.chat_text.mark_gravity(rmark + '_s', 'left')
-            self.chat_text.mark_gravity(rmark + '_e', 'right')
+            self.chat_text.mark_gravity(rmark + '_e', 'left')
             rxns = self.app.messenger.db.get_reactions(msg_id) if msg_id else {}
             if rxns:
                 self._render_reaction_mark(msg_id, rxns)
@@ -9109,9 +9132,24 @@ class GroupChatWindow(tk.Toplevel):
                 return
             self.chat_text.configure(state='normal')
             self.chat_text.delete(ms, me)
+            
+            if not hasattr(self, '_rx_img_cache'):
+                self._rx_img_cache = {}
+                
             if rxns:
-                line = '  '.join(f'{e} {len(u)}' for e, u in rxns.items() if u)
-                self.chat_text.insert(ms, line, 'reaction_line')
+                self.chat_text.mark_gravity(me, 'right')
+                for e, u in rxns.items():
+                    if not u: continue
+                    if e not in self._rx_img_cache:
+                        self._rx_img_cache[e] = _render_color_emoji(e, 14)
+                    
+                    img = self._rx_img_cache[e]
+                    if img:
+                        self.chat_text.image_create(me, image=img, padx=2)
+                        self.chat_text.insert(me, f' {len(u)}   ', 'reaction_line')
+                    else:
+                        self.chat_text.insert(me, f'{e} {len(u)}   ', 'reaction_line')
+                self.chat_text.mark_gravity(me, 'left')
             self.chat_text.configure(state='disabled')
         except Exception:
             log.exception('Erro em GroupChat _render_reaction_mark')

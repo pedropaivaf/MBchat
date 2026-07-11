@@ -55,7 +55,7 @@ def fix_database():
         conn.execute("UPDATE messages SET to_user=? WHERE to_user=?", (new_uid, old_uid))
         
         # 4. Update group_members e groups
-        conn.execute("UPDATE group_members SET user_id=? WHERE user_id=?", (new_uid, old_uid))
+        conn.execute("UPDATE group_members SET uid=? WHERE uid=?", (new_uid, old_uid))
         conn.execute("UPDATE groups SET creator_uid=? WHERE creator_uid=?", (new_uid, old_uid))
         
         conn.commit()

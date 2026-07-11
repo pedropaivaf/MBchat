@@ -1126,10 +1126,12 @@ class Messenger:
         peer_info = self.discovery.peers.get(to_user_id, {})
         peer_ip   = peer_info.get('ip', '')
         if peer_ip:
-            try:
-                TCPClient.send_message(peer_ip, TCP_PORT, payload)
-            except Exception:
-                pass
+            def _send_task():
+                try:
+                    TCPClient.send_message(peer_ip, TCP_PORT, payload)
+                except Exception:
+                    pass
+            threading.Thread(target=_send_task, daemon=True).start()
         return added
 
     def send_group_reaction(self, group_id, msg_id, emoji, remove=False):
@@ -1150,13 +1152,15 @@ class Messenger:
             'emoji': emoji,
             'remove': not added,
         }
-        for member in group['members']:
-            if member['uid'] == local_uid:
-                continue
-            try:
-                TCPClient.send_message(member['ip'], TCP_PORT, payload)
-            except Exception:
-                pass
+        def _send_group_task():
+            for member in group['members']:
+                if member['uid'] == local_uid:
+                    continue
+                try:
+                    TCPClient.send_message(member['ip'], TCP_PORT, payload)
+                except Exception:
+                    pass
+        threading.Thread(target=_send_group_task, daemon=True).start()
         return added
 
     def send_typing(self, to_user_id, is_typing=True):

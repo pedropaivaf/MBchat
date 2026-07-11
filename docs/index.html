@@ -823,6 +823,7 @@
             <a href="#doc-vpn-peer-clique">Peer VPN sem clique</a>
             <a href="#doc-backup">Backup</a>
             <a href="#doc-desinstalar">Desinstalação</a>
+            <a href="#doc-troubleshooting">Problemas de Rede / Timeout</a>
         </div>
         <button class="docs-topbar-arrow right" id="docs-arrow-right" aria-label="Rolar para direita">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -1296,6 +1297,27 @@ Start-Process "$env:PROGRAMFILES\MBChat\MBChat.exe"</code></pre>
             </div>
             <div class="docs-note" style="border-left-color: #e0a800;">
                 <strong>⚠️ Atenção — Revo Uninstaller e desinstaladores de terceiros:</strong> o desinstalador oficial do MB Chat <strong>preserva</strong> a pasta de dados <code>%APPDATA%\.mbchat\</code> (banco e histórico) quando você escolhe "SIM" para manter os dados — e a reinstalação posterior recupera tudo automaticamente. Já o <strong>Revo Uninstaller no modo Avançado</strong> varre o disco por arquivos "órfãos" e pode <strong>apagar essa pasta mesmo sem ela fazer parte do instalador</strong>, destruindo o histórico de forma irreversível. Se for usar o Revo, utilize sempre o modo <strong>Moderado</strong>. Em qualquer caso, faça um backup antes pelo próprio app em <strong>Ferramentas &gt; Backup do histórico...</strong> (veja <a href="#doc-backup">Backup e Restauração</a>).
+            </div>
+        </div>
+
+        <div class="docs-section fade-in" id="doc-troubleshooting">
+            <h3>Problemas de Rede e Mensagens com Atraso (Timeout)</h3>
+            <p>Se as mensagens para um colega estiverem demorando exatos 10 segundos para chegar, ou simplesmente não chegam (mesmo aparecendo online), isso indica que <b>a sua rede física está bloqueando ativamente a conexão local</b>. O MB Chat possui um sistema de emergência (Fallback) que redireciona a mensagem via internet por uma Âncora quando a conexão direta é barrada (causando o atraso de 10s).</p>
+            
+            <h4>1. Teste Definitivo de Isolamento (Ping)</h4>
+            <p>Para ter certeza de que sua rede está bloqueando, abra o PowerShell ou Prompt de Comando e faça um Ping para o IP do computador de destino: <code>ping 192.168.0.X</code></p>
+            <p>Se o resultado for "Esgotado o tempo limite" (100% de perda) entre dois computadores na mesma casa/escritório, o tráfego P2P está cortado fisicamente e o problema <b>não é no aplicativo</b>.</p>
+
+            <h4>2. Causas Comuns do Bloqueio</h4>
+            <ul class="docs-list">
+                <li><b>Isolamento de AP / Client Isolation (Roteadores):</b> Roteadores de operadora e redes de visitantes vêm com uma trava de segurança que proíbe dois aparelhos da mesma rede de se falarem diretamente. Entre nas configurações do roteador (ex: 192.168.0.1) e desative o <i>Isolamento de LAN</i> ou <i>AP Isolation</i>.</li>
+                <li><b>Placas Virtuais (VMware, Hyper-V, WSL):</b> Softwares de virtualização criam switches de rede virtuais que podem sequestrar o tráfego da placa de rede. Verifique no <code>ipconfig</code> se há muitos adaptadores virtuais ativos.</li>
+                <li><b>Perfil de Rede Público:</b> Se a rede estiver como "Pública" no Windows, o Firewall cortará o acesso. Mude para "Privada".</li>
+                <li><b>Antivírus de Terceiros:</b> Softwares como Kaspersky, Avast ou McAfee ignoram as regras do Windows e bloqueiam a comunicação local proativamente. Marque a rede como "Confiável" no antivírus.</li>
+            </ul>
+
+            <div class="docs-note">
+                <strong>💡 Solução Rápida sem mexer no roteador:</strong> Se você não tem acesso ao roteador (ou se a rede é bloqueada de propósito pelo TI), cadastre um Servidor na nuvem ou um computador do Escritório como <b>Peer Manual (Âncora)</b> nas configurações do MB Chat em ambas as pontas. Assim, o chat saberá que a rede local é bloqueada e roteará a mensagem diretamente pela Âncora sem atraso!
             </div>
         </div>
 
