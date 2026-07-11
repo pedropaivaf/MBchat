@@ -4012,6 +4012,7 @@ class ChatWindow(tk.Toplevel):
         self._typing_timer = None       # Timer tkinter para parar o indicador de digitação após 2s de inatividade
         self._was_typing = False        # True enquanto o usuário está digitando (para não re-enviar MT_TYPING)
         self._msg_ranges = []           # Lista de textos das mensagens (para funcionalidade de copiar)
+        self._history_limit = 100       # Limite inicial de mensagens a carregar do banco de dados
         self._chat_emoji_cache = {}     # Cache emoji_char -> PhotoImage para o chat (evita re-renderizar)
         self._entry_emoji_cache = {}    # Cache emoji_char -> PhotoImage para o campo de entrada
         self._entry_img_map = {}        # img_name -> emoji_char: mapeia imagens no entry de volta para texto
@@ -4244,6 +4245,12 @@ class ChatWindow(tk.Toplevel):
                                  selectbackground='#1e66d0',
                                  selectforeground='#ffffff',
                                  inactiveselectbackground='#1e66d0')
+                                 
+        self.load_more_btn = tk.Button(chat_frame, text='Carregar mensagens anteriores...',
+                                       font=('Segoe UI', 9), bg=t.get('bg_app', '#eaedf2'),
+                                       fg=t.get('fg_msg', '#1a202c'), relief='flat', bd=0,
+                                       cursor='hand2', command=self._load_more_history)
+        # O botao sera exibido apenas se houverem mais mensagens a carregar
 
         # Scrollbar minimalista (4px, sem setas) — oculta por padrão, aparece no hover
         self._chat_scrollbar = tk.Scrollbar(chat_frame,
@@ -4531,8 +4538,22 @@ class ChatWindow(tk.Toplevel):
     # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
     # Após exibir, marca todas como lidas no banco de dados.
     def _load_history(self):
-        # Carrega TODO o histórico da conversa (sem limite) para exibir tudo ao abrir a janela
-        history = self.messenger.db.get_chat_history(self.messenger.user_id, self.peer_id, limit=None)
+        # Limpa o historico atual caso esteja recarregando
+        self.chat_text.config(state='normal')
+        self.chat_text.delete('1.0', 'end')
+        self.chat_text.config(state='disabled')
+        self._msg_ranges.clear()
+        self._msg_data.clear()
+        
+        # Carrega o histórico da conversa com o limite definido
+        history = self.messenger.db.get_chat_history(self.messenger.user_id, self.peer_id, limit=self._history_limit)
+        
+        # Se trouxe a quantidade exata do limite, pode haver mais no banco
+        if len(history) == self._history_limit:
+            self.load_more_btn.pack(side='top', fill='x', pady=(5, 0))
+        else:
+            self.load_more_btn.pack_forget()
+
         for msg in history:
             # Determina se a mensagem foi enviada por mim ou pelo contato
             is_mine = msg['from_user'] != self.peer_id
@@ -4546,6 +4567,13 @@ class ChatWindow(tk.Toplevel):
                                  file_path=msg.get('file_path', ''))
         # Marca todas as mensagens deste contato como lidas no banco
         self.messenger.mark_as_read(self.peer_id)
+        
+        # Faz o scroll ir para a parte inferior
+        self.chat_text.yview_moveto(1.0)
+        
+    def _load_more_history(self):
+        self._history_limit += 100
+        self._load_history()
 
     # Desenha o avatar do contato no canvas do cabeçalho.
     # Prioridade: foto personalizada (base64 da rede) > círculo colorido com inicial.
@@ -7486,6 +7514,7 @@ class GroupChatWindow(tk.Toplevel):
         self.group_type = group_type    # 'temp' (temporário) ou 'fixed' (fixo/persistente)
         self._members = {}              # uid -> {display_name, ip, status, note} - membros ativos
         self._panel_visible = True      # Se o painel lateral de participantes está visível
+        self._history_limit = 100       # Limite de carregamento do histórico
         self._chat_emoji_cache = {}     # Cache de emojis renderizados para a área de chat
         self._entry_emoji_cache = {}    # Cache de emojis renderizados para o campo de entrada
         self._entry_img_map = {}        # Mapeamento img_name -> emoji_char (para converter imagens de volta para texto)
@@ -7747,6 +7776,11 @@ class GroupChatWindow(tk.Toplevel):
                                   selectbackground='#1e66d0',
                                   selectforeground='#ffffff',
                                   inactiveselectbackground='#1e66d0')
+                                  
+        self.load_more_btn = tk.Button(chat_frame, text='Carregar mensagens anteriores...',
+                                       font=('Segoe UI', 9), bg=t.get('bg_app', '#eaedf2'),
+                                       fg=t.get('fg_msg', '#1a202c'), relief='flat', bd=0,
+                                       cursor='hand2', command=self._load_more_history)
         sb = tk.Scrollbar(chat_frame, command=self.chat_text.yview, width=6)
         sb.pack(side='right', fill='y')
         self.chat_text.configure(yscrollcommand=sb.set)
@@ -9903,8 +9937,21 @@ class GroupChatWindow(tk.Toplevel):
     # is_mine determinado por from_user == proprio uid; sender_name lido do
     # campo file_path (que armazena o nome de exibicao no save_group_message).
     def _load_history(self):
+        # Limpa o historico atual caso esteja recarregando
+        self.chat_text.config(state='normal')
+        self.chat_text.delete('1.0', 'end')
+        self.chat_text.config(state='disabled')
+        self._msg_data.clear()
+        
         my_uid = self.app.messenger.user_id
-        history = self.app.messenger.get_group_history(self.group_id)
+        history = self.app.messenger.get_group_history(self.group_id, limit=self._history_limit)
+        
+        # Se trouxe a quantidade exata do limite, pode haver mais no banco
+        if len(history) == self._history_limit:
+            self.load_more_btn.pack(side='top', fill='x', pady=(5, 0))
+        else:
+            self.load_more_btn.pack_forget()
+            
         for msg in history:
             from_user = msg.get('from_user', '')
             is_mine = (from_user == my_uid)
