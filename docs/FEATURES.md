@@ -1,11 +1,12 @@
-# MB Chat - Funcionalidades (v1.5.3)
+# MB Chat - Funcionalidades (v1.8.35)
 
 ## Mensagens
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
 - Responder mensagem (Reply/Quote) — clique direito > "Responder", barra preview, quote com fundo destacado. Campo `reply_to_id` no banco, `reply_to` no payload
 - Colar imagem do clipboard (Ctrl+V) — PIL ImageGrab + fallback ctypes CF_DIBV5/CF_DIB, comprime JPEG quality=85, preview bar, envia base64 via MT_IMAGE, receptor salva em %APPDATA%/.mbchat/images/, thumbnail 300px clicavel
 - Links clicaveis (v1.4.53) — regex `_URL_RE` detecta URLs, tag com foreground azul + underline + hand2, `_open_url` via webbrowser.open
-- Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos
+- Transmitir Mensagem (broadcast para contatos selecionados) com emojis coloridos, ou Aviso (v1.8.35 — texto de 1 linha, sem persistencia, entra no sininho do destinatario)
+- **Audio/microfone estilo WhatsApp (v1.8.35)** — gravar segurando o botao de mic ao lado do input, onda ao vivo segue o volume real, revisao com play/pause antes de enviar, seek por clique/arrastar na barra vermelha (funciona no preview e nas bolhas enviadas/recebidas). Ver `audio_recorder.py`. Envio via botao "Enviar"/Enter, nao ha botao de enviar separado para audio
 - Modo selecao multi-mensagem (v1.4.53) — long-press 500ms, barra top-docked com Copiar/Encaminhar/Cancelar
 - Copiar rapido no hover (v1.4.53, ampliado v1.4.54/v1.4.55) — icone MDL2 reusado, delay 600ms
 
@@ -25,7 +26,8 @@
 - Drag and Drop via windnd
 - **file_port dinamico**: porta do FileReceiver anunciada no UDP announce — funciona mesmo se 50102 estiver ocupada na maquina do destinatario (fallback automatico p/ 50112/50122)
 - **Lista persistente**: Ferramentas > Transferencia de Arquivos mantém historico entre sessoes (banco SQLite). Enviados E recebidos persistem. "Apagar Lista" limpa banco.
-- **Abrir no Explorer**: botao "Mostrar a Pasta" e duplo clique abrem Explorer com o arquivo ja selecionado (`explorer /select,`)
+- **Abrir no Explorer**: botao "Mostrar a Pasta" e duplo clique abrem Explorer com o arquivo ja selecionado (`explorer /select,`). Fallback via `glob` (stem+ext, ordenado por mtime) quando o nome em disco diverge do original por sanitizacao/colisao
+- Janela com `minsize(620, 320)` e centralizada em 760x460 (v1.8.35) — botoes Recebidos/Enviados nao cortam
 
 ## Interface
 - 3 temas visuais fixos (Classico, Night Mode, MB Contabilidade) + **temas customizaveis** (v1.5.0) via Preferencias > Aparencia > Tema > "Criar tema personalizado..." — editor de 40+ tokens com preview ao vivo, persiste em `%APPDATA%\.mbchat\user_themes.json`. UI flat design.
@@ -84,6 +86,8 @@
 - `MT_FILE_REQ`, `MT_FILE_ACC`, `MT_FILE_DEC`, `MT_FILE_CANCEL` - arquivos
 - `MT_GROUP_INV`, `MT_GROUP_MSG`, `MT_GROUP_LEAVE`, `MT_GROUP_JOIN` - grupos
 - `MT_IMAGE` - imagem inline base64
+- `MT_AUDIO` - audio/voz (v1.8.35), espelha MT_IMAGE
+- `MT_AVISO` - transmissao rapida sem persistencia (v1.8.35)
 - `MT_POLL_CREATE`, `MT_POLL_VOTE` - enquetes
 
 ## Build
@@ -100,8 +104,9 @@
 1. Descoberta automatica de peers (2+ maquinas)
 2. Enviar/receber mensagens e arquivos
 3. Notificacao clicavel
-4. Transmitir Mensagem com emojis
-5. Grupos: temp/fixo, entrada/saida, mencoes, enquete
+4. Transmitir Mensagem/Aviso com emojis
+5. Grupos: temp/fixo, entrada/saida, mencoes, enquete, criar com 2+ participantes (regressao do bug de "grupo sem participantes")
+11. Gravar/enviar/ouvir audio (individual e grupo), seek na barra
 6. Reply/Quote em chat e grupo
 7. Auto-update: barra amarela, atualizar, restart
 8. Lembretes: simples, programado, recorrente

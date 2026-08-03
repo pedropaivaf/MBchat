@@ -208,6 +208,7 @@ MT_GROUP_KICK = 'group_kick'    # TCP: criador removeu membro do grupo
 MT_GROUP_ADMIN_SET = 'group_admin_set' # TCP: atualizacao de status de admin do grupo
 MT_GROUP_DELETE = 'group_delete' # TCP: criador deletou o grupo
 MT_IMAGE = 'image'              # TCP: imagem inline (clipboard, base64)
+MT_AUDIO = 'audio'              # TCP: audio inline (bolha de voz, base64 .wav)
 MT_POLL_CREATE = 'poll_create'  # TCP: criacao de enquete em grupo
 MT_POLL_VOTE = 'poll_vote'      # TCP: voto em enquete de grupo
 MT_PEER_LIST = 'peer_list'      # UDP: lista de peers conhecidos (resposta a announce unicast com request_peer_list)
@@ -223,6 +224,7 @@ MT_MEETING_CANCEL   = 'meeting_cancel'    # TCP: criador cancelou reunião
 MT_MEETING_SYNC_REQ = 'meeting_sync_req'  # TCP: pedido de sync de reservas ao reconectar
 MT_MEETING_SYNC_RES = 'meeting_sync_res'  # TCP: dump de bookings como resposta ao sync
 MT_MEETING_EDIT     = 'meeting_edit'      # TCP: criador alterou a reuniao
+MT_AVISO = 'aviso'  # TCP: aviso curto via Transmitir (so em memoria, nao persiste)
 
 
 # IP específico para bind (usado em testes locais de multi-instâncias com IPs separados)

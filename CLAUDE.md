@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.11.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.35.
 
 ## Arquitetura (4 camadas)
 
@@ -792,3 +792,68 @@ A partir de v1.8.27, cada duplo-clique registra no `%APPDATA%\MBChat\mbchat.log`
 [DEBUG] [DBL] item='I005' uid='usuario.vpn@...' tags=('online',)
 ```
 Se `uid=None` e `tags=('offline',)` — registro inconsistente no banco, aplicar fix acima.
+
+## Fix definitivo do bug de grupos sem participantes + audio/mic + Transmitir Mensagem/Aviso (v1.8.35)
+
+### Causa raiz do bug "grupo criado sem nenhum participante aparecendo"
+
+Confirmada via traceback real de producao: `AttributeError: 'GroupChatWindow' object has no attribute '_load_more_history'`.
+O commit de lazy loading (9c80161, limite de historico de 100 msgs) adicionou `_load_more_history` em `ChatWindow`
+mas nao em `GroupChatWindow` — ao abrir a janela do grupo recem-criado, a excecao interrompia o `__init__` antes do
+painel de membros ser populado, entao a janela abria "vazia" sem lancar erro visivel pro usuario (excecao engolida
+em outro ponto da cadeia de chamada).
+
+**Fix:** `_load_more_history` implementado tambem em `GroupChatWindow`, espelhando `ChatWindow`.
+
+**Hardening defensivo adicionado junto (para o mesmo tipo de falha nunca mais deixar uma janela "muda"):**
+1. `__init__` de `ChatWindow`/`GroupChatWindow` envolve `_build_ui` em try/except — se falhar, destroi a janela,
+   loga o erro e re-levanta (nunca mais fica um Toplevel fantasma sem UI).
+2. `_open_group`, `_create_group_window` e `_on_group_invite` envolvem a construcao de `GroupChatWindow(...)` em
+   try/except (`_create_group_window` mostra `messagebox.showerror` ao usuario).
+3. `_toggle_panel` checa `hasattr(self, '_paned')`/`hasattr(self, '_panel')` antes de agir.
+4. Loops de montagem de membros (`_on_group_invite`, `_open_group`) tem try/except **por membro** — um registro
+   malformado (sem `uid`) nao zera o painel inteiro; nome exibido cai de volta pra `db.find_user_name(uid)` se faltar.
+5. `send_group_invite` (messenger.py) resolve `members_info` com fallback via `discovery.peers` + `db.find_user_name`
+   e loga por membro (`_grp_log.info`/`.warning`) — membro nunca mais some silenciosamente do convite.
+
+### Novo recurso: audio/microfone estilo WhatsApp (gui.py + audio_recorder.py novo + network.py + messenger.py)
+
+- **Gravacao**: botao de microfone no canto direito da barra de digitar (some quando ha texto digitado, some so
+  aparece quando a caixa esta vazia e sem gravacao ativa). Clique inicia gravacao — a propria barra de digitar
+  se transforma no lugar (sem empilhar barra extra) numa onda ao vivo que acompanha o volume real captado
+  (`sounddevice.RawInputStream`, pico por bloco, sem numpy). Enter ou o botao (que virou pause) para a gravacao.
+- **Revisao antes de enviar**: apos parar, a barra vira preview com onda estatica + tempo total; o botao de
+  microfone vira play/pause da propria pre-escuta (NAO existe botao de enviar separado). Envio e feito pelo
+  botao "Enviar" existente ou Enter — `_send_message` checa `self._recorded_wav_bytes` primeiro e desvia pra
+  `_send_recording()`.
+- **Seek por clique/arrastar**: barra de progresso vermelha sobre a onda, funcional tanto no preview quanto nas
+  bolhas enviadas/recebidas (`_bind_waveform_seek`). Como `winsound` nao tem seek nativo, `audio_recorder.trim_wav_from`
+  recorta o `.wav` a partir do ponto clicado e toca o restante como arquivo temporario novo (`SND_FILENAME|SND_ASYNC`
+  — `SND_MEMORY+SND_ASYNC` juntos lanca `RuntimeError` no winsound, por isso sempre grava em disco antes de tocar).
+- **Protocolo**: `MT_AUDIO` (network.py) espelha `MT_IMAGE` — `messenger.send_audio`/`send_group_audio` salvam em
+  `%APPDATA%\.mbchat\audio\` e mandam por TCP; `_on_audio` na GUI roteia pra chat individual ou de grupo igual
+  imagem, com toast `[Audio]`.
+- **Empacotamento**: `sounddevice` + `pyinstaller-hooks-contrib` em requirements.txt. O hook `hook-sounddevice.py`
+  (do pacote hooks-contrib) localiza e empacota `libportaudio64bit.dll` automaticamente — **nao precisa** de
+  `--hidden-import`/`--add-binary` manual em `build.py`. Confirmado que a DLL cai em `dist/MBChat/_internal/`.
+
+### Transmitir dividido em Mensagem / Aviso
+
+Botao "Transmitir" abre menu (`_open_modern_menu`) com duas opcoes: **Mensagem** (broadcast normal, existente) e
+**Aviso** (`MT_AVISO`, novo — texto simples de 1 linha, sem toolbar de formatacao, SEM persistencia em banco por
+design; aparece no sininho de notificacoes do destinatario como alerta, nao gera historico de chat).
+
+### Outros ajustes desta leva
+
+- Emoji 🤌 adicionado na categoria "Gestos e Maos" (picker do chat e do campo de recado).
+- Janela "Transferencia de Arquivos": `minsize(620, 320)` + `_center_window(760, 460)` — botoes Recebidos/Enviados
+  nao cortam mais sem redimensionar manualmente.
+- `_open_entry_file` (double-click num arquivo recebido): fallback via `glob` (`stem + '*' + ext`, ordenado por
+  mtime) quando o nome em disco diverge do original (sanitizacao/colisao) — abre o Explorer com o arquivo real
+  ja selecionado em vez de so abrir a pasta.
+
+### Mecanismo `--instance NAME` para testar P2P sozinho (ja existia, documentado agora)
+
+`python gui.py --instance nome` roda uma instancia isolada: DB separado (`mbchat_<nome>.db`), porta de
+single-instance-lock separada, `user_id` com sufixo — permite abrir 2+ janelas do MBChat na mesma maquina/rede
+pra testar grupos, audio, mensagens etc. sem precisar de PCs de verdade. Nao usar em producao (so dev).

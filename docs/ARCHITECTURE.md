@@ -44,6 +44,14 @@ Classes principais:
 - **AccountWindow**: Janela de perfil (nome + avatar)
 - **SoundPlayer**: Sons de notificacao cross-platform
 
+### audio_recorder.py (v1.8.35) - Gravacao/leitura de audio
+
+Modulo isolado (so importado por gui.py), guarda `HAS_SOUNDDEVICE` mesmo padrao de `HAS_PIL`/`HAS_TRAY`. Sem numpy —
+PCM cru lido via `struct.unpack` manual. `AudioRecorder` (captura via `sounddevice.RawInputStream`, pico por bloco),
+`pcm_to_wav_bytes`, `wav_duration`, `trim_wav_from` (recorta a partir de uma fracao — usado pro seek, ja que
+`winsound` nao tem seek nativo), `wav_waveform` (envelope de amplitude pra desenhar a onda estatica das bolhas).
+Empacotado via `pyinstaller-hooks-contrib` (hook automatico bundla `libportaudio64bit.dll`, sem config manual em build.py).
+
 Funcoes utilitarias module-level:
 - **_render_color_emoji(char, size)**: Renderiza emoji colorido via PIL + seguiemj.ttf
 - **_create_mdl2_icon_static(char, size, color)**: Renderiza icone Segoe MDL2 Assets via PIL
@@ -105,7 +113,7 @@ Funcoes utilitarias:
 Protocolo:
 - Frame TCP: [4 bytes big-endian length][JSON payload UTF-8]
 - Tipos UDP: announce (inclui campo note), depart, ping, pong
-- Tipos TCP: message, typing, status, file_request, file_accept, file_decline, file_cancel, ack, group_invite, group_message
+- Tipos TCP: message, typing, status, file_request, file_accept, file_decline, file_cancel, ack, group_invite, group_message, image, audio (v1.8.35, espelha image), aviso (v1.8.35, sem persistencia)
 - File transfer: header JSON -> OKAY/DENY -> raw data chunks
 - Group invite: inclui group_id, group_name, lista de membros (uid, display_name, ip)
 - Group message: inclui group_id, from_user, display_name, content, timestamp

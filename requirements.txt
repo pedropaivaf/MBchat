@@ -4,3 +4,5 @@ winotify>=1.1
 windnd>=1.0.7
 pywin32>=306
 pyinstaller>=6.0
+sounddevice>=0.4.6
+pyinstaller-hooks-contrib>=2024.0

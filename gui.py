@@ -14,6 +14,8 @@ import threading                                # Threads para envio de mensagen
 import time                                     # Timestamps e cálculo de velocidade de transferência
 import uuid                                     # Geração de IDs únicos
 import os                                       # Operações de arquivo/diretório e variáveis de ambiente
+import glob                                     # Busca de arquivo por prefixo (fallback de transferencias)
+import tempfile                                 # Arquivo .wav temporario para previa de gravacao de audio
 import sys                                      # Para detectar se está rodando como .exe (PyInstaller)
 import platform                                 # Para detectar Windows/Mac/Linux (sons de notificação)
 import socket                                   # Suporte de rede (usado pelo messenger)
@@ -25,6 +27,7 @@ import logging                                  # Registrar erros em arquivo de 
 import re                                       # Detectar emojis Unicode via expressão regular
 import io                                       # BytesIO para compressao de imagens em memoria
 import webbrowser                                # Abrir links clicaveis no browser padrao
+import winsound                                  # Tocar bolhas de audio (.wav) e beeps
 from pathlib import Path                        # Manipulação de caminhos de forma moderna
 
 # --- Logging ---
@@ -47,6 +50,10 @@ from messenger import Messenger
 from version import APP_VERSION
 import updater
 from tools.theme_builder import ThemeBuilderWindow, load_user_themes
+
+# sounddevice: gravacao de audio para bolha de voz (mic estilo WhatsApp).
+# Sem sounddevice/hardware: botao de microfone simplesmente nao aparece.
+import audio_recorder
 
 # Pillow (PIL): suporte a avatares JPG/PNG e renderização de emojis coloridos.
 # Sem PIL: avatares usam canvas simples (texto sobre círculo colorido) e emojis ficam como texto.
@@ -815,6 +822,68 @@ def _show_msg_context_menu(host, x_root, y_root, items, on_emoji):
             pass
     menu.after(120, _arm_focus)
     return menu
+
+def _create_pause_icon_static(size, color='#cc3333'):
+    try:
+        from PIL import ImageDraw
+        s = size * 4
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        pen = (r, g, b, 255)
+        bar_w = s * 0.16
+        bar_h = s * 0.56
+        gap = s * 0.16
+        top = (s - bar_h) / 2
+        cx = s / 2
+        radius = bar_w * 0.35
+        draw.rounded_rectangle([cx - gap / 2 - bar_w, top, cx - gap / 2, top + bar_h],
+                               radius=radius, fill=pen)
+        draw.rounded_rectangle([cx + gap / 2, top, cx + gap / 2 + bar_w, top + bar_h],
+                               radius=radius, fill=pen)
+        img = img.resize((size, size), Image.LANCZOS)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
+
+
+def _create_send_icon_static(size, color='#0f2a5c'):
+    # Circulo preenchido com seta branca (estilo botao de enviar do WhatsApp)
+    # -- silhueta bem diferente do triangulo achatado do play, pra nao
+    # confundir os dois botoes (achado real no teste do usuario).
+    try:
+        from PIL import ImageDraw
+        s = size * 4
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        draw.ellipse([0, 0, s - 1, s - 1], fill=(r, g, b, 255))
+        pad = s * 0.30
+        pts = [(pad, pad * 0.7), (s - pad * 0.75, s / 2), (pad, s - pad * 0.7)]
+        draw.polygon(pts, fill=(255, 255, 255, 255))
+        img = img.resize((size, size), Image.LANCZOS)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
+
+
+# Triangulo simples achatado (sem fundo) -- usado no botao do microfone
+# quando ele vira "play" da revisao do audio gravado (nao confundir com o
+# circulo do _create_send_icon_static, que e o botao de ENVIAR de verdade).
+def _create_play_icon_static(size, color='#2451a0'):
+    try:
+        from PIL import ImageDraw
+        s = size * 4
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        pad = s * 0.18
+        pts = [(pad, pad * 0.8), (s - pad, s / 2), (pad, s - pad * 0.8)]
+        draw.polygon(pts, fill=(r, g, b, 255))
+        img = img.resize((size, size), Image.LANCZOS)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
 
 
 # Cria um ícone da fonte Segoe MDL2 Assets como PhotoImage tkinter.
@@ -3373,8 +3442,8 @@ class FileTransfersWindow(tk.Toplevel):
         self._rows = {}  # file_id -> frame widget
 
         self.title('Transferências de Arquivos')
-        self.minsize(400, 300)
-        _center_window(self, 460, 420)
+        self.minsize(620, 320)
+        _center_window(self, 760, 460)
         _apply_rounded_corners(self)
         self.configure(bg='#f5f7fa')
         self.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -3723,7 +3792,16 @@ class FileTransfersWindow(tk.Toplevel):
                 download_dir = self.app.messenger.db.get_setting(
                     'download_dir',
                     os.path.join(os.path.expanduser('~'), 'Documents', 'MBFiles'))
-                fp = os.path.join(download_dir, fname)
+                # network.py sanitiza o nome e pode ter adicionado sufixo
+                # _1, _2... em caso de colisao — o nome adivinhado direto
+                # quase nunca bate com o arquivo real salvo. Busca por
+                # prefixo (stem) no download_dir, pega o mais recente.
+                stem, ext = os.path.splitext(fname)
+                pattern = os.path.join(download_dir,
+                                       glob.escape(stem) + '*' + glob.escape(ext))
+                candidates = sorted(glob.glob(pattern),
+                                    key=os.path.getmtime, reverse=True)
+                fp = candidates[0] if candidates else os.path.join(download_dir, fname)
         if not fp:
             return
         if os.path.isfile(fp):
@@ -4186,6 +4264,15 @@ class ChatWindow(tk.Toplevel):
         self._input_outer.pack(fill='x', side='bottom', padx=8, pady=(4, 2))
         input_outer = self._input_outer
 
+        # Linha interna da barra de digitar: o Text ocupa a esquerda (expande)
+        # e o microfone fica ancorado no canto direito, estilo WhatsApp --
+        # sempre no mesmo lugar, so troca de icone conforme o estado
+        # (mic parado / pausa gravando / enviar em revisao).
+        _input_bg = t.get('bg_input', '#f7fafc')
+        input_row = tk.Frame(input_outer, bg=_input_bg)
+        input_row.pack(fill='both', expand=True, padx=1, pady=1)
+        self._input_row = input_row
+
         # tk.Text é usado (não tk.Entry) para suportar múltiplas linhas e imagens (emojis)
         # Altura adaptativa: inicia em 1 linha e cresce ate INPUT_MAX_H conforme
         # o conteudo (_adjust_input_height chamado no <<Modified>>).
@@ -4196,14 +4283,41 @@ class ChatWindow(tk.Toplevel):
         # widget pode manter tamanho natural e horizontal-scroll em vez de wrap.
         # Setar width=1 forca o widget a iniciar minusculo; fill='both' expande
         # ate o container — wrap passa a funcionar corretamente.
-        self.entry = tk.Text(input_outer, font=('Segoe UI', 10),
-                             bg=t.get('bg_input', '#f7fafc'),
+        self.entry = tk.Text(input_row, font=('Segoe UI', 10),
+                             bg=_input_bg,
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=1, width=1,
                              wrap='word', padx=14, pady=10,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
-        self.entry.pack(fill='both', expand=True, padx=1, pady=1)
+        self.entry.pack(side='left', fill='both', expand=True)
+
+        # Microfone ancorado no canto direito da barra de digitar (nao mais
+        # na barra de ferramentas). So aparece se sounddevice disponivel.
+        # Mesmo botao alterna: mic (parado) -> pausa (gravando) -> enviar (revisao).
+        # Icones desenhados via MDL2/PIL (nao emoji) -- minimalista, no mesmo
+        # estilo dos outros botoes da barra de ferramentas.
+        if audio_recorder.HAS_SOUNDDEVICE:
+            self._mic_icon_img = _create_mdl2_icon_static('', 18, flat_fg)
+            self._pause_icon_img = _create_pause_icon_static(18, '#cc3333')
+            self._pause_play_icon_img = _create_pause_icon_static(18, '#2451a0')
+            self._play_icon_img = _create_play_icon_static(18, '#2451a0')
+            if self._mic_icon_img:
+                self._btn_mic = tk.Button(input_row, image=self._mic_icon_img,
+                          bg=_input_bg, relief='flat', bd=0, padx=8, pady=2,
+                          command=self._start_recording, cursor='hand2')
+            else:
+                self._btn_mic = tk.Button(input_row, text='\U0001f3a4',
+                          font=('Segoe UI', 13), bg=_input_bg, fg=flat_fg,
+                          relief='flat', bd=0, padx=8, pady=2,
+                          command=self._start_recording, cursor='hand2')
+            self._btn_mic.pack(side='right', padx=(2, 8), pady=2)
+            self._btn_mic_tooltip = _Tooltip(self._btn_mic, 'Gravar áudio')
+        # Enter finaliza gravacao (para) e Enter de novo envia a revisao --
+        # so dispara quando o entry NAO tem foco (ele esta escondido durante
+        # gravacao/revisao), pois o binding do entry ja consome Enter e
+        # retorna 'break' no fluxo normal de texto.
+        self.bind('<Return>', self._on_window_return)
         def _redo(e):
             try: self.entry.edit_redo()
             except tk.TclError: pass
@@ -4230,6 +4344,16 @@ class ChatWindow(tk.Toplevel):
         self._pending_image = None        # PIL Image aguardando envio (Ctrl+V preview)
         self._image_preview_bar = None    # Frame da barra de preview de imagem
         self._preview_thumb_ref = None    # referencia para evitar GC do thumbnail
+
+        # === Gravacao de audio (mic estilo WhatsApp) ===
+        self._audio_recorder = None       # audio_recorder.AudioRecorder ativo
+        self._recording_bar = None        # Frame da barra de gravacao/revisao
+        self._recorded_wav_bytes = None   # bytes .wav gravados, aguardando revisao/envio
+        self._recording_preview_path = None  # arquivo temp do .wav para tocar a revisao
+        self._recording_tick_job = None   # job do .after() do timer/onda ao vivo
+        self._recording_start_time = None
+        self._recording_levels = []       # amostras recentes de volume (onda ao vivo)
+        self._now_playing_audio = None    # dict (btn/canvas/waveform/duration/start/jobs) da bolha tocando agora
 
         # Área de exibição das mensagens (chat_frame se expande para preencher o espaço restante)
         chat_frame = tk.Frame(self, bg=t.get('bg_window', '#f5f7fa'))
@@ -4558,6 +4682,12 @@ class ChatWindow(tk.Toplevel):
             # Determina se a mensagem foi enviada por mim ou pelo contato
             is_mine = msg['from_user'] != self.peer_id
             sender = self.app.messenger.display_name if is_mine else self.peer_name
+            # Audio precisa da bolha (player), nao do texto cru do path.
+            # Demais tipos seguem o despacho existente (nao mexido aqui).
+            if msg.get('msg_type') == 'audio':
+                self._append_audio(sender, msg['content'], is_mine,
+                                   timestamp=msg['timestamp'])
+                continue
             # Adiciona a mensagem na área de chat com timestamp original
             self._append_message(sender, msg['content'], is_mine,
                                  timestamp=msg['timestamp'],
@@ -5526,6 +5656,8 @@ class ChatWindow(tk.Toplevel):
         self.after(30, self._do_emoji_scan)
         # Delay 30ms: tk precisa de tempo real (nao so idle) para calcular wrap.
         self.after(30, self._adjust_input_height)
+        if audio_recorder.HAS_SOUNDDEVICE:
+            self.after(30, self._update_mic_visibility)
 
     # Ajusta a altura do campo de entrada conforme o conteudo (1..8 linhas).
     # Mede wrap manualmente com tkfont — count -displaylines do tk retorna
@@ -6098,6 +6230,11 @@ class ChatWindow(tk.Toplevel):
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
     def _send_message(self):
+        # Audio gravado pendente de revisao: o botao "Enviar" e o Enter
+        # tambem mandam ele, sem precisar de um botao de enviar separado.
+        if self._recorded_wav_bytes:
+            self._send_recording()
+            return
         content = self._get_entry_content()
         pending_img = self._pending_image
         if not content and not pending_img:
@@ -6777,6 +6914,7 @@ class ChatWindow(tk.Toplevel):
             '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
             '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
             '\U0001f919': 'me liga telefone hang loose',
+            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer',
             '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
             # Comida e Bebida
             '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
@@ -6931,7 +7069,7 @@ class ChatWindow(tk.Toplevel):
                 '\U0001f918', '\U0001f448', '\U0001f449', '\U0001f446',
                 '\U0001f447', '\U0001f485', '\U0001f933', '\u270c\ufe0f',
                 '\U0001f590\ufe0f', '\u261d\ufe0f', '\U0001f919',
-                '\U0001f9b5', '\U0001f9b6',
+                '\U0001f90c', '\U0001f9b5', '\U0001f9b6',
             ],
             # Comida e Bebida
             '\U0001f354': [
@@ -7320,6 +7458,581 @@ class ChatWindow(tk.Toplevel):
             self._image_preview_bar.destroy()
             self._image_preview_bar = None
 
+    # ===== Gravacao de audio (mic estilo WhatsApp) =====
+
+    # Desenha barrinhas de onda arredondadas (estilo WhatsApp) num Canvas a
+    # partir de uma lista de amplitudes 0.0-1.0 (onda ao vivo e onda estatica
+    # da bolha usam a mesma funcao). Usa create_line com capstyle=round em
+    # vez de retangulos -- visual mais suave, mais proximo do WhatsApp.
+    # progress (0.0-1.0 ou None): posicao de reproducao -- desenha um traco
+    # vertical vermelho fino nessa posicao (previa, bolha enviada e recebida
+    # usam o mesmo parametro para o "cursor" de playback).
+    @staticmethod
+    def _draw_waveform(canvas, levels, color='#2451a0', progress=None):
+        try:
+            canvas.delete('all')
+            w = canvas.winfo_width()
+            if w <= 1:
+                cw = canvas['width']
+                w = int(cw) if cw else 150
+            h = canvas.winfo_height()
+            if h <= 1:
+                ch = canvas['height']
+                h = int(ch) if ch else 28
+            n = max(1, len(levels))
+            gap = 3
+            bar_w = max(2, (w - gap) // n - gap)
+            x = gap
+            for lvl in levels:
+                bh = max(3, int(lvl * (h - 6)))
+                y0 = (h - bh) // 2
+                y1 = y0 + bh
+                xc = x + bar_w / 2
+                canvas.create_line(xc, y0, xc, y1, fill=color, width=bar_w,
+                                   capstyle='round')
+                x += bar_w + gap
+            if progress is not None:
+                px = max(1, min(w - 1, progress * w))
+                canvas.create_line(px, 1, px, h - 1, fill='#e53e3e', width=2,
+                                   capstyle='round')
+        except Exception:
+            pass
+
+    # Enter finaliza a gravacao (para) e Enter de novo envia a revisao. So
+    # dispara quando o entry NAO tem foco -- ele fica escondido durante
+    # gravacao/revisao, entao o binding normal de Enter do entry (que ja
+    # consome o evento com 'break') nao interfere no fluxo de texto comum.
+    def _on_window_return(self, event=None):
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            self._stop_recording()
+            return 'break'
+        if self._recorded_wav_bytes:
+            self._send_recording()
+            return 'break'
+
+    # Vincula Enter em um widget e em TODOS os seus descendentes -- garante
+    # que o atalho funciona nao importa em qual widget da barra de gravacao
+    # o foco esteja (X, play, canvas), sem depender so da propagacao padrao
+    # de bindtags ate a janela.
+    def _bind_return_recursive(self, widget):
+        try:
+            widget.bind('<Return>', self._on_window_return)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            self._bind_return_recursive(child)
+
+    # Troca o icone/comando do botao do microfone com seguranca -- usa a
+    # imagem cacheada se disponivel, cai para texto se PIL falhou ao gerar.
+    def _set_mic_icon_state(self, icon_img, fallback_text, command, tooltip=None):
+        if icon_img:
+            self._btn_mic.config(image=icon_img, text='', command=command)
+        else:
+            self._btn_mic.config(image='', text=fallback_text, command=command)
+        if tooltip is not None and hasattr(self, '_btn_mic_tooltip'):
+            self._btn_mic_tooltip.text = tooltip
+
+    # Esconde o microfone assim que o usuario comeca a digitar (o campo de
+    # texto toma o espaco todo, estilo WhatsApp); reaparece se o campo fica
+    # vazio de novo. So mexe quando IDLE — durante gravacao/revisao o entry
+    # ja esta escondido e o botao ja mostra pausa/enviar, entao nao interfere.
+    def _update_mic_visibility(self):
+        if not hasattr(self, '_btn_mic'):
+            return
+        if self._audio_recorder or self._recorded_wav_bytes:
+            return
+        try:
+            has_text = bool(self.entry.get('1.0', 'end-1c').strip())
+        except Exception:
+            return
+        if has_text:
+            if self._btn_mic.winfo_ismapped():
+                self._btn_mic.pack_forget()
+        else:
+            if not self._btn_mic.winfo_ismapped():
+                self._btn_mic.pack(side='right', padx=(2, 8), pady=2)
+
+    def _start_recording(self):
+        if not audio_recorder.HAS_SOUNDDEVICE:
+            return
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            return
+        # Mesma regra que reply-bar e image-preview-bar ja seguem entre si:
+        # nunca duas barras concorrentes acima do input.
+        self._cancel_reply()
+        self._cancel_image_preview()
+        self._recorded_wav_bytes = None
+        self._recording_levels = []
+        # Zera qualquer posicao de pausa de uma revisao anterior -- senao a
+        # proxima gravacao poderia "comecar tocando do meio" por engano.
+        try:
+            self._btn_mic._paused_fraction = 0.0
+        except Exception:
+            pass
+        rec = audio_recorder.AudioRecorder()
+        try:
+            rec.start()
+        except Exception:
+            messagebox.showwarning('Microfone',
+                'Nao foi possivel acessar o microfone.\nVerifique se ele esta '
+                'conectado e se nenhum outro programa esta usando.', parent=self)
+            return
+        self._audio_recorder = rec
+        self._recording_start_time = time.time()
+        self.entry.pack_forget()
+        self._build_record_row_live()
+        self._set_mic_icon_state(self._pause_icon_img, '⏸', self._stop_recording,
+                                 tooltip='Parar gravação')
+        self._tick_recording()
+
+    # Substitui o campo de texto (dentro de _input_row) pela barra de
+    # gravacao ao vivo -- a barra de digitar "vira" a barra de audio, em vez
+    # de empilhar uma barra extra acima do input.
+    def _build_record_row_live(self):
+        if self._recording_bar:
+            self._recording_bar.destroy()
+        bg = self._theme.get('bg_input', '#f7fafc') if hasattr(self, '_theme') else '#f7fafc'
+        row = tk.Frame(self._input_row, bg=bg)
+        row.pack(side='left', fill='both', expand=True)
+
+        tk.Button(row, text='✕', font=('Segoe UI', 10, 'bold'),
+                 bg=bg, fg='#94a3b8', relief='flat', bd=0,
+                 cursor='hand2', command=self._cancel_recording
+                 ).pack(side='left', padx=(10, 6))
+
+        # IMPORTANTE: o timer (tamanho fixo) precisa ser empacotado ANTES do
+        # canvas (expand=True) — no pack() do Tk, um widget com expand=True
+        # processado primeiro consome todo o espaco restante, deixando so
+        # 1px pra quem vier depois no mesmo lado. Empacotando o timer do lado
+        # direito (reservando seu espaco) antes do canvas, o canvas so ocupa
+        # o meio, e o timer sobra visivel a esquerda do microfone.
+        self._rec_timer_lbl = tk.Label(row, text='00:00', font=('Segoe UI', 9),
+                                       bg=bg, fg='#4a5568')
+        self._rec_timer_lbl.pack(side='right', padx=(4, 10))
+
+        self._rec_canvas = tk.Canvas(row, height=28, bg=bg, highlightthickness=0)
+        self._rec_canvas.pack(side='left', fill='both', expand=True, padx=4, pady=6)
+        self._recording_bar = row
+        # Sem isso o foco fica preso no campo de texto escondido (pack_forget)
+        # e o Enter do binding da janela nunca dispara -- usuario tinha que
+        # clicar na tela pra "acordar" o foco. Forca foco na janela + garante
+        # que qualquer widget da barra tambem responda a Enter.
+        self.focus_set()
+        self._bind_return_recursive(row)
+
+    def _tick_recording(self):
+        if not self._audio_recorder or not self._audio_recorder.is_recording:
+            return
+        elapsed = time.time() - self._recording_start_time
+        mm, ss = divmod(int(elapsed), 60)
+        try:
+            self._rec_timer_lbl.config(text=f'{mm:02d}:{ss:02d}')
+        except Exception:
+            pass
+        self._recording_levels.append(self._audio_recorder.read_level())
+        self._recording_levels = self._recording_levels[-40:]
+        try:
+            self._draw_waveform(self._rec_canvas, self._recording_levels)
+        except Exception:
+            pass
+        self._recording_tick_job = self.after(80, self._tick_recording)
+
+    def _stop_recording(self):
+        if self._recording_tick_job:
+            try:
+                self.after_cancel(self._recording_tick_job)
+            except Exception:
+                pass
+            self._recording_tick_job = None
+        if not self._audio_recorder:
+            return
+        pcm = self._audio_recorder.stop()
+        self._audio_recorder = None
+        duration = len(pcm) / 2.0 / audio_recorder.SAMPLE_RATE if pcm else 0.0
+        if duration < 0.3:
+            # Gravacao curta demais (provavel toque acidental): descarta
+            self._cancel_recording()
+            return
+        self._recorded_wav_bytes = audio_recorder.pcm_to_wav_bytes(pcm)
+        # winsound nao permite SND_MEMORY + SND_ASYNC juntos (RuntimeError:
+        # "Cannot play asynchronously from memory") -- grava um .wav temporario
+        # para a previa tocar via SND_FILENAME, igual as bolhas ja enviadas.
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.wav', prefix='mbchat_rec_')
+            os.close(fd)
+            with open(tmp_path, 'wb') as f:
+                f.write(self._recorded_wav_bytes)
+            self._recording_preview_path = tmp_path
+        except Exception:
+            self._recording_preview_path = None
+        self._build_record_row_review()
+        self._set_mic_icon_state(self._play_icon_img, '▶', self._on_mic_review_toggle,
+                                 tooltip='Reproduzir gravação')
+
+    # Le o estado atual da revisao (path/canvas/onda/duracao) e delega pro
+    # sistema unico de play/pausa -- e o command do botao do microfone
+    # durante a revisao (unico controle de audio, o botao da esquerda foi
+    # removido pra nao confundir com o de enviar).
+    def _on_mic_review_toggle(self):
+        if not self._recorded_wav_bytes:
+            return
+        # Usa o .wav temp se existir (evita escrever de novo); se a gravacao
+        # dele falhou em _stop_recording, cai pros bytes em memoria --
+        # _play_audio_from sabe gravar um temp na hora nesse caso.
+        source = self._recording_preview_path or self._recorded_wav_bytes
+        dur = audio_recorder.wav_duration(self._recorded_wav_bytes)
+        self._toggle_playback(source, self._btn_mic,
+                              self._rec_review_canvas, self._rec_review_waveform, dur)
+
+    # Troca a barra ao vivo pela barra de revisao (ainda no lugar do campo
+    # de texto): X cancela, onda estatica clicavel/arrastavel (seek),
+    # duracao. Play/pausa e so pelo botao do microfone (direita) ou Enter.
+    def _build_record_row_review(self):
+        if self._recording_bar:
+            self._recording_bar.destroy()
+        bg = self._theme.get('bg_input', '#f7fafc') if hasattr(self, '_theme') else '#f7fafc'
+        row = tk.Frame(self._input_row, bg=bg)
+        row.pack(side='left', fill='both', expand=True)
+
+        tk.Button(row, text='✕', font=('Segoe UI', 10, 'bold'),
+                 bg=bg, fg='#94a3b8', relief='flat', bd=0,
+                 cursor='hand2', command=self._cancel_recording
+                 ).pack(side='left', padx=(10, 6))
+
+        # Duracao (tamanho fixo) empacotada ANTES do canvas expansivel --
+        # mesma razao do timer da barra ao vivo (ver _build_record_row_live).
+        dur = audio_recorder.wav_duration(self._recorded_wav_bytes)
+        mm, ss = divmod(int(dur), 60)
+        tk.Label(row, text=f'{mm:02d}:{ss:02d}', font=('Segoe UI', 9),
+                bg=bg, fg='#4a5568').pack(side='right', padx=(4, 10))
+
+        self._rec_review_canvas = tk.Canvas(row, height=28, bg=bg, highlightthickness=0)
+        self._rec_review_canvas.pack(side='left', fill='both', expand=True, padx=4, pady=6)
+        waveform = audio_recorder.wav_waveform(self._recorded_wav_bytes)
+        self._rec_review_waveform = waveform
+        self._draw_waveform(self._rec_review_canvas, waveform)
+        seek_source = self._recording_preview_path or self._recorded_wav_bytes
+        self._bind_waveform_seek(self._rec_review_canvas, seek_source,
+                                 self._btn_mic, waveform, dur)
+        self._recording_bar = row
+        # Sem isso o foco fica preso no campo de texto escondido (pack_forget)
+        # e o Enter do binding da janela nunca dispara -- usuario tinha que
+        # clicar na tela pra "acordar" o foco. Forca foco na janela + garante
+        # que qualquer widget da barra tambem responda a Enter.
+        self.focus_set()
+        self._bind_return_recursive(row)
+
+    # ===== Reproducao com seek (previa, bolha enviada, bolha recebida) =====
+    # Um unico sistema pra tocar/pausar/retomar/pular pra qualquer ponto do
+    # audio -- usado tanto pelo botao do microfone (previa antes de enviar)
+    # quanto pelo play de cada bolha (enviada ou recebida).
+
+    # Clique = pula direto; arrastar = mostra a posicao em tempo real e so
+    # confirma o salto (reinicia o play daquele ponto) ao soltar o botao.
+    def _bind_waveform_seek(self, canvas, source, btn, waveform, duration):
+        def _frac_from_event(e):
+            w = canvas.winfo_width()
+            if w <= 1:
+                cw = canvas['width']
+                w = int(cw) if cw else 150
+            return max(0.0, min(0.98, e.x / max(1, w)))
+
+        def _press(e):
+            self._waveform_drag = {'canvas': canvas, 'frac': _frac_from_event(e)}
+            self._draw_waveform(canvas, waveform, progress=self._waveform_drag['frac'])
+
+        def _drag(e):
+            st = getattr(self, '_waveform_drag', None)
+            if not st or st.get('canvas') is not canvas:
+                return
+            st['frac'] = _frac_from_event(e)
+            self._draw_waveform(canvas, waveform, progress=st['frac'])
+
+        def _release(e):
+            st = getattr(self, '_waveform_drag', None)
+            self._waveform_drag = None
+            if not st or st.get('canvas') is not canvas:
+                return
+            try:
+                btn._paused_fraction = 0.0
+            except Exception:
+                pass
+            self._play_audio_from(source, btn, canvas, waveform, duration,
+                                  start_fraction=st['frac'])
+
+        canvas.config(cursor='hand2')
+        canvas.bind('<Button-1>', _press)
+        canvas.bind('<B1-Motion>', _drag)
+        canvas.bind('<ButtonRelease-1>', _release)
+
+    # Chamado pelo clique no botao de play/pausa (mic em revisao, ou botao
+    # de uma bolha). Pausa (lembrando o ponto) se ja estiver tocando esse
+    # audio; retoma do ponto pausado ou comeca do zero caso contrario.
+    def _toggle_playback(self, source, btn, canvas, waveform, duration):
+        if self._now_playing_audio and self._now_playing_audio.get('btn') is btn:
+            info = self._now_playing_audio
+            elapsed = time.time() - info['start']
+            paused_frac = max(0.0, min(0.98, elapsed / (info['duration'] or 0.01)))
+            self._stop_bubble_playback(keep_progress=paused_frac)
+            try:
+                btn._paused_fraction = paused_frac
+            except Exception:
+                pass
+            return
+        resume_frac = getattr(btn, '_paused_fraction', 0.0)
+        self._play_audio_from(source, btn, canvas, waveform, duration,
+                              start_fraction=resume_frac)
+
+    # Toca `source` (path ou bytes) a partir de start_fraction (0.0-1.0).
+    # winsound nao tem seek nativo -- se start_fraction > 0 recorta um novo
+    # .wav so com o restante e toca esse arquivo temporario (igual ja
+    # fazemos pra contornar o SND_MEMORY+SND_ASYNC não ser permitido).
+    def _play_audio_from(self, source, btn, canvas, waveform, duration, start_fraction=0.0):
+        self._stop_bubble_playback()
+        start_fraction = max(0.0, min(0.98, start_fraction))
+        cleanup_path = None
+        if start_fraction > 0.001:
+            trimmed = audio_recorder.trim_wav_from(source, start_fraction)
+            if not trimmed:
+                return
+            try:
+                fd, tmp = tempfile.mkstemp(suffix='.wav', prefix='mbchat_seek_')
+                os.close(fd)
+                with open(tmp, 'wb') as f:
+                    f.write(trimmed)
+            except Exception:
+                return
+            play_path = tmp
+            cleanup_path = tmp
+        elif isinstance(source, (bytes, bytearray)):
+            try:
+                fd, tmp = tempfile.mkstemp(suffix='.wav', prefix='mbchat_seek_')
+                os.close(fd)
+                with open(tmp, 'wb') as f:
+                    f.write(source)
+                play_path = tmp
+                cleanup_path = tmp
+            except Exception:
+                return
+        else:
+            if not os.path.exists(source):
+                return
+            play_path = source
+        try:
+            winsound.PlaySound(play_path,
+                               winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        except Exception:
+            if cleanup_path:
+                try:
+                    os.remove(cleanup_path)
+                except Exception:
+                    pass
+            return
+        self._set_playback_icon(btn, playing=True)
+        remaining = max(0.05, duration * (1 - start_fraction))
+        stop_job = self.after(max(150, int(remaining * 1000)), self._stop_bubble_playback)
+        self._now_playing_audio = {
+            'btn': btn,
+            'canvas': canvas,
+            'waveform': waveform,
+            'duration': duration,
+            'start': time.time() - duration * start_fraction,
+            'stop_job': stop_job,
+            'tick_job': None,
+            'cleanup_path': cleanup_path,
+        }
+        self._tick_playback_progress()
+
+    # Troca o icone de play/pausa -- se for o botao do microfone usa os
+    # icones custom cacheados (mesmo padrao do resto do estado do mic);
+    # se for o botao de uma bolha, so troca o texto (mais simples, cada
+    # bolha tem seu proprio botao descartavel).
+    def _set_playback_icon(self, btn, playing):
+        if btn is getattr(self, '_btn_mic', None):
+            icon = getattr(self, '_pause_play_icon_img', None) if playing \
+                else getattr(self, '_play_icon_img', None)
+            fallback = '⏸' if playing else '▶'
+            if icon:
+                btn.config(image=icon, text='')
+            else:
+                btn.config(image='', text=fallback)
+            if hasattr(self, '_btn_mic_tooltip'):
+                self._btn_mic_tooltip.text = 'Pausar reprodução' if playing \
+                    else 'Reproduzir gravação'
+        else:
+            btn.config(text='⏸' if playing else '▶')
+
+    # Redesenha a onda com o traco vermelho de progresso a cada ~50ms
+    # enquanto o audio toca (previa, bolha enviada e recebida usam a mesma
+    # logica). Para sozinho quando a duracao estimada termina -- o job de
+    # stop (agendado por duration) cuida do reset final do icone/onda.
+    def _tick_playback_progress(self):
+        info = self._now_playing_audio
+        if not info:
+            return
+        try:
+            dur = info['duration'] or 0.01
+            progress = (time.time() - info['start']) / dur
+            if progress >= 1.0:
+                return
+            canvas = info['canvas']
+            if canvas.winfo_exists():
+                self._draw_waveform(canvas, info['waveform'], progress=progress)
+            info['tick_job'] = self.after(50, self._tick_playback_progress)
+        except Exception:
+            pass
+
+    # Windows so tem 1 canal via winsound: para qualquer reproducao em curso
+    # (bolha ou previa) e reseta o icone/onda de quem estava tocando.
+    # keep_progress (0.0-1.0 ou None): se veio de uma pausa explicita, mantem
+    # o traco congelado nessa posicao em vez de limpar a onda.
+    def _stop_bubble_playback(self, keep_progress=None):
+        if self._now_playing_audio:
+            info = self._now_playing_audio
+            for key in ('stop_job', 'tick_job'):
+                try:
+                    if info.get(key):
+                        self.after_cancel(info[key])
+                except Exception:
+                    pass
+            try:
+                btn = info.get('btn')
+                if btn and btn.winfo_exists():
+                    self._set_playback_icon(btn, playing=False)
+                    if keep_progress is None:
+                        btn._paused_fraction = 0.0
+            except Exception:
+                pass
+            try:
+                canvas = info.get('canvas')
+                waveform = info.get('waveform')
+                if canvas and canvas.winfo_exists() and waveform is not None:
+                    self._draw_waveform(canvas, waveform, progress=keep_progress)
+            except Exception:
+                pass
+            cleanup_path = info.get('cleanup_path')
+            if cleanup_path:
+                try:
+                    os.remove(cleanup_path)
+                except Exception:
+                    pass
+            self._now_playing_audio = None
+        try:
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+
+    # Cancela gravacao/revisao e devolve o campo de texto ao lugar (X clicado
+    # ou descarte automatico de gravacao curta demais).
+    def _cancel_recording(self):
+        if self._audio_recorder:
+            try:
+                self._audio_recorder.cancel()
+            except Exception:
+                pass
+            self._audio_recorder = None
+        if self._recording_tick_job:
+            try:
+                self.after_cancel(self._recording_tick_job)
+            except Exception:
+                pass
+            self._recording_tick_job = None
+        self._stop_bubble_playback()
+        self._recorded_wav_bytes = None
+        self._recording_levels = []
+        if self._recording_preview_path:
+            try:
+                os.remove(self._recording_preview_path)
+            except Exception:
+                pass
+            self._recording_preview_path = None
+        if self._recording_bar:
+            self._recording_bar.destroy()
+            self._recording_bar = None
+        self.entry.pack(side='left', fill='both', expand=True)
+        self._set_mic_icon_state(self._mic_icon_img, '\U0001f3a4', self._start_recording,
+                                 tooltip='Gravar áudio')
+        self.entry.focus_set()
+
+    def _send_recording(self):
+        wav_bytes = self._recorded_wav_bytes
+        if not wav_bytes:
+            return
+        self._stop_bubble_playback()
+        self._recorded_wav_bytes = None
+        if self._recording_preview_path:
+            try:
+                os.remove(self._recording_preview_path)
+            except Exception:
+                pass
+            self._recording_preview_path = None
+        if self._recording_bar:
+            self._recording_bar.destroy()
+            self._recording_bar = None
+        self.entry.pack(side='left', fill='both', expand=True)
+        self._set_mic_icon_state(self._mic_icon_img, '\U0001f3a4', self._start_recording,
+                                 tooltip='Gravar áudio')
+        self.entry.focus_set()
+
+        def _do_send():
+            ok, path = self.messenger.send_audio(self.peer_id, wav_bytes)
+            if ok and path:
+                self.after(0, lambda: self._append_audio(
+                    self.messenger.display_name, path, True))
+        threading.Thread(target=_do_send, daemon=True).start()
+
+    # Chamado quando audio e recebido do peer
+    def receive_audio(self, audio_path, timestamp=None):
+        self._append_audio(self.peer_name, audio_path, False, timestamp=timestamp)
+        if self.app._window_is_foreground(self):
+            self.messenger.mark_as_read(self.peer_id)
+
+    # Renderiza bolha de audio no chat (play/pause + onda + duracao)
+    def _append_audio(self, sender, audio_path, is_mine, timestamp=None):
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
+        self.chat_text.configure(state='normal')
+        style = self.messenger.db.get_setting('msg_style', 'bubble')
+        if style == 'bubble':
+            if is_mine:
+                name_tag, time_tag, msg_tag = 'my_bubble_name', 'my_bubble_time', 'my_bubble'
+            else:
+                name_tag, time_tag, msg_tag = 'peer_bubble_name', 'peer_bubble_time', 'peer_bubble'
+        else:
+            name_tag = 'my_name' if is_mine else 'peer_name'
+            time_tag = 'time'
+            msg_tag = 'msg'
+        self.chat_text.insert('end', f'{sender}', name_tag)
+        self.chat_text.insert('end', f'  {ts}\n', time_tag)
+
+        try:
+            exists = bool(audio_path) and os.path.exists(audio_path)
+            card = tk.Frame(self.chat_text, bg='#eef2f7', bd=0)
+            play_btn = tk.Button(card, text='▶', font=('Segoe UI', 10),
+                                 bg='#eef2f7', fg='#2451a0', relief='flat', bd=0,
+                                 cursor='hand2', state='normal' if exists else 'disabled')
+            play_btn.pack(side='left', padx=(6, 4), pady=6)
+            canvas = tk.Canvas(card, width=140, height=26, bg='#eef2f7', highlightthickness=0)
+            canvas.pack(side='left', padx=2, pady=4)
+            waveform = audio_recorder.wav_waveform(audio_path) if exists else [0.15] * 20
+            self._draw_waveform(canvas, waveform)
+            dur = audio_recorder.wav_duration(audio_path) if exists else 0.0
+            mm, ss = divmod(int(dur), 60)
+            tk.Label(card, text=f'{mm:02d}:{ss:02d}', font=('Segoe UI', 8),
+                    bg='#eef2f7', fg='#4a5568').pack(side='left', padx=(4, 8))
+            if exists:
+                play_btn.config(command=lambda p=audio_path, b=play_btn, c=canvas,
+                                wf=waveform, d=dur:
+                                self._toggle_playback(p, b, c, wf, d))
+                self._bind_waveform_seek(canvas, audio_path, play_btn, waveform, dur)
+            self.chat_text.window_create('end', window=card, padx=4, pady=2)
+        except Exception:
+            self.chat_text.insert('end', '[Audio indisponivel]', msg_tag)
+
+        self.chat_text.insert('end', '\n', msg_tag)
+        self.chat_text.insert('end', '\n')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
     def _on_paste(self, event):
         if not HAS_PIL:
             return
@@ -7550,7 +8263,16 @@ class GroupChatWindow(tk.Toplevel):
                        else 'MB Contabilidade',
                        THEMES.get('MB Contabilidade', {}))
         self._theme = t
-        self._build_ui(t)
+        try:
+            self._build_ui(t)
+        except Exception:
+            log.exception('Erro ao construir UI da GroupChatWindow (group_id=%s); '
+                          'destruindo janela para evitar estado zumbi', self.group_id)
+            try:
+                self.destroy()
+            except Exception:
+                pass
+            raise
         self.bind('<FocusIn>', self._on_focus_in)
         # Carrega historico persistido do grupo (mensagens + imagens) em ordem
         # cronologica. Roda apos o build_ui para que chat_text exista.
@@ -7705,19 +8427,52 @@ class GroupChatWindow(tk.Toplevel):
         self._input_outer.pack(side='bottom', fill='x', padx=6, pady=(2, 2))
         input_outer = self._input_outer
 
+        # Linha interna: Text ocupa a esquerda (expande), microfone ancorado
+        # no canto direito -- estilo WhatsApp, mesmo padrao da ChatWindow.
+        _input_bg = t.get('bg_input', '#f7fafc')
+        input_row = tk.Frame(input_outer, bg=_input_bg)
+        input_row.pack(fill='both', expand=True, padx=1, pady=1)
+        self._input_row = input_row
+
         # Altura adaptativa igual a ChatWindow: inicia em 1 e cresce com o texto.
         # wrap='char': quebra em qualquer posicao; evita overflow horizontal em
         # strings sem espaco. Mesmo motivo da ChatWindow.
         # width=1: forca widget a respeitar largura do container (default=80
         # chars causaria overflow horizontal em janelas estreitas).
-        self.entry = tk.Text(input_outer, font=('Segoe UI', 11),
-                             bg=t.get('bg_input', '#f7fafc'),
+        self.entry = tk.Text(input_row, font=('Segoe UI', 11),
+                             bg=_input_bg,
                              fg=t.get('fg_black', '#1a202c'),
                              relief='flat', bd=0, height=1, width=1,
                              wrap='word', padx=14, pady=10,
                              insertbackground=t.get('fg_black', '#1a202c'),
                              undo=True, autoseparators=True, maxundo=-1)
-        self.entry.pack(fill='both', expand=True, padx=1, pady=1)
+        self.entry.pack(side='left', fill='both', expand=True)
+
+        # Microfone ancorado no canto direito da barra de digitar (nao mais
+        # na barra de ferramentas). So aparece se sounddevice disponivel.
+        # Mesmo botao alterna: mic (parado) -> pausa (gravando) -> enviar (revisao).
+        # Icones desenhados via MDL2/PIL (nao emoji) -- minimalista, no mesmo
+        # estilo dos outros botoes da barra de ferramentas.
+        if audio_recorder.HAS_SOUNDDEVICE:
+            self._mic_icon_img = _create_mdl2_icon_static('', 18, flat_fg)
+            self._pause_icon_img = _create_pause_icon_static(18, '#cc3333')
+            self._pause_play_icon_img = _create_pause_icon_static(18, '#2451a0')
+            self._play_icon_img = _create_play_icon_static(18, '#2451a0')
+            if self._mic_icon_img:
+                self._btn_mic = tk.Button(input_row, image=self._mic_icon_img,
+                          bg=_input_bg, relief='flat', bd=0, padx=8, pady=2,
+                          command=self._start_recording, cursor='hand2')
+            else:
+                self._btn_mic = tk.Button(input_row, text='\U0001f3a4',
+                          font=('Segoe UI', 13), bg=_input_bg, fg=flat_fg,
+                          relief='flat', bd=0, padx=8, pady=2,
+                          command=self._start_recording, cursor='hand2')
+            self._btn_mic.pack(side='right', padx=(2, 8), pady=2)
+            self._btn_mic_tooltip = _Tooltip(self._btn_mic, 'Gravar áudio')
+        # Enter finaliza gravacao (para) e Enter de novo envia a revisao --
+        # so dispara quando o entry NAO tem foco (escondido durante
+        # gravacao/revisao); o binding do entry ja consome Enter normal.
+        self.bind('<Return>', self._on_window_return)
         def _redo(e):
             try: self.entry.edit_redo()
             except tk.TclError: pass
@@ -7741,6 +8496,16 @@ class GroupChatWindow(tk.Toplevel):
         self._pending_image = None        # PIL Image aguardando envio (Ctrl+V preview)
         self._image_preview_bar = None    # Frame da barra de preview de imagem
         self._preview_thumb_ref = None    # referencia para evitar GC do thumbnail
+
+        # === Gravacao de audio (mic estilo WhatsApp) ===
+        self._audio_recorder = None       # audio_recorder.AudioRecorder ativo
+        self._recording_bar = None        # Frame da barra de gravacao/revisao
+        self._recorded_wav_bytes = None   # bytes .wav gravados, aguardando revisao/envio
+        self._recording_preview_path = None  # arquivo temp do .wav para tocar a revisao
+        self._recording_tick_job = None   # job do .after() do timer/onda ao vivo
+        self._recording_start_time = None
+        self._recording_levels = []       # amostras recentes de volume (onda ao vivo)
+        self._now_playing_audio = None    # dict (btn/canvas/waveform/duration/start/jobs) da bolha tocando agora
         self._msg_data = []     # [{msg_id, sender, text, is_mine}] para reply
         self._img_click_handled = False
         self._mention_popup = None  # Popup de autocomplete @mencao
@@ -8048,6 +8813,11 @@ class GroupChatWindow(tk.Toplevel):
 
     # ===== Panel toggle =====
     def _toggle_panel(self):
+        if not hasattr(self, '_paned') or not hasattr(self, '_panel'):
+            log.warning('_toggle_panel: janela de grupo %s sem _paned/_panel '
+                       '(UI incompleta); ignorando clique',
+                       getattr(self, 'group_id', '?'))
+            return
         if self._panel_visible:
             self._paned.forget(self._panel)
             self._btn_toggle.config(text='\u25c0')
@@ -9031,6 +9801,8 @@ class GroupChatWindow(tk.Toplevel):
         self.after(30, self._do_emoji_scan)
         # Delay 30ms: tk precisa de tempo real para calcular wrap.
         self.after(30, self._adjust_input_height)
+        if audio_recorder.HAS_SOUNDDEVICE:
+            self.after(30, self._update_mic_visibility)
 
     # Mede wrap manualmente com tkfont — mais confiavel que count -displaylines.
     def _adjust_input_height(self):
@@ -9840,6 +10612,11 @@ class GroupChatWindow(tk.Toplevel):
 
     # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
+        # Audio gravado pendente de revisao: o botao "Enviar" e o Enter
+        # tambem mandam ele, sem precisar de um botao de enviar separado.
+        if self._recorded_wav_bytes:
+            self._send_recording()
+            return
         content = self._get_entry_content()
         pending_img = self._pending_image
         if not content and not pending_img:
@@ -9891,6 +10668,580 @@ class GroupChatWindow(tk.Toplevel):
             self._image_preview_bar.destroy()
             self._image_preview_bar = None
 
+    # ===== Gravacao de audio (mic estilo WhatsApp) =====
+
+    # Desenha barrinhas de onda arredondadas (estilo WhatsApp) num Canvas a
+    # partir de uma lista de amplitudes 0.0-1.0 (onda ao vivo e onda estatica
+    # da bolha usam a mesma funcao). Usa create_line com capstyle=round em
+    # vez de retangulos -- visual mais suave, mais proximo do WhatsApp.
+    # progress (0.0-1.0 ou None): posicao de reproducao -- desenha um traco
+    # vertical vermelho fino nessa posicao (previa, bolha enviada e recebida
+    # usam o mesmo parametro para o "cursor" de playback).
+    @staticmethod
+    def _draw_waveform(canvas, levels, color='#2451a0', progress=None):
+        try:
+            canvas.delete('all')
+            w = canvas.winfo_width()
+            if w <= 1:
+                cw = canvas['width']
+                w = int(cw) if cw else 150
+            h = canvas.winfo_height()
+            if h <= 1:
+                ch = canvas['height']
+                h = int(ch) if ch else 28
+            n = max(1, len(levels))
+            gap = 3
+            bar_w = max(2, (w - gap) // n - gap)
+            x = gap
+            for lvl in levels:
+                bh = max(3, int(lvl * (h - 6)))
+                y0 = (h - bh) // 2
+                y1 = y0 + bh
+                xc = x + bar_w / 2
+                canvas.create_line(xc, y0, xc, y1, fill=color, width=bar_w,
+                                   capstyle='round')
+                x += bar_w + gap
+            if progress is not None:
+                px = max(1, min(w - 1, progress * w))
+                canvas.create_line(px, 1, px, h - 1, fill='#e53e3e', width=2,
+                                   capstyle='round')
+        except Exception:
+            pass
+
+    # Enter finaliza a gravacao (para) e Enter de novo envia a revisao. So
+    # dispara quando o entry NAO tem foco -- ele fica escondido durante
+    # gravacao/revisao, entao o binding normal de Enter do entry (que ja
+    # consome o evento com 'break') nao interfere no fluxo de texto comum.
+    def _on_window_return(self, event=None):
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            self._stop_recording()
+            return 'break'
+        if self._recorded_wav_bytes:
+            self._send_recording()
+            return 'break'
+
+    # Vincula Enter em um widget e em TODOS os seus descendentes -- garante
+    # que o atalho funciona nao importa em qual widget da barra de gravacao
+    # o foco esteja (X, play, canvas), sem depender so da propagacao padrao
+    # de bindtags ate a janela.
+    def _bind_return_recursive(self, widget):
+        try:
+            widget.bind('<Return>', self._on_window_return)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            self._bind_return_recursive(child)
+
+    # Troca o icone/comando do botao do microfone com seguranca -- usa a
+    # imagem cacheada se disponivel, cai para texto se PIL falhou ao gerar.
+    def _set_mic_icon_state(self, icon_img, fallback_text, command, tooltip=None):
+        if icon_img:
+            self._btn_mic.config(image=icon_img, text='', command=command)
+        else:
+            self._btn_mic.config(image='', text=fallback_text, command=command)
+        if tooltip is not None and hasattr(self, '_btn_mic_tooltip'):
+            self._btn_mic_tooltip.text = tooltip
+
+    # Esconde o microfone assim que o usuario comeca a digitar (o campo de
+    # texto toma o espaco todo, estilo WhatsApp); reaparece se o campo fica
+    # vazio de novo. So mexe quando IDLE — durante gravacao/revisao o entry
+    # ja esta escondido e o botao ja mostra pausa/enviar, entao nao interfere.
+    def _update_mic_visibility(self):
+        if not hasattr(self, '_btn_mic'):
+            return
+        if self._audio_recorder or self._recorded_wav_bytes:
+            return
+        try:
+            has_text = bool(self.entry.get('1.0', 'end-1c').strip())
+        except Exception:
+            return
+        if has_text:
+            if self._btn_mic.winfo_ismapped():
+                self._btn_mic.pack_forget()
+        else:
+            if not self._btn_mic.winfo_ismapped():
+                self._btn_mic.pack(side='right', padx=(2, 8), pady=2)
+
+    def _start_recording(self):
+        if not audio_recorder.HAS_SOUNDDEVICE:
+            return
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            return
+        # Mesma regra que reply-bar e image-preview-bar ja seguem entre si:
+        # nunca duas barras concorrentes acima do input.
+        self._cancel_reply()
+        self._cancel_image_preview()
+        self._recorded_wav_bytes = None
+        self._recording_levels = []
+        # Zera qualquer posicao de pausa de uma revisao anterior -- senao a
+        # proxima gravacao poderia "comecar tocando do meio" por engano.
+        try:
+            self._btn_mic._paused_fraction = 0.0
+        except Exception:
+            pass
+        rec = audio_recorder.AudioRecorder()
+        try:
+            rec.start()
+        except Exception:
+            messagebox.showwarning('Microfone',
+                'Nao foi possivel acessar o microfone.\nVerifique se ele esta '
+                'conectado e se nenhum outro programa esta usando.', parent=self)
+            return
+        self._audio_recorder = rec
+        self._recording_start_time = time.time()
+        self.entry.pack_forget()
+        self._build_record_row_live()
+        self._set_mic_icon_state(self._pause_icon_img, '⏸', self._stop_recording,
+                                 tooltip='Parar gravação')
+        self._tick_recording()
+
+    # Substitui o campo de texto (dentro de _input_row) pela barra de
+    # gravacao ao vivo -- a barra de digitar "vira" a barra de audio, em vez
+    # de empilhar uma barra extra acima do input.
+    def _build_record_row_live(self):
+        if self._recording_bar:
+            self._recording_bar.destroy()
+        bg = self._theme.get('bg_input', '#f7fafc') if hasattr(self, '_theme') else '#f7fafc'
+        row = tk.Frame(self._input_row, bg=bg)
+        row.pack(side='left', fill='both', expand=True)
+
+        tk.Button(row, text='✕', font=('Segoe UI', 10, 'bold'),
+                 bg=bg, fg='#94a3b8', relief='flat', bd=0,
+                 cursor='hand2', command=self._cancel_recording
+                 ).pack(side='left', padx=(10, 6))
+
+        # IMPORTANTE: o timer (tamanho fixo) precisa ser empacotado ANTES do
+        # canvas (expand=True) — no pack() do Tk, um widget com expand=True
+        # processado primeiro consome todo o espaco restante, deixando so
+        # 1px pra quem vier depois no mesmo lado. Empacotando o timer do lado
+        # direito (reservando seu espaco) antes do canvas, o canvas so ocupa
+        # o meio, e o timer sobra visivel a esquerda do microfone.
+        self._rec_timer_lbl = tk.Label(row, text='00:00', font=('Segoe UI', 9),
+                                       bg=bg, fg='#4a5568')
+        self._rec_timer_lbl.pack(side='right', padx=(4, 10))
+
+        self._rec_canvas = tk.Canvas(row, height=28, bg=bg, highlightthickness=0)
+        self._rec_canvas.pack(side='left', fill='both', expand=True, padx=4, pady=6)
+        self._recording_bar = row
+        # Sem isso o foco fica preso no campo de texto escondido (pack_forget)
+        # e o Enter do binding da janela nunca dispara -- usuario tinha que
+        # clicar na tela pra "acordar" o foco. Forca foco na janela + garante
+        # que qualquer widget da barra tambem responda a Enter.
+        self.focus_set()
+        self._bind_return_recursive(row)
+
+    def _tick_recording(self):
+        if not self._audio_recorder or not self._audio_recorder.is_recording:
+            return
+        elapsed = time.time() - self._recording_start_time
+        mm, ss = divmod(int(elapsed), 60)
+        try:
+            self._rec_timer_lbl.config(text=f'{mm:02d}:{ss:02d}')
+        except Exception:
+            pass
+        self._recording_levels.append(self._audio_recorder.read_level())
+        self._recording_levels = self._recording_levels[-40:]
+        try:
+            self._draw_waveform(self._rec_canvas, self._recording_levels)
+        except Exception:
+            pass
+        self._recording_tick_job = self.after(80, self._tick_recording)
+
+    def _stop_recording(self):
+        if self._recording_tick_job:
+            try:
+                self.after_cancel(self._recording_tick_job)
+            except Exception:
+                pass
+            self._recording_tick_job = None
+        if not self._audio_recorder:
+            return
+        pcm = self._audio_recorder.stop()
+        self._audio_recorder = None
+        duration = len(pcm) / 2.0 / audio_recorder.SAMPLE_RATE if pcm else 0.0
+        if duration < 0.3:
+            # Gravacao curta demais (provavel toque acidental): descarta
+            self._cancel_recording()
+            return
+        self._recorded_wav_bytes = audio_recorder.pcm_to_wav_bytes(pcm)
+        # winsound nao permite SND_MEMORY + SND_ASYNC juntos (RuntimeError:
+        # "Cannot play asynchronously from memory") -- grava um .wav temporario
+        # para a previa tocar via SND_FILENAME, igual as bolhas ja enviadas.
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.wav', prefix='mbchat_rec_')
+            os.close(fd)
+            with open(tmp_path, 'wb') as f:
+                f.write(self._recorded_wav_bytes)
+            self._recording_preview_path = tmp_path
+        except Exception:
+            self._recording_preview_path = None
+        self._build_record_row_review()
+        self._set_mic_icon_state(self._play_icon_img, '▶', self._on_mic_review_toggle,
+                                 tooltip='Reproduzir gravação')
+
+    # Le o estado atual da revisao (path/canvas/onda/duracao) e delega pro
+    # sistema unico de play/pausa -- e o command do botao do microfone
+    # durante a revisao (unico controle de audio, o botao da esquerda foi
+    # removido pra nao confundir com o de enviar).
+    def _on_mic_review_toggle(self):
+        if not self._recorded_wav_bytes:
+            return
+        # Usa o .wav temp se existir (evita escrever de novo); se a gravacao
+        # dele falhou em _stop_recording, cai pros bytes em memoria --
+        # _play_audio_from sabe gravar um temp na hora nesse caso.
+        source = self._recording_preview_path or self._recorded_wav_bytes
+        dur = audio_recorder.wav_duration(self._recorded_wav_bytes)
+        self._toggle_playback(source, self._btn_mic,
+                              self._rec_review_canvas, self._rec_review_waveform, dur)
+
+    # Troca a barra ao vivo pela barra de revisao (ainda no lugar do campo
+    # de texto): X cancela, onda estatica clicavel/arrastavel (seek),
+    # duracao. Play/pausa e so pelo botao do microfone (direita) ou Enter.
+    def _build_record_row_review(self):
+        if self._recording_bar:
+            self._recording_bar.destroy()
+        bg = self._theme.get('bg_input', '#f7fafc') if hasattr(self, '_theme') else '#f7fafc'
+        row = tk.Frame(self._input_row, bg=bg)
+        row.pack(side='left', fill='both', expand=True)
+
+        tk.Button(row, text='✕', font=('Segoe UI', 10, 'bold'),
+                 bg=bg, fg='#94a3b8', relief='flat', bd=0,
+                 cursor='hand2', command=self._cancel_recording
+                 ).pack(side='left', padx=(10, 6))
+
+        # Duracao (tamanho fixo) empacotada ANTES do canvas expansivel --
+        # mesma razao do timer da barra ao vivo (ver _build_record_row_live).
+        dur = audio_recorder.wav_duration(self._recorded_wav_bytes)
+        mm, ss = divmod(int(dur), 60)
+        tk.Label(row, text=f'{mm:02d}:{ss:02d}', font=('Segoe UI', 9),
+                bg=bg, fg='#4a5568').pack(side='right', padx=(4, 10))
+
+        self._rec_review_canvas = tk.Canvas(row, height=28, bg=bg, highlightthickness=0)
+        self._rec_review_canvas.pack(side='left', fill='both', expand=True, padx=4, pady=6)
+        waveform = audio_recorder.wav_waveform(self._recorded_wav_bytes)
+        self._rec_review_waveform = waveform
+        self._draw_waveform(self._rec_review_canvas, waveform)
+        seek_source = self._recording_preview_path or self._recorded_wav_bytes
+        self._bind_waveform_seek(self._rec_review_canvas, seek_source,
+                                 self._btn_mic, waveform, dur)
+        self._recording_bar = row
+        # Sem isso o foco fica preso no campo de texto escondido (pack_forget)
+        # e o Enter do binding da janela nunca dispara -- usuario tinha que
+        # clicar na tela pra "acordar" o foco. Forca foco na janela + garante
+        # que qualquer widget da barra tambem responda a Enter.
+        self.focus_set()
+        self._bind_return_recursive(row)
+
+    # ===== Reproducao com seek (previa, bolha enviada, bolha recebida) =====
+    # Um unico sistema pra tocar/pausar/retomar/pular pra qualquer ponto do
+    # audio -- usado tanto pelo botao do microfone (previa antes de enviar)
+    # quanto pelo play de cada bolha (enviada ou recebida).
+
+    # Clique = pula direto; arrastar = mostra a posicao em tempo real e so
+    # confirma o salto (reinicia o play daquele ponto) ao soltar o botao.
+    def _bind_waveform_seek(self, canvas, source, btn, waveform, duration):
+        def _frac_from_event(e):
+            w = canvas.winfo_width()
+            if w <= 1:
+                cw = canvas['width']
+                w = int(cw) if cw else 150
+            return max(0.0, min(0.98, e.x / max(1, w)))
+
+        def _press(e):
+            self._waveform_drag = {'canvas': canvas, 'frac': _frac_from_event(e)}
+            self._draw_waveform(canvas, waveform, progress=self._waveform_drag['frac'])
+
+        def _drag(e):
+            st = getattr(self, '_waveform_drag', None)
+            if not st or st.get('canvas') is not canvas:
+                return
+            st['frac'] = _frac_from_event(e)
+            self._draw_waveform(canvas, waveform, progress=st['frac'])
+
+        def _release(e):
+            st = getattr(self, '_waveform_drag', None)
+            self._waveform_drag = None
+            if not st or st.get('canvas') is not canvas:
+                return
+            try:
+                btn._paused_fraction = 0.0
+            except Exception:
+                pass
+            self._play_audio_from(source, btn, canvas, waveform, duration,
+                                  start_fraction=st['frac'])
+
+        canvas.config(cursor='hand2')
+        canvas.bind('<Button-1>', _press)
+        canvas.bind('<B1-Motion>', _drag)
+        canvas.bind('<ButtonRelease-1>', _release)
+
+    # Chamado pelo clique no botao de play/pausa (mic em revisao, ou botao
+    # de uma bolha). Pausa (lembrando o ponto) se ja estiver tocando esse
+    # audio; retoma do ponto pausado ou comeca do zero caso contrario.
+    def _toggle_playback(self, source, btn, canvas, waveform, duration):
+        if self._now_playing_audio and self._now_playing_audio.get('btn') is btn:
+            info = self._now_playing_audio
+            elapsed = time.time() - info['start']
+            paused_frac = max(0.0, min(0.98, elapsed / (info['duration'] or 0.01)))
+            self._stop_bubble_playback(keep_progress=paused_frac)
+            try:
+                btn._paused_fraction = paused_frac
+            except Exception:
+                pass
+            return
+        resume_frac = getattr(btn, '_paused_fraction', 0.0)
+        self._play_audio_from(source, btn, canvas, waveform, duration,
+                              start_fraction=resume_frac)
+
+    # Toca `source` (path ou bytes) a partir de start_fraction (0.0-1.0).
+    # winsound nao tem seek nativo -- se start_fraction > 0 recorta um novo
+    # .wav so com o restante e toca esse arquivo temporario (igual ja
+    # fazemos pra contornar o SND_MEMORY+SND_ASYNC não ser permitido).
+    def _play_audio_from(self, source, btn, canvas, waveform, duration, start_fraction=0.0):
+        self._stop_bubble_playback()
+        start_fraction = max(0.0, min(0.98, start_fraction))
+        cleanup_path = None
+        if start_fraction > 0.001:
+            trimmed = audio_recorder.trim_wav_from(source, start_fraction)
+            if not trimmed:
+                return
+            try:
+                fd, tmp = tempfile.mkstemp(suffix='.wav', prefix='mbchat_seek_')
+                os.close(fd)
+                with open(tmp, 'wb') as f:
+                    f.write(trimmed)
+            except Exception:
+                return
+            play_path = tmp
+            cleanup_path = tmp
+        elif isinstance(source, (bytes, bytearray)):
+            try:
+                fd, tmp = tempfile.mkstemp(suffix='.wav', prefix='mbchat_seek_')
+                os.close(fd)
+                with open(tmp, 'wb') as f:
+                    f.write(source)
+                play_path = tmp
+                cleanup_path = tmp
+            except Exception:
+                return
+        else:
+            if not os.path.exists(source):
+                return
+            play_path = source
+        try:
+            winsound.PlaySound(play_path,
+                               winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        except Exception:
+            if cleanup_path:
+                try:
+                    os.remove(cleanup_path)
+                except Exception:
+                    pass
+            return
+        self._set_playback_icon(btn, playing=True)
+        remaining = max(0.05, duration * (1 - start_fraction))
+        stop_job = self.after(max(150, int(remaining * 1000)), self._stop_bubble_playback)
+        self._now_playing_audio = {
+            'btn': btn,
+            'canvas': canvas,
+            'waveform': waveform,
+            'duration': duration,
+            'start': time.time() - duration * start_fraction,
+            'stop_job': stop_job,
+            'tick_job': None,
+            'cleanup_path': cleanup_path,
+        }
+        self._tick_playback_progress()
+
+    # Troca o icone de play/pausa -- se for o botao do microfone usa os
+    # icones custom cacheados (mesmo padrao do resto do estado do mic);
+    # se for o botao de uma bolha, so troca o texto (mais simples, cada
+    # bolha tem seu proprio botao descartavel).
+    def _set_playback_icon(self, btn, playing):
+        if btn is getattr(self, '_btn_mic', None):
+            icon = getattr(self, '_pause_play_icon_img', None) if playing \
+                else getattr(self, '_play_icon_img', None)
+            fallback = '⏸' if playing else '▶'
+            if icon:
+                btn.config(image=icon, text='')
+            else:
+                btn.config(image='', text=fallback)
+            if hasattr(self, '_btn_mic_tooltip'):
+                self._btn_mic_tooltip.text = 'Pausar reprodução' if playing \
+                    else 'Reproduzir gravação'
+        else:
+            btn.config(text='⏸' if playing else '▶')
+
+    # Redesenha a onda com o traco vermelho de progresso a cada ~50ms
+    # enquanto o audio toca (previa, bolha enviada e recebida usam a mesma
+    # logica). Para sozinho quando a duracao estimada termina -- o job de
+    # stop (agendado por duration) cuida do reset final do icone/onda.
+    def _tick_playback_progress(self):
+        info = self._now_playing_audio
+        if not info:
+            return
+        try:
+            dur = info['duration'] or 0.01
+            progress = (time.time() - info['start']) / dur
+            if progress >= 1.0:
+                return
+            canvas = info['canvas']
+            if canvas.winfo_exists():
+                self._draw_waveform(canvas, info['waveform'], progress=progress)
+            info['tick_job'] = self.after(50, self._tick_playback_progress)
+        except Exception:
+            pass
+
+    # Windows so tem 1 canal via winsound: para qualquer reproducao em curso
+    # (bolha ou previa) e reseta o icone/onda de quem estava tocando.
+    # keep_progress (0.0-1.0 ou None): se veio de uma pausa explicita, mantem
+    # o traco congelado nessa posicao em vez de limpar a onda.
+    def _stop_bubble_playback(self, keep_progress=None):
+        if self._now_playing_audio:
+            info = self._now_playing_audio
+            for key in ('stop_job', 'tick_job'):
+                try:
+                    if info.get(key):
+                        self.after_cancel(info[key])
+                except Exception:
+                    pass
+            try:
+                btn = info.get('btn')
+                if btn and btn.winfo_exists():
+                    self._set_playback_icon(btn, playing=False)
+                    if keep_progress is None:
+                        btn._paused_fraction = 0.0
+            except Exception:
+                pass
+            try:
+                canvas = info.get('canvas')
+                waveform = info.get('waveform')
+                if canvas and canvas.winfo_exists() and waveform is not None:
+                    self._draw_waveform(canvas, waveform, progress=keep_progress)
+            except Exception:
+                pass
+            cleanup_path = info.get('cleanup_path')
+            if cleanup_path:
+                try:
+                    os.remove(cleanup_path)
+                except Exception:
+                    pass
+            self._now_playing_audio = None
+        try:
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+
+    # Cancela gravacao/revisao e devolve o campo de texto ao lugar (X clicado
+    # ou descarte automatico de gravacao curta demais).
+    def _cancel_recording(self):
+        if self._audio_recorder:
+            try:
+                self._audio_recorder.cancel()
+            except Exception:
+                pass
+            self._audio_recorder = None
+        if self._recording_tick_job:
+            try:
+                self.after_cancel(self._recording_tick_job)
+            except Exception:
+                pass
+            self._recording_tick_job = None
+        self._stop_bubble_playback()
+        self._recorded_wav_bytes = None
+        self._recording_levels = []
+        if self._recording_preview_path:
+            try:
+                os.remove(self._recording_preview_path)
+            except Exception:
+                pass
+            self._recording_preview_path = None
+        if self._recording_bar:
+            self._recording_bar.destroy()
+            self._recording_bar = None
+        self.entry.pack(side='left', fill='both', expand=True)
+        self._set_mic_icon_state(self._mic_icon_img, '\U0001f3a4', self._start_recording,
+                                 tooltip='Gravar áudio')
+        self.entry.focus_set()
+
+    # Envia o audio gravado para todos os membros do grupo (mesh)
+    def _send_recording(self):
+        wav_bytes = self._recorded_wav_bytes
+        if not wav_bytes:
+            return
+        self._stop_bubble_playback()
+        self._recorded_wav_bytes = None
+        if self._recording_preview_path:
+            try:
+                os.remove(self._recording_preview_path)
+            except Exception:
+                pass
+            self._recording_preview_path = None
+        if self._recording_bar:
+            self._recording_bar.destroy()
+            self._recording_bar = None
+        self.entry.pack(side='left', fill='both', expand=True)
+        self._set_mic_icon_state(self._mic_icon_img, '\U0001f3a4', self._start_recording,
+                                 tooltip='Gravar áudio')
+        self.entry.focus_set()
+
+        def _do_send():
+            path = self.app.messenger.send_group_audio(self.group_id, wav_bytes)
+            if path:
+                self.after(0, lambda: self._append_audio(
+                    self.app.messenger.display_name, path, True))
+        threading.Thread(target=_do_send, daemon=True).start()
+
+    # Chamado quando audio e recebido de outro membro do grupo
+    def receive_audio(self, display_name, audio_path, timestamp=None):
+        self._append_audio(display_name, audio_path, False, timestamp=timestamp)
+
+    # Renderiza bolha de audio no chat do grupo (play/pause + onda + duracao)
+    def _append_audio(self, sender, audio_path, is_mine, timestamp=None):
+        ts = datetime.fromtimestamp(timestamp or time.time()).strftime('%H:%M')
+        self.chat_text.configure(state='normal')
+        style = self.app.messenger.db.get_setting('msg_style', 'bubble')
+        if style == 'bubble':
+            if is_mine:
+                name_tag, time_tag, msg_tag = 'my_bubble_name', 'my_bubble_time', 'my_bubble'
+            else:
+                name_tag, time_tag, msg_tag = 'peer_bubble_name', 'peer_bubble_time', 'peer_bubble'
+        else:
+            name_tag = 'my_name' if is_mine else 'peer_name'
+            time_tag = 'time'
+            msg_tag = 'msg'
+        self.chat_text.insert('end', f'{sender}', name_tag)
+        self.chat_text.insert('end', f'  {ts}\n', time_tag)
+
+        try:
+            exists = bool(audio_path) and os.path.exists(audio_path)
+            card = tk.Frame(self.chat_text, bg='#eef2f7', bd=0)
+            play_btn = tk.Button(card, text='▶', font=('Segoe UI', 10),
+                                 bg='#eef2f7', fg='#2451a0', relief='flat', bd=0,
+                                 cursor='hand2', state='normal' if exists else 'disabled')
+            play_btn.pack(side='left', padx=(6, 4), pady=6)
+            canvas = tk.Canvas(card, width=140, height=26, bg='#eef2f7', highlightthickness=0)
+            canvas.pack(side='left', padx=2, pady=4)
+            waveform = audio_recorder.wav_waveform(audio_path) if exists else [0.15] * 20
+            self._draw_waveform(canvas, waveform)
+            dur = audio_recorder.wav_duration(audio_path) if exists else 0.0
+            mm, ss = divmod(int(dur), 60)
+            tk.Label(card, text=f'{mm:02d}:{ss:02d}', font=('Segoe UI', 8),
+                    bg='#eef2f7', fg='#4a5568').pack(side='left', padx=(4, 8))
+            if exists:
+                play_btn.config(command=lambda p=audio_path, b=play_btn, c=canvas,
+                                wf=waveform, d=dur:
+                                self._toggle_playback(p, b, c, wf, d))
+                self._bind_waveform_seek(canvas, audio_path, play_btn, waveform, dur)
+            self.chat_text.window_create('end', window=card, padx=4, pady=2)
+        except Exception:
+            self.chat_text.insert('end', '[Audio indisponivel]', msg_tag)
+
+        self.chat_text.insert('end', '\n', msg_tag)
+        self.chat_text.insert('end', '\n')
+        self.chat_text.configure(state='disabled')
+        self.chat_text.see('end')
+
     def _on_paste(self, event):
         if not HAS_PIL:
             return
@@ -9931,6 +11282,11 @@ class GroupChatWindow(tk.Toplevel):
     # Chamado quando imagem e recebida de outro membro do grupo
     def receive_image(self, display_name, image_path, timestamp=None):
         self._append_image(display_name, image_path, False, timestamp=timestamp)
+
+    # Botao "Carregar mais" do historico — amplia o limite e recarrega
+    def _load_more_history(self):
+        self._history_limit += 100
+        self._load_history()
 
     # Carrega historico do grupo do banco (texto + imagens).
     # Renderiza tudo em ordem cronologica como se fosse uma conversa normal.
@@ -9973,6 +11329,12 @@ class GroupChatWindow(tk.Toplevel):
                     self._append_image(sender, content, is_mine, timestamp=ts)
                 else:
                     self._append_message(sender, '[Imagem indisponível]',
+                                         is_mine, timestamp=ts, msg_id=mid)
+            elif mtype == 'audio':
+                if content and os.path.exists(content):
+                    self._append_audio(sender, content, is_mine, timestamp=ts)
+                else:
+                    self._append_message(sender, '[Áudio indisponível]',
                                          is_mine, timestamp=ts, msg_id=mid)
             else:
                 self._append_message(sender, content, is_mine,
@@ -10354,6 +11716,7 @@ class LanMessengerApp:
             on_group_leave=self._safe(self._on_group_leave),
             on_group_join=self._safe(self._on_group_join),
             on_image=self._safe(self._on_image),
+            on_audio=self._safe(self._on_audio),
             on_poll=self._safe(self._on_poll),
             on_status=self._safe(self._on_peer_status),
             on_reminder_invite=self._safe(self._on_reminder_invite),
@@ -10368,6 +11731,7 @@ class LanMessengerApp:
             on_group_kick=self._safe(self._on_group_kick),
             on_group_admin_set=self._safe(self._on_group_admin_set),
             on_group_deleted=self._safe(self._on_group_deleted),
+            on_aviso=self._safe(self._on_aviso),
         )
         self.messenger.on_reaction = self._safe(self._on_reaction)
         self.messenger.start()
@@ -11110,7 +12474,7 @@ class LanMessengerApp:
             col=0, icon_text='•))',
             icon_color=_ACTION_ACCENT,
             label_text='Transmitir',
-            callback=self._show_broadcast)
+            callback=self._open_transmit_menu)
 
         # Divider vertical fino entre as duas celulas
         tk.Frame(action_row, bg=_ACTION_DIVIDER, width=1
@@ -12171,6 +13535,7 @@ class LanMessengerApp:
             '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
             '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
             '\U0001f919': 'me liga telefone hang loose',
+            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer',
             '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
             '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
             '\U0001f350': 'pera', '\U0001f34a': 'tangerina laranja',
@@ -12320,7 +13685,7 @@ class LanMessengerApp:
                 '\U0001f918', '\U0001f448', '\U0001f449', '\U0001f446',
                 '\U0001f447', '\U0001f485', '\U0001f933', '\u270c\ufe0f',
                 '\U0001f590\ufe0f', '\u261d\ufe0f', '\U0001f919',
-                '\U0001f9b5', '\U0001f9b6',
+                '\U0001f90c', '\U0001f9b5', '\U0001f9b6',
             ],
             '\U0001f354': [
                 '\U0001f34e', '\U0001f34f', '\U0001f350', '\U0001f34a',
@@ -13051,15 +14416,30 @@ class LanMessengerApp:
             if not group_data:  # grupo nao existe mais?
                 return None
             g_type = group_data.get('group_type', 'temp')  # tipo: 'temp' ou 'fixed'
-            gw = GroupChatWindow(self, group_id, group_data['name'],
-                                 group_type=g_type,
-                                 start_hidden=surface_only)
+            try:
+                gw = GroupChatWindow(self, group_id, group_data['name'],
+                                     group_type=g_type,
+                                     start_hidden=surface_only)
+            except Exception:
+                log.exception('Erro ao abrir GroupChatWindow (group_id=%s)', group_id)
+                return None
             self.group_windows[group_id] = gw  # registra no dicionario
             for m in group_data.get('members', []):  # adiciona cada membro ao painel
-                m_info = self.peer_info.get(m['uid'],
-                            {'ip': m.get('ip', ''),
-                             'status': 'online', 'note': ''})  # info do peer ou padrao
-                gw.add_member(m['uid'], m['display_name'], m_info)  # adiciona ao painel
+                try:
+                    m_uid = m.get('uid') if isinstance(m, dict) else None
+                    if not m_uid:
+                        log.warning('Membro invalido ao reabrir grupo %s: %r',
+                                   group_id, m)
+                        continue
+                    m_name = m.get('display_name') or \
+                        self.messenger.db.find_user_name(m_uid) or m_uid
+                    m_info = self.peer_info.get(m_uid,
+                                {'ip': m.get('ip', ''),
+                                 'status': 'online', 'note': ''})  # info do peer ou padrao
+                    gw.add_member(m_uid, m_name, m_info)  # adiciona ao painel
+                except Exception:
+                    log.exception('Falha ao adicionar membro ao reabrir grupo %s: %r',
+                                  group_id, m)
             if hasattr(self, '_theme'):  # tema esta configurado?
                 self._apply_theme_to_group(gw, self._theme)  # aplica tema atual
         # Exibe mensagens pendentes acumuladas enquanto a janela estava fechada
@@ -13773,6 +15153,20 @@ class LanMessengerApp:
                         msg_text.tag_bind(ctx_tag, '<Leave>',
                             lambda e: msg_text.config(cursor=''))
                     msg_text.insert('end', '\n')
+                elif m.get('msg_type') == 'audio':
+                    fp = content  # caminho do .wav fica no campo content, convencao da imagem
+                    gtag = f'haudio_{id(m)}'
+                    msg_text.insert('end', '🔊 Áudio', gtag)
+                    msg_text.tag_config(gtag, foreground='#1976d2', underline=True)
+                    msg_text.tag_bind(gtag, '<Button-1>',
+                        lambda e, p=fp: winsound.PlaySound(p, winsound.SND_FILENAME |
+                                        winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                                        if os.path.exists(p) else None)
+                    msg_text.tag_bind(gtag, '<Enter>',
+                                      lambda e: msg_text.config(cursor='hand2'))
+                    msg_text.tag_bind(gtag, '<Leave>',
+                                      lambda e: msg_text.config(cursor=''))
+                    msg_text.insert('end', '\n')
                 else:
                     if query_lower and scroll_to_id is None and query_lower in content.lower():
                         ctx_tag = f'ctx_{id(m)}'
@@ -13979,11 +15373,20 @@ class LanMessengerApp:
     def _send_broadcast(self):
         self._show_broadcast()  # abre o dialog de transmissao de mensagem em massa
 
-    # Janela Transmitir Mensagem — envia para contatos selecionados.
-    def _show_broadcast(self):
+    # Menu do botao "Transmitir": escolher entre Mensagem (comportamento de
+    # sempre, sem mudanca) e Aviso (notificacao curta, so no sino, nao persiste)
+    def _open_transmit_menu(self):
+        self._open_modern_menu([
+            ('', 'Mensagem', self._show_broadcast),
+            ('', 'Aviso', lambda: self._show_broadcast(mode='aviso')),
+        ])
+
+    # Janela Transmitir Mensagem/Aviso — envia para contatos selecionados.
+    def _show_broadcast(self, mode='message'):
         NAVY = '#0f2a5c'
+        is_aviso = (mode == 'aviso')
         win = tk.Toplevel(self.root)
-        win.title('Transmitir Mensagem')
+        win.title('Transmitir Aviso' if is_aviso else 'Transmitir Mensagem')
         win.transient(self.root)
         win.grab_set()
         win.configure(bg='#f5f7fa')
@@ -14249,7 +15652,8 @@ class LanMessengerApp:
         left.pack(side='left', fill='both', expand=True)
 
         toolbar = tk.Frame(left, bg='#f5f7fa')
-        toolbar.pack(fill='x', pady=(0, 6))
+        if not is_aviso:
+            toolbar.pack(fill='x', pady=(0, 6))
 
         # Font size pill buttons
         tk.Label(toolbar, text='Tamanho da Fonte:', font=('Segoe UI', 8),
@@ -14267,13 +15671,29 @@ class LanMessengerApp:
             pb.pack(side='left', padx=0)
             font_pills[fname] = pb
 
+        # Aviso: campo simples de uma linha (notificacao curta, sem formatacao
+        # rica) — mesma infra de Text+emoji, so a apresentacao/altura muda.
         txt_border = tk.Frame(left, bg='#d0d5dd')
-        txt_border.pack(fill='both', expand=True)
+        txt_border.pack(fill='x' if is_aviso else 'both', expand=not is_aviso,
+                        pady=(0, 0) if is_aviso else 0)
         txt_inner = tk.Frame(txt_border, bg='#ffffff')
         txt_inner.pack(fill='both', expand=True, padx=1, pady=1)
-        txt = tk.Text(txt_inner, font=('Segoe UI', 10), relief='flat',
-                      bd=0, padx=8, pady=6, wrap='word')
+        _txt_kwargs = dict(font=('Segoe UI', 10), relief='flat',
+                           bd=0, padx=8, pady=6,
+                           wrap='none' if is_aviso else 'word')
+        if is_aviso:
+            _txt_kwargs['height'] = 1
+        txt = tk.Text(txt_inner, **_txt_kwargs)
         txt.pack(fill='both', expand=True)
+        if is_aviso:
+            def _aviso_return(e):
+                do_send()
+                return 'break'
+            txt.bind('<Return>', _aviso_return)
+            tk.Label(left, text='Aviso curto — aparece no sininho de quem '
+                    'receber, não é salvo no histórico.',
+                    font=('Segoe UI', 8), bg='#f5f7fa', fg='#94a3b8',
+                    anchor='w').pack(fill='x', pady=(4, 0))
 
         # Detectar emojis: <<Modified>> dispara para QUALQUER alteração de conteúdo
         # (teclado, IME, Windows Emoji Picker, paste). É o único evento confiável.
@@ -14381,20 +15801,28 @@ class LanMessengerApp:
         def do_send():
             content = _get_bcast_content()
             if not content:
-                messagebox.showwarning('Transmitir', 'Digite uma mensagem.',
+                messagebox.showwarning('Transmitir',
+                                       'Digite um aviso.' if is_aviso else
+                                       'Digite uma mensagem.',
                                        parent=win)
                 return
             sent = 0
             for uid, var in peer_vars.items():
                 if var.get():
-                    threading.Thread(target=self.messenger.send_message,
-                                     args=(uid, content, '', True),
-                                     daemon=True).start()
+                    if is_aviso:
+                        threading.Thread(target=self.messenger.send_aviso,
+                                         args=(uid, content),
+                                         daemon=True).start()
+                    else:
+                        threading.Thread(target=self.messenger.send_message,
+                                         args=(uid, content, '', True),
+                                         daemon=True).start()
                     sent += 1
             win.destroy()
             if sent:
                 messagebox.showinfo('Transmitir',
-                                    f'Mensagem enviada para {sent} contato(s).')
+                                    f'{"Aviso enviado" if is_aviso else "Mensagem enviada"} '
+                                    f'para {sent} contato(s).')
 
         btn_send = tk.Button(bottom, text='  Enviar  ',
                              font=('Segoe UI', 9, 'bold'),
@@ -14701,15 +16129,25 @@ class LanMessengerApp:
             return
         # Prepara a estrutura do grupo localmente e dispara envio em background
         self.messenger.send_group_invite(group_id, group_name, member_ids, group_type)
-        
-        gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)  # cria janela
+
+        try:
+            gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)  # cria janela
+        except Exception:
+            log.exception('Erro ao criar janela do grupo %s (group_id=%s)',
+                          group_name, group_id)
+            messagebox.showerror('Erro ao criar grupo',
+                f'Não foi possível abrir a janela do grupo "{group_name}".\n'
+                'O convite já foi enviado; reabra o grupo pela lista de Grupos.',
+                parent=self.root)
+            return
         self.group_windows[group_id] = gw  # registra no dicionario
         # Adiciona o proprio usuario ao painel lateral da janela de grupo
         my_info = {'ip': '', 'status': 'online', 'note': self.messenger.note}  # propria info
         gw.add_member(self.messenger.user_id, self.messenger.display_name, my_info)
         for uid in member_ids:  # adiciona cada membro convidado ao painel
             info = self.peer_info.get(uid, {})  # info do peer (pode estar vazio)
-            gw.add_member(uid, info.get('display_name', uid), info)
+            d_name = info.get('display_name') or self.messenger.db.find_user_name(uid) or uid
+            gw.add_member(uid, d_name, info)
         # Registra no TreeView (aparece em Grupos tanto temp quanto fixo)
         self._add_group_to_tree(group_id, group_name, group_type)
 
@@ -14727,12 +16165,31 @@ class LanMessengerApp:
             gw.deiconify()
             gw.lift()
             return
-        gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)
+        try:
+            gw = GroupChatWindow(self, group_id, group_name, group_type=group_type)
+        except Exception:
+            log.exception('Erro ao abrir janela para convite de grupo recebido '
+                          '(group_id=%s)', group_id)
+            return
         self.group_windows[group_id] = gw
+        # Cada membro e tratado isoladamente: uma entrada malformada (uid
+        # ausente, etc.) nao pode abortar o loop inteiro e deixar o painel
+        # zerado para os demais — log.exception registra o motivo se ocorrer.
         for m in members:
-            m_info = self.peer_info.get(m['uid'], {'ip': m.get('ip', ''),
-                        'status': 'online', 'note': ''})
-            gw.add_member(m['uid'], m['display_name'], m_info)
+            try:
+                m_uid = m.get('uid') if isinstance(m, dict) else None
+                if not m_uid:
+                    log.warning('Membro invalido no convite de grupo %s: %r',
+                               group_id, m)
+                    continue
+                m_name = m.get('display_name') or \
+                    self.messenger.db.find_user_name(m_uid) or m_uid
+                m_info = self.peer_info.get(m_uid, {'ip': m.get('ip', ''),
+                            'status': 'online', 'note': ''})
+                gw.add_member(m_uid, m_name, m_info)
+            except Exception:
+                log.exception('Falha ao adicionar membro no convite de grupo %s: %r',
+                              group_id, m)
         from_name = self.peer_info.get(from_uid, {}).get('display_name',
                                                           from_uid)
         gw.system_message(f'{from_name} criou este grupo.')
@@ -17853,6 +19310,58 @@ class LanMessengerApp:
                     return cw
                 self._surface_chat_from_tray(_create, gate_key='flash_taskbar_msg')
 
+    # Callback: audio (bolha de voz) recebido — espelha _on_image linha por linha
+    def _on_audio(self, from_user, audio_path, msg_id, timestamp,
+                 group_id=None, display_name=None):
+        if group_id:
+            SoundPlayer.play_msg_group()
+            # Audio de grupo
+            if group_id in self.group_windows:
+                gw = self.group_windows[group_id]
+                gw.receive_audio(display_name or from_user, audio_path, timestamp)
+                try:
+                    if not self._window_is_foreground(gw):
+                        self._show_group_toast(group_id, display_name or from_user, '[Áudio]')
+                        self._pending_flash_target = f'group:{group_id}'
+                        # Grupo fixo fechado (withdrawn) nao tem botao na taskbar — surface antes
+                        try:
+                            if str(gw.state()) == 'withdrawn':
+                                self._show_in_taskbar_minimized(gw)
+                        except Exception:
+                            pass
+                        self._flash_window(gw, gate_key='flash_taskbar_group')
+                except Exception:
+                    pass
+            else:
+                self._mark_group_unread(group_id)
+                self._show_group_toast(group_id, display_name or from_user, '[Áudio]')
+                self._pending_flash_target = f'group:{group_id}'
+                def _create():
+                    return self._open_group(group_id, surface_only=True)
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_group')
+        else:
+            SoundPlayer.play_msg_private()
+            # Audio individual
+            if from_user in self.chat_windows:
+                cw = self.chat_windows[from_user]
+                cw.receive_audio(audio_path, timestamp)
+                try:
+                    if not self._window_is_foreground(cw):
+                        self._show_toast(from_user, '[Áudio]')
+                        self._pending_flash_target = from_user
+                        self._flash_window(cw, gate_key='flash_taskbar_msg')
+                except Exception:
+                    pass
+            else:
+                self._mark_unread(from_user)
+                self._show_toast(from_user, '[Áudio]')
+                self._pending_flash_target = from_user
+                def _create():
+                    cw = self._open_chat(from_user, surface_only=True)
+                    cw.receive_audio(audio_path, timestamp)
+                    return cw
+                self._surface_chat_from_tray(_create, gate_key='flash_taskbar_msg')
+
     # Callback: enquete recebida ou voto atualizado (MT_POLL_CREATE / MT_POLL_VOTE)
     def _on_poll(self, group_id, poll_data):
         action = poll_data.get('action')
@@ -18440,6 +19949,18 @@ class LanMessengerApp:
             pass
 
     # ── fim Módulo Agendar > Reunião ─────────────────────────────────────────
+
+    # Callback: aviso curto recebido via Transmitir > Aviso (MT_AVISO).
+    # So em memoria — nao persiste, nao sobrevive a reiniciar o app (decisao
+    # confirmada). O card do sino ja renderiza qualquer item de _bell_alerts
+    # genericamente (so 'cancel' muda a cor de fundo) — zero renderizacao nova.
+    def _on_aviso(self, from_user, display_name, text, timestamp):
+        if not hasattr(self, '_bell_alerts'):
+            self._bell_alerts = []
+        self._bell_alerts.append({'type': 'aviso',
+                                  'title': f'Aviso de {display_name}',
+                                  'msg': text})
+        self._refresh_bell_badge()
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #

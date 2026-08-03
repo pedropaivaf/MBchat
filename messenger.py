@@ -26,11 +26,12 @@ from network import (
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK, MT_REACTION,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
     MT_GROUP_ADMIN_SET, MT_GROUP_DELETE,
-    MT_IMAGE, MT_POLL_CREATE, MT_POLL_VOTE,
+    MT_IMAGE, MT_AUDIO, MT_POLL_CREATE, MT_POLL_VOTE,
     MT_REMINDER_INVITE, MT_REMINDER_ACCEPT, MT_REMINDER_DECLINE, MT_REMINDER_CANCEL,
     MT_REMINDER_COMPLETED,
     MT_MEETING_INVITE, MT_MEETING_ACCEPT, MT_MEETING_DECLINE,
     MT_MEETING_CANCEL, MT_MEETING_SYNC_REQ, MT_MEETING_SYNC_RES, MT_MEETING_EDIT,
+    MT_AVISO,
     TCP_PORT
 )
 from database import Database  # Banco de dados local
@@ -65,14 +66,14 @@ class Messenger:
                  on_file_progress=None, on_file_complete=None,
                  on_file_error=None, on_group_invite=None,
                  on_group_message=None, on_group_leave=None,
-                 on_group_join=None, on_image=None, on_poll=None,
+                 on_group_join=None, on_image=None, on_audio=None, on_poll=None,
                  on_reminder_invite=None, on_reminder_response=None,
                  on_reminder_cancel=None, on_reminder_completed=None,
                  on_meeting_invite=None, on_meeting_response=None,
                  on_meeting_cancel=None, on_meeting_sync=None,
                  on_meeting_edit=None,
                  on_group_kick=None, on_group_admin_set=None,
-                 on_group_deleted=None):
+                 on_group_deleted=None, on_aviso=None):
         self.db = Database()  # Conexao com banco de dados local
         self._msg_counter = 0  # Contador para IDs unicos de mensagem
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
@@ -95,6 +96,7 @@ class Messenger:
         self.on_group_leave = on_group_leave    # Membro saiu do grupo
         self.on_group_join = on_group_join      # Membro entrou no grupo
         self.on_image = on_image                # Imagem recebida
+        self.on_audio = on_audio                # Audio (bolha de voz) recebido
         self.on_poll = on_poll                  # Enquete recebida/voto
         self.on_reminder_invite = on_reminder_invite              # Convite lembrete recebido
         self.on_reminder_response = on_reminder_response          # Resposta de convite (accept/decline)
@@ -107,6 +109,7 @@ class Messenger:
         self.on_group_kick = on_group_kick                # Membro removido do grupo pelo criador
         self.on_group_admin_set = on_group_admin_set      # Status de admin de um membro alterado
         self.on_group_deleted = on_group_deleted          # Grupo deletado pelo criador
+        self.on_aviso = on_aviso                          # Aviso curto recebido (Transmitir)
 
         # === Grupos em memoria ===
         # Formato: group_id -> {name, group_type, members: [{uid, display_name, ip}]}
@@ -552,6 +555,54 @@ class Messenger:
                 if self.on_image:
                     self.on_image(from_user, image_path, msg_id, timestamp)
 
+        # --- Audio inline (bolha de voz) — espelha MT_IMAGE ---
+        elif msg_type == MT_AUDIO:
+            msg_id = msg.get('msg_id', str(uuid.uuid4()))
+            timestamp = msg.get('timestamp', time.time())
+            b64 = msg.get('audio_data', '')
+            group_id = msg.get('group_id')
+
+            try:
+                audio_bytes = base64.b64decode(b64)
+            except Exception:
+                return
+            audio_path = self._save_audio_to_disk(audio_bytes, msg_id)
+
+            if group_id:
+                # Audio de grupo — notifica via on_audio com group_id (mesmo
+                # padrao da imagem de grupo)
+                display_name = msg.get('display_name', '')
+                if not display_name or display_name == from_user:
+                    _c = self.db.get_contact(from_user)
+                    display_name = (_c.get('display_name') if _c else '') or from_user
+                # Persiste audio no historico do grupo (idempotente por msg_id)
+                try:
+                    if msg_id and not self.db.has_group_message(msg_id):
+                        self.db.save_group_message(
+                            group_id, msg_id, from_user, audio_path,
+                            sender_name=display_name, msg_type='audio',
+                            is_sent=False, timestamp=timestamp)
+                except Exception:
+                    pass
+                if self.on_audio:
+                    self.on_audio(from_user, audio_path, msg_id, timestamp,
+                                 group_id=group_id, display_name=display_name)
+            else:
+                # Audio individual
+                self.db.save_message(msg_id, from_user, self.user_id,
+                                    audio_path, 'audio', is_sent=False,
+                                    timestamp=timestamp)
+                # ACK
+                contact = self.db.get_contact(from_user)
+                if contact:
+                    TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                        'type': MT_ACK,
+                        'from_user': self.user_id,
+                        'msg_id': msg_id
+                    })
+                if self.on_audio:
+                    self.on_audio(from_user, audio_path, msg_id, timestamp)
+
         # --- Convite para grupo ---
         elif msg_type == MT_GROUP_INV:
             group_id = msg.get('group_id')
@@ -994,6 +1045,14 @@ class Messenger:
             except Exception:
                 pass
 
+        # --- Aviso curto via Transmitir — nao persiste, so notifica a GUI ---
+        elif msg_type == MT_AVISO:
+            display_name = msg.get('display_name', '') or from_user
+            text = msg.get('text', '')
+            timestamp = msg.get('timestamp', time.time())
+            if self.on_aviso:
+                self.on_aviso(from_user, display_name, text, timestamp)
+
     # ========================================
     # SEND — Acoes de envio
     # ========================================
@@ -1105,6 +1164,107 @@ class Messenger:
         with open(path, 'wb') as f:
             f.write(image_bytes)
         return path
+
+    # ========================================
+    # AUDIO — Bolha de voz (mic estilo WhatsApp)
+    # ========================================
+    # Mesmo mecanismo do MT_IMAGE (base64 no pacote TCP de controle), nao o
+    # pipeline de transferencia de arquivo generico — este ja tem roteamento
+    # de grupo correto e testado, ao contrario do FileSender/FileReceiver que
+    # nao tem nocao de group_id.
+
+    # Envia audio (.wav) para um contato individual
+    def send_audio(self, to_user_id, audio_bytes, msg_id=None):
+        contact = self.db.get_contact(to_user_id)
+        if not contact:
+            return False, None
+
+        msg_id = msg_id or self._next_msg_id()
+        timestamp = time.time()
+        audio_path = self._save_audio_to_disk(audio_bytes, msg_id)
+        b64 = base64.b64encode(audio_bytes).decode('ascii')
+
+        self.db.save_message(msg_id, self.user_id, to_user_id,
+                            audio_path, 'audio', is_sent=True,
+                            timestamp=timestamp)
+
+        ok = TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+            'type': MT_AUDIO,
+            'from_user': self.user_id,
+            'to_user': to_user_id,
+            'display_name': self.display_name,
+            'msg_id': msg_id,
+            'audio_data': b64,
+            'timestamp': timestamp
+        })
+        return ok, audio_path
+
+    # Envia audio para todos os membros de um grupo (mesh)
+    def send_group_audio(self, group_id, audio_bytes):
+        group = self._groups.get(group_id)
+        if not group:
+            return None
+        msg_id = self._next_msg_id()
+        timestamp = time.time()
+        audio_path = self._save_audio_to_disk(audio_bytes, msg_id)
+        b64 = base64.b64encode(audio_bytes).decode('ascii')
+
+        # Persiste o audio no historico local do grupo (content = caminho)
+        try:
+            self.db.save_group_message(
+                group_id, msg_id, self.user_id, audio_path,
+                sender_name=self.display_name, msg_type='audio',
+                is_sent=True, timestamp=timestamp)
+        except Exception:
+            pass
+
+        for member in group['members']:
+            uid = member['uid']
+            if uid == self.user_id:
+                continue
+            TCPClient.send_message(member['ip'], TCP_PORT, {
+                'type': MT_AUDIO,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Grupo'),
+                'group_type': group.get('group_type', 'temp'),
+                'msg_id': msg_id,
+                'audio_data': b64,
+                'timestamp': timestamp,
+            })
+        return audio_path
+
+    # Salva bytes de audio (.wav) em disco (%APPDATA%/.mbchat/audio/)
+    def _save_audio_to_disk(self, audio_bytes, msg_id):
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+        audio_dir = os.path.join(base, '.mbchat', 'audio')
+        os.makedirs(audio_dir, exist_ok=True)
+        filename = f'{msg_id}.wav'
+        path = os.path.join(audio_dir, filename)
+        with open(path, 'wb') as f:
+            f.write(audio_bytes)
+        return path
+
+    # ========================================
+    # AVISO — notificacao curta via Transmitir (so em memoria, nao persiste)
+    # ========================================
+    # Espelha cancel_meeting: envio TCP direto por destinatario, sem gravar
+    # nada em banco (decisao confirmada: aviso nao sobrevive a reiniciar o app)
+    def send_aviso(self, to_user_id, text):
+        contact = self.db.get_contact(to_user_id)
+        if not contact:
+            return False
+        try:
+            return TCPClient.send_message(contact['ip_address'], TCP_PORT, {
+                'type': MT_AVISO,
+                'from_user': self.user_id,
+                'display_name': self.display_name,
+                'text': text,
+                'timestamp': time.time(),
+            })
+        except Exception:
+            return False
 
     # Envia indicador de digitacao para um peer
     def send_reaction(self, to_user_id, msg_id, emoji, remove=False):
@@ -1349,10 +1509,22 @@ class Messenger:
                          'ip': get_local_ip()}]
         for uid in member_ids:
             contact = self.db.get_contact(uid)
-            if contact:
-                members_info.append({'uid': uid,
-                                     'display_name': contact['display_name'],
-                                     'ip': contact['ip_address']})
+            d_name = contact.get('display_name', '') if contact else ''
+            ip_addr = contact.get('ip_address', '') if contact else ''
+
+            # Contato sem linha no banco (uid legado/migrado ou ainda nao
+            # upsertado) nao pode ser silenciosamente descartado do grupo —
+            # tenta o peer ao vivo do discovery e, por ultimo, find_user_name
+            if not d_name or not ip_addr:
+                peer = self.discovery.peers.get(uid, {}) if self.discovery else {}
+                d_name = d_name or peer.get('display_name', '') or self.db.find_user_name(uid) or uid
+                ip_addr = ip_addr or peer.get('ip', '')
+
+            members_info.append({
+                'uid': uid,
+                'display_name': d_name,
+                'ip': ip_addr
+            })
 
         # Salva grupo em memoria
         self._groups[group_id] = {'name': group_name, 'members': members_info,
@@ -1369,10 +1541,29 @@ class Messenger:
             self.db.save_group_member(group_id, m['uid'],
                                       m['display_name'], m.get('ip', ''), is_admin=is_admin)
 
-        # Envia convite TCP para cada membro convidado
-        for uid in member_ids:
-            contact = self.db.get_contact(uid)
-            if contact:
+        # Envia convite TCP para cada membro convidado (usa o ip ja resolvido
+        # em members_info — contato, discovery ou vazio se peer inalcancavel).
+        # send_message falha em silencio (retorna False) — sem log aqui,
+        # nao da pra saber se o convite chegou. Loga uid+ip em ambos os casos.
+        import logging as _logging
+        _grp_log = _logging.getLogger('mbchat.messenger')
+
+        def _send_invite(uid, ip, pkt):
+            ok = TCPClient.send_message(ip, TCP_PORT, pkt)
+            if ok:
+                _grp_log.info('Convite de grupo %s enviado para %s (%s)',
+                              group_id, uid, ip)
+            else:
+                _grp_log.warning('Convite de grupo %s FALHOU para %s (%s) '
+                                 '— peer inalcancavel ou IP desatualizado',
+                                 group_id, uid, ip)
+
+        for m in members_info:
+            uid = m['uid']
+            if uid == self.user_id:
+                continue
+            ip = m.get('ip', '')
+            if ip:
                 pkt = {
                     'type': MT_GROUP_INV,
                     'to_user': uid,
@@ -1385,9 +1576,13 @@ class Messenger:
                     'admins': [self.user_id],
                     'members': members_info,  # Lista completa de membros
                 }
-                threading.Thread(target=TCPClient.send_message,
-                                 args=(contact['ip_address'], TCP_PORT, pkt),
+                threading.Thread(target=_send_invite,
+                                 args=(uid, ip, pkt),
                                  daemon=True).start()
+            else:
+                _grp_log.warning('Convite de grupo %s NAO enviado para %s '
+                                 '— nenhum IP resolvido (contato/discovery)',
+                                 group_id, uid)
 
     def set_group_admin(self, group_id, target_uid, is_admin):
         group = self._groups.get(group_id)
