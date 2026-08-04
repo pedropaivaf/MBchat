@@ -112,6 +112,7 @@ class Database:
             self._local.conn = sqlite3.connect(self.db_path, timeout=30)
             self._local.conn.row_factory = sqlite3.Row  # Acesso por nome de coluna
             self._local.conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
+            self._local.conn.execute("PRAGMA cache_size=-2000")  # Limita cache de memória em 2MB por conexão
             self._local.conn.execute("PRAGMA busy_timeout=30000")  # 30s busy wait SQLite
             self._local.conn.execute("PRAGMA foreign_keys=ON")  # Ativa chaves estrangeiras
         return self._local.conn

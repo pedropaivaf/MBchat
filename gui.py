@@ -992,6 +992,20 @@ def _add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
 #     size: Tamanho da imagem em pixels.
 # Returns:
 #     ImageTk.PhotoImage pronto para uso em tkinter, ou None se não disponível.
+_FONT_CACHE = {}
+
+def _get_cached_truetype_font(font_path, size):
+    if not HAS_PIL:
+        return None
+    key = (font_path, size)
+    if key not in _FONT_CACHE:
+        try:
+            from PIL import ImageFont
+            _FONT_CACHE[key] = ImageFont.truetype(font_path, size)
+        except Exception:
+            _FONT_CACHE[key] = None
+    return _FONT_CACHE[key]
+
 def _render_color_emoji(emoji_char, size=28):
     if not HAS_PIL:
         return None
@@ -1002,7 +1016,7 @@ def _render_color_emoji(emoji_char, size=28):
             return None
         # Strip variation selector para bbox consistente (renderiza igual sem ele)
         clean = emoji_char.replace('\ufe0f', '')
-        font = ImageFont.truetype(font_path, size)
+        font = _get_cached_truetype_font(font_path, size)
         # Canvas temporário maior para medir o tamanho real do glifo
         tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
         d = ImageDraw.Draw(tmp)
@@ -8207,6 +8221,25 @@ class ChatWindow(tk.Toplevel):
             self.app._flashing_widgets.pop(id(self), None)
         except Exception:
             pass
+        try:
+            if hasattr(self, '_image_cache'):
+                self._image_cache.clear()
+            if hasattr(self, '_chat_emoji_cache'):
+                self._chat_emoji_cache.clear()
+            if hasattr(self, '_entry_emoji_cache'):
+                self._entry_emoji_cache.clear()
+            if hasattr(self, '_entry_img_map'):
+                self._entry_img_map.clear()
+            if hasattr(self, '_rx_img_cache'):
+                self._rx_img_cache.clear()
+            if hasattr(self, '_msg_data'):
+                self._msg_data.clear()
+            if hasattr(self, '_msg_ranges'):
+                self._msg_ranges.clear()
+            import gc
+            gc.collect()
+        except Exception:
+            pass
         self.destroy()
 
 
@@ -12884,7 +12917,7 @@ class LanMessengerApp:
                          fill='white')
             draw.ellipse([dx, dy, dx + dot_size, dy + dot_size],
                          fill=dot_color)
-            self._contact_avatar_pil[f'{uid}_{status}'] = img.copy()
+            self._contact_avatar_pil[uid] = img.copy()
             photo = ImageTk.PhotoImage(img)
         else:
             photo = tk.PhotoImage(width=size, height=size)
@@ -12915,14 +12948,14 @@ class LanMessengerApp:
         emoji_size = 20
         try:
             font_name = 'seguisb.ttf' if bold else 'segoeui.ttf'
-            name_font = ImageFont.truetype(font_name, 16)
-            note_font = ImageFont.truetype('segoeui.ttf', 13)
-            ramal_font = ImageFont.truetype('segoeui.ttf', 12)
+            name_font = _get_cached_truetype_font(font_name, 16)
+            note_font = _get_cached_truetype_font('segoeui.ttf', 13)
+            ramal_font = _get_cached_truetype_font('segoeui.ttf', 12)
             # Setor: fonte pequena (10px) — legivel sem roubar espaco do nome
-            sector_font = ImageFont.truetype('segoeui.ttf', 10)
+            sector_font = _get_cached_truetype_font('segoeui.ttf', 10)
             emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
             has_emoji_font = os.path.exists(emoji_font_path)
-            emoji_font = ImageFont.truetype(emoji_font_path, emoji_size) if has_emoji_font else None
+            emoji_font = _get_cached_truetype_font(emoji_font_path, emoji_size) if has_emoji_font else None
         except Exception:
             return None
 
@@ -13002,8 +13035,7 @@ class LanMessengerApp:
         img = Image.new('RGBA', (total_w, height), (255, 255, 255, 0))
 
         # Cola avatar (centralizado verticalmente)
-        cache_key = f'{uid}_{status}'
-        avatar_pil = self._contact_avatar_pil.get(cache_key)
+        avatar_pil = self._contact_avatar_pil.get(uid)
         if avatar_pil:
             av_y = (height - av_size) // 2
             img.paste(avatar_pil, (0, av_y), avatar_pil)
@@ -13053,7 +13085,13 @@ class LanMessengerApp:
             x += seg_w
 
         photo = ImageTk.PhotoImage(img)
+        old_photo = self._row_images.get(uid)
         self._row_images[uid] = photo  # previne garbage collection
+        if old_photo:
+            try:
+                del old_photo
+            except Exception:
+                pass
         return photo
 
     # Carrega historico de transferencias de arquivo do banco para _transfer_history.
