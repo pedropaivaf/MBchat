@@ -81,23 +81,14 @@
 - **Default OFF e lista vazia** = loop dorme sem overhead. Zero impacto nos LAN-only
 - `'auto'` targets (de peer exchange) ficam em memória só; `'manual'` persistem. Ao religar VPN, `'auto'` é reconstruído automaticamente
 
-## Tipos de mensagem de rede
-- `MT_MESSAGE`, `MT_TYPING`, `MT_STATUS`, `MT_ACK` - individuais
-- `MT_FILE_REQ`, `MT_FILE_ACC`, `MT_FILE_DEC`, `MT_FILE_CANCEL` - arquivos
-- `MT_GROUP_INV`, `MT_GROUP_MSG`, `MT_GROUP_LEAVE`, `MT_GROUP_JOIN` - grupos
-- `MT_IMAGE` - imagem inline base64
-- `MT_AUDIO` - audio/voz (v1.8.35), espelha MT_IMAGE
-- `MT_AVISO` - transmissao rapida sem persistencia (v1.8.35)
-- `MT_POLL_CREATE`, `MT_POLL_VOTE` - enquetes
 
-## Build
-- Menu interativo: build normal, build+versao+deploy, somente deploy, build+GitHub release
-- Gera: dist/MBChat/ (exe + _internal), MBChat_update.zip (auto-update), MBChat_Setup.exe (Inno Setup)
-- `_set_version()` atualiza version.py + installer.iss + docs/index.html
+## Automações & Integrações (VPS / Bot / IA Contábil)
+- **Integração com VPS Bot Gateway** (ver [BOT_INTEGRATION.md](file:///c:/Antigravity/MBchat/docs/BOT_INTEGRATION.md))
+- **Comandos CLI no Chat**: `/cnpj`, `/cnd`, `/nfe`, `/resumir-pdf`, `/calculo`
+- **Análise Inteligente de Arquivos**: Validação automática de extratos `.OFX` e pacotes `.XML` de NF-e
+- **Agenda Fiscal Automática**: Notificações programadas de vencimento de impostos e obrigações nos chats de grupo dos setores
+- **Disparo de Robôs RPA**: Emissão e entrega automática de guias via comandos de chat
 
-## Assets
-- `assets/mbchat_icon.png` - Logo 1024x1024
-- `assets/mbchat.ico` - Multi-resolucao (16-256px)
 - `assets/icon_*.png` - Icones toolbar
 
 ## Testes (manuais)

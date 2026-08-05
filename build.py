@@ -130,7 +130,7 @@ def _do_build():
         f'--icon={ICON}',
         f'--version-file={version_info_path}',
         f'--manifest={manifest_path}',
-        f'--add-data={ICON};assets',
+        f'--add-data={os.path.join(HERE, "assets")};assets',
         '--paths=.',
         '--hidden-import=messenger',
         '--hidden-import=network',

@@ -992,6 +992,62 @@ def _add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
 #     size: Tamanho da imagem em pixels.
 # Returns:
 #     ImageTk.PhotoImage pronto para uso em tkinter, ou None se não disponível.
+_EMOJI_FONT_PATHS_CACHE = None
+
+def _get_emoji_font_paths():
+    """
+    Retorna uma lista ordenada de caminhos de fontes de emojis.
+    Procura em ordem de prioridade:
+    1. Pastas da aplicação (assets/fonts/, assets/, _internal/)
+    2. Pasta do usuário (%APPDATA%/.mbchat/fonts/)
+    3. Fontes instaladas pelo usuário no perfil (%LOCALAPPDATA%/Microsoft/Windows/Fonts/)
+    4. Fonte padrão do sistema Windows (%WINDIR%/Fonts/seguiemj.ttf)
+    """
+    global _EMOJI_FONT_PATHS_CACHE
+    if _EMOJI_FONT_PATHS_CACHE is not None:
+        return _EMOJI_FONT_PATHS_CACHE
+
+    paths = []
+    base_dirs = [os.path.dirname(os.path.abspath(__file__))]
+    if getattr(sys, 'frozen', False):
+        base_dirs.insert(0, os.path.dirname(sys.executable))
+        base_dirs.insert(0, getattr(sys, '_MEIPASS', ''))
+
+    font_names = ['seguiemj.ttf', 'SegoeUIEmoji.ttf', 'NotoColorEmoji.ttf']
+    rel_paths = ['assets/fonts', 'assets', 'fonts', '']
+
+    for bdir in base_dirs:
+        if not bdir:
+            continue
+        for rpath in rel_paths:
+            for fname in font_names:
+                p = os.path.normpath(os.path.join(bdir, rpath, fname))
+                if os.path.isfile(p) and p not in paths:
+                    paths.append(p)
+
+    appdata = os.environ.get('APPDATA', '')
+    if appdata:
+        for fname in font_names:
+            p = os.path.normpath(os.path.join(appdata, '.mbchat', 'fonts', fname))
+            if os.path.isfile(p) and p not in paths:
+                paths.append(p)
+
+    localappdata = os.environ.get('LOCALAPPDATA', '')
+    if localappdata:
+        for fname in font_names:
+            p = os.path.normpath(os.path.join(localappdata, 'Microsoft', 'Windows', 'Fonts', fname))
+            if os.path.isfile(p) and p not in paths:
+                paths.append(p)
+
+    windir = os.environ.get('WINDIR', 'C:/Windows')
+    for fname in font_names:
+        p = os.path.normpath(os.path.join(windir, 'Fonts', fname))
+        if os.path.isfile(p) and p not in paths:
+            paths.append(p)
+
+    _EMOJI_FONT_PATHS_CACHE = paths
+    return paths
+
 _FONT_CACHE = {}
 
 def _get_cached_truetype_font(font_path, size):
@@ -1009,30 +1065,37 @@ def _get_cached_truetype_font(font_path, size):
 def _render_color_emoji(emoji_char, size=28):
     if not HAS_PIL:
         return None
+    font_paths = _get_emoji_font_paths()
+    if not font_paths:
+        return None
     try:
         from PIL import ImageFont, ImageDraw
-        font_path = 'C:/Windows/Fonts/seguiemj.ttf'
-        if not os.path.exists(font_path):
-            return None
-        # Strip variation selector para bbox consistente (renderiza igual sem ele)
-        clean = emoji_char.replace('\ufe0f', '')
-        font = _get_cached_truetype_font(font_path, size)
-        # Canvas temporário maior para medir o tamanho real do glifo
-        tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
-        d = ImageDraw.Draw(tmp)
-        bbox = d.textbbox((0, 0), clean, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        # Canvas final quadrado baseado no tamanho desejado
-        canvas_sz = size + 4
-        img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
-        draw = ImageDraw.Draw(img)
-        x = (canvas_sz - tw) // 2 - bbox[0]
-        y = (canvas_sz - th) // 2 - bbox[1]
-        # embedded_color=True ativa renderização colorida (COLR/CPAL da fonte)
-        draw.text((x, y), clean, font=font, embedded_color=True)
-        return ImageTk.PhotoImage(img)
+        clean_variants = [emoji_char]
+        if '\ufe0f' in emoji_char:
+            clean_variants.append(emoji_char.replace('\ufe0f', ''))
+
+        for font_path in font_paths:
+            font = _get_cached_truetype_font(font_path, size)
+            if not font:
+                continue
+            for clean in clean_variants:
+                tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
+                d = ImageDraw.Draw(tmp)
+                bbox = d.textbbox((0, 0), clean, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                if tw <= 0 or th <= 0:
+                    continue
+                canvas_sz = max(size + 4, int(tw) + 4, int(th) + 4)
+                img = Image.new('RGBA', (canvas_sz, canvas_sz), (255, 255, 255, 0))
+                draw = ImageDraw.Draw(img)
+                x = (canvas_sz - tw) // 2 - bbox[0]
+                y = (canvas_sz - th) // 2 - bbox[1]
+                draw.text((x, y), clean, font=font, embedded_color=True)
+                return ImageTk.PhotoImage(img)
     except Exception:
-        return None
+        pass
+    return None
+
 
 
 # Função utilitária: varre um widget tk.Text e substitui TODOS os emojis Unicode
@@ -6731,45 +6794,44 @@ class ChatWindow(tk.Toplevel):
     def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
+        font_paths = _get_emoji_font_paths()
+        if not font_paths:
+            return None
         try:
             from PIL import ImageFont, ImageDraw
-            font_path = 'C:/Windows/Fonts/seguiemj.ttf'
-            if not os.path.exists(font_path):
-                return None
-            # Tenta manter VS16 (alguns emojis renderizam colorido so com ele).
-            # Se falhar, tenta sem.
-            font = ImageFont.truetype(font_path, size)
-            tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
-            d = ImageDraw.Draw(tmp)
-            clean = emoji_char
-            bbox = d.textbbox((0, 0), clean, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            if tw <= 0 or th <= 0:
-                clean = emoji_char.replace('\ufe0f', '')
+            for font_path in font_paths:
+                font = _get_cached_truetype_font(font_path, size)
+                if not font:
+                    continue
+                tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
+                d = ImageDraw.Draw(tmp)
+                clean = emoji_char
                 bbox = d.textbbox((0, 0), clean, font=font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 if tw <= 0 or th <= 0:
-                    return None
-            # Canvas grande o bastante pra caber o glyph COMPLETO.
-            # Alguns emojis renderizam com bbox > size e ficavam cortados.
-            render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
-            if bg_color:
-                r, g, b = self._hex_to_rgb(bg_color)
-                bg = (r, g, b, 255)
-            else:
-                bg = (255, 255, 255, 0)
-            img = Image.new('RGBA', (render_sz, render_sz), bg)
-            draw = ImageDraw.Draw(img)
-            x = (render_sz - tw) // 2 - bbox[0]
-            y = (render_sz - th) // 2 - bbox[1]
-            draw.text((x, y), clean, font=font, embedded_color=True)
-            display_sz = size + 4
-            if render_sz != display_sz:
-                img = img.resize((display_sz, display_sz), Image.LANCZOS)
-            return ImageTk.PhotoImage(img)
+                    clean = emoji_char.replace('\ufe0f', '')
+                    bbox = d.textbbox((0, 0), clean, font=font)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    if tw <= 0 or th <= 0:
+                        continue
+                render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
+                if bg_color:
+                    r, g, b = self._hex_to_rgb(bg_color)
+                    bg = (r, g, b, 255)
+                else:
+                    bg = (255, 255, 255, 0)
+                img = Image.new('RGBA', (render_sz, render_sz), bg)
+                draw = ImageDraw.Draw(img)
+                x = (render_sz - tw) // 2 - bbox[0]
+                y = (render_sz - th) // 2 - bbox[1]
+                draw.text((x, y), clean, font=font, embedded_color=True)
+                display_sz = size + 4
+                if render_sz != display_sz:
+                    img = img.resize((display_sz, display_sz), Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
         except Exception:
             log.exception('Erro ao renderizar emoji')
-            return None
+        return None
 
     @staticmethod
     def _hex_to_rgb(hex_color):
@@ -9266,42 +9328,44 @@ class GroupChatWindow(tk.Toplevel):
     def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
+        font_paths = _get_emoji_font_paths()
+        if not font_paths:
+            return None
         try:
             from PIL import ImageFont, ImageDraw
-            font_path = 'C:/Windows/Fonts/seguiemj.ttf'
-            if not os.path.exists(font_path):
-                return None
-            # Tenta manter VS16 (alguns emojis renderizam colorido so com ele).
-            # Se falhar, tenta sem.
-            font = ImageFont.truetype(font_path, size)
-            tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
-            d = ImageDraw.Draw(tmp)
-            clean = emoji_char
-            bbox = d.textbbox((0, 0), clean, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            if tw <= 0 or th <= 0:
-                clean = emoji_char.replace('\ufe0f', '')
+            for font_path in font_paths:
+                font = _get_cached_truetype_font(font_path, size)
+                if not font:
+                    continue
+                tmp = Image.new('RGBA', (size * 3, size * 3), (255, 255, 255, 0))
+                d = ImageDraw.Draw(tmp)
+                clean = emoji_char
                 bbox = d.textbbox((0, 0), clean, font=font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 if tw <= 0 or th <= 0:
-                    return None
-            render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
-            if bg_color:
-                r, g, b = self._hex_to_rgb(bg_color)
-                bg = (r, g, b, 255)
-            else:
-                bg = (255, 255, 255, 0)
-            img = Image.new('RGBA', (render_sz, render_sz), bg)
-            draw = ImageDraw.Draw(img)
-            x = (render_sz - tw) // 2 - bbox[0]
-            y = (render_sz - th) // 2 - bbox[1]
-            draw.text((x, y), clean, font=font, embedded_color=True)
-            display_sz = size + 4
-            if render_sz != display_sz:
-                img = img.resize((display_sz, display_sz), Image.LANCZOS)
-            return ImageTk.PhotoImage(img)
+                    clean = emoji_char.replace('\ufe0f', '')
+                    bbox = d.textbbox((0, 0), clean, font=font)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    if tw <= 0 or th <= 0:
+                        continue
+                render_sz = max(size + 4, int(tw) + 4, int(th) + 4)
+                if bg_color:
+                    r, g, b = self._hex_to_rgb(bg_color)
+                    bg = (r, g, b, 255)
+                else:
+                    bg = (255, 255, 255, 0)
+                img = Image.new('RGBA', (render_sz, render_sz), bg)
+                draw = ImageDraw.Draw(img)
+                x = (render_sz - tw) // 2 - bbox[0]
+                y = (render_sz - th) // 2 - bbox[1]
+                draw.text((x, y), clean, font=font, embedded_color=True)
+                display_sz = size + 4
+                if render_sz != display_sz:
+                    img = img.resize((display_sz, display_sz), Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
         except Exception:
-            return None
+            pass
+        return None
 
     @staticmethod
     def _hex_to_rgb(hex_color):
@@ -12953,9 +13017,14 @@ class LanMessengerApp:
             ramal_font = _get_cached_truetype_font('segoeui.ttf', 12)
             # Setor: fonte pequena (10px) — legivel sem roubar espaco do nome
             sector_font = _get_cached_truetype_font('segoeui.ttf', 10)
-            emoji_font_path = 'C:/Windows/Fonts/seguiemj.ttf'
-            has_emoji_font = os.path.exists(emoji_font_path)
-            emoji_font = _get_cached_truetype_font(emoji_font_path, emoji_size) if has_emoji_font else None
+            font_paths = _get_emoji_font_paths()
+            emoji_font = None
+            if font_paths:
+                for fp in font_paths:
+                    ef = _get_cached_truetype_font(fp, emoji_size)
+                    if ef:
+                        emoji_font = ef
+                        break
         except Exception:
             return None
 
