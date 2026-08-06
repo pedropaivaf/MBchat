@@ -13,9 +13,21 @@ import json
 import zipfile
 from urllib import request, error
 
+import ssl
 from version import APP_VERSION
 
 log = logging.getLogger('mbchat')
+
+
+def _urlopen_with_fallback(req, timeout=10):
+    try:
+        return request.urlopen(req, timeout=timeout)
+    except Exception as e:
+        try:
+            ctx = ssl._create_unverified_context()
+            return request.urlopen(req, timeout=timeout, context=ctx)
+        except Exception:
+            raise e
 
 
 def _get_long_path(path):
@@ -73,7 +85,7 @@ def check_update_github():
             'Accept': 'application/vnd.github.v3+json',
             'User-Agent': 'MBChat-Updater'
         })
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen_with_fallback(req, timeout=10) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         tag = data.get('tag_name', '')
         remote_ver = tag.lstrip('v')
@@ -144,7 +156,7 @@ def _download_from_github(dst, progress_cb=None):
             return None, None
         log.info(f'Baixando update v{ver} do GitHub...')
         req = request.Request(url, headers={'User-Agent': 'MBChat-Updater'})
-        with request.urlopen(req, timeout=60) as resp:
+        with _urlopen_with_fallback(req, timeout=60) as resp:
             total = int(resp.headers.get('Content-Length', 0))
             copied = 0
             chunk = 256 * 1024

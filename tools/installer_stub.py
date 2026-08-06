@@ -6,6 +6,8 @@ import subprocess
 import urllib.request
 import urllib.error
 
+import ssl
+
 LATEST_URL = 'https://github.com/pedropaivaf/MBchat/releases/latest/download/MBChat_Setup.exe'
 MB_OK = 0x00000000
 MB_ICONERROR = 0x00000010
@@ -43,6 +45,32 @@ class _Reporter:
             sys.stdout.flush()
 
 
+def _download_setup_with_fallback(url, dst, reporter):
+    req = urllib.request.Request(url, headers={'User-Agent': 'MBChat-WebInstaller'})
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+    except Exception:
+        try:
+            ctx = ssl._create_unverified_context()
+            resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+        except Exception as e:
+            raise e
+
+    with resp:
+        total = int(resp.headers.get('Content-Length', 0))
+        block_size = 256 * 1024
+        block_num = 0
+        with open(dst, 'wb') as f:
+            while True:
+                chunk = resp.read(block_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                block_num += 1
+                if reporter:
+                    reporter(block_num, block_size, total)
+
+
 def main():
     _show_progress_console()
     print('MB Chat - Instalador Web')
@@ -54,7 +82,7 @@ def main():
                 os.remove(tmp_path)
             except Exception:
                 pass
-        urllib.request.urlretrieve(LATEST_URL, tmp_path, _Reporter())
+        _download_setup_with_fallback(LATEST_URL, tmp_path, _Reporter())
         print('\nDownload concluido.')
     except urllib.error.URLError as e:
         _msgbox(f'Nao foi possivel baixar o instalador.\n\n'
