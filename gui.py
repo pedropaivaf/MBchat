@@ -20768,6 +20768,18 @@ class LanMessengerApp:
             pass
         self.root.attributes('-topmost', True)            # temporariamente na frente de tudo
         self.root.after(200, lambda: self.root.attributes('-topmost', False))  # remove apos 200ms
+
+        # Re-anuncia o IP na rede ao restaurar da bandeja/abrir a janela para "acordar"
+        # os sockets da LAN caso a placa de rede tenha alternado ou estivesse em standby.
+        # Debounce de 10s para evitar spam de rede se usuario clicar repetidamente.
+        now = time.time()
+        if now - getattr(self, '_last_restore_announce', 0) > 10:
+            self._last_restore_announce = now
+            if hasattr(self, 'messenger') and self.messenger and hasattr(self.messenger, 'discovery'):
+                try:
+                    self.messenger.discovery._send_announce()
+                except Exception:
+                    pass
         if peer and hasattr(self, 'messenger'):  # tem peer para abrir e messenger inicializado?
             if peer == '__reminders__':             # comando especial para abrir lembretes
                 self.root.after(100, self._show_reminders)
