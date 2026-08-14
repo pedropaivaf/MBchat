@@ -857,3 +857,50 @@ design; aparece no sininho de notificacoes do destinatario como alerta, nao gera
 `python gui.py --instance nome` roda uma instancia isolada: DB separado (`mbchat_<nome>.db`), porta de
 single-instance-lock separada, `user_id` com sufixo — permite abrir 2+ janelas do MBChat na mesma maquina/rede
 pra testar grupos, audio, mensagens etc. sem precisar de PCs de verdade. Nao usar em producao (so dev).
+
+## Fixes pos-v1.8.35: caixa de digitar, envio de audio, highlight de codigo em grupos (pendente release)
+
+1. **Fix definitivo do texto "sumindo" na caixa de digitar (`ChatWindow`/`GroupChatWindow`)**: `wrap='word'`
+   mantido (quebra por palavra, estilo Discord/WhatsApp — `wrap='char'` foi tentado no meio do caminho e
+   descartado por quebrar palavras ao meio, feio visualmente). Causa raiz real nao era o wrap: `_adjust_input_height`
+   estimava a altura via `font.measure()` com orcamento de padx desatualizado (comentario dizia `padx=8`, valor
+   real e `padx=14`) e nao simulava o empacotamento por palavra do `wrap='word'` corretamente (fazia divisao
+   ingenua de pixel, que so bate com `wrap='char'`). Fix: helper novo `_count_wrapped_lines(line, avail_px, font)`
+   (modulo, ~linha 1066) simula o word-wrap do Tk em Python — inclusive o caso de uma "palavra" isolada mais larga
+   que a linha inteira (URL/path colado sem espaco: quebra em pedacos e carrega a SOBRA do ultimo pedaco pra
+   proxima palavra continuar empacotando, em vez de descartar pra 0). Validado contra o layout real do Tk numa
+   janela headless (`.place()` com largura exata + `Text.count(-displaylines)` como oraculo): 0 falhas em 264
+   combinacoes de largura/fonte/texto, incluindo paths/URLs sem espaco e texto multi-linha. `self.entry.see('insert')`
+   substituiu `yview_moveto(0)` como rede de seguranca final, sempre executado (nao so quando a altura muda) — o
+   `yview_moveto(0)` fixava a rolagem no topo e escondia o texto ao passar do limite de 8 linhas (colar texto grande).
+   **NAO usar `Text.count(..., '-displaylines')` como fonte de verdade em runtime** — ja foi tentado no passado
+   (commit `4e9b10c`, v1.4.62) e revertido por retornar valor pre-layout as vezes logo apos uma edicao; o
+   comentario de aviso desse commit antigo quase passou despercebido e quase reintroduziu o mesmo bug. So usar
+   `-displaylines` como oraculo em script de teste offline (fora do event loop ao vivo), nunca no caminho de
+   producao chamado por `<<Modified>>`.
+
+2. **Envio direto de audio gravado (`_send_message`, ChatWindow/GroupChatWindow)**: agora checa
+   `self._audio_recorder and self._audio_recorder.is_recording` primeiro — clicar "Enviar" **durante** a gravacao
+   ativa para a gravacao (`_stop_recording()`) e manda na hora (`_send_recording()`), sem precisar clicar em
+   pausar antes. Antes o botao Enviar (na barra de formatacao, `btn_frame`, sempre visivel mesmo com a barra de
+   gravacao ocupando o `input_row`) so funcionava se o audio ja estivesse no estado de revisao
+   (`_recorded_wav_bytes` setado por `_stop_recording`) — clicar Enviar com a gravacao ainda rolando nao fazia nada.
+
+3. **Highlight de sintaxe portado pra GroupChatWindow**: `GroupChatWindow._insert_code_block` so tinha highlight
+   de JSON (`_insert_json_colored`), resto do codigo (Python/JS/etc.) renderizava em texto liso monocromatico
+   direto no `chat_text`. `ChatWindow` ja tinha um sistema completo e mais novo — bloco de codigo em `Frame`
+   proprio estilo VSCode dark+ (header com nome da linguagem + botao "⧉ Copiar", corpo em `Text` separado,
+   redimensiona com a janela via `_on_chat_resize_update_code`) com highlight de Python (`_highlight_python_into`
+   — keywords, builtins, strings, numeros, comentarios, decorators, nomes de funcao/classe apos `def`/`class`,
+   `self`/`cls`), JS/TS/JSX/TSX/Bash/SQL (`_highlight_generic_into`, parametrizado por `_JS_KEYWORDS`,
+   `_BASH_KEYWORDS`, `_SQL_KEYWORDS` etc. no topo do arquivo) e JSON (`_highlight_json_into`). Portada a
+   implementacao inteira de `_insert_code_block` + `_on_chat_resize_update_code` + `_configure_code_tags_on` +
+   `_highlight_json_into` + `_highlight_python_into` + `_highlight_generic_into` da ChatWindow pra GroupChatWindow
+   (substituiu o `_insert_code_block`/`_insert_json_colored` antigos) — mesmo visual e mesmas linguagens nos dois
+   tipos de chat agora. Metodos antigos equivalentes que ja existiam mortos (nao chamados) dentro da propria
+   ChatWindow (`_insert_json_colored`/`_insert_python_colored`/`_insert_generic_colored`, ~linha 5392+) foram
+   deixados como estao — fora do escopo desse fix, nao remover sem confirmar que sao mesmo mortos primeiro.
+
+**Nenhum dos 3 fixes acima tem versao/release ainda** — ficaram junto dos outros commits pos-1.8.35 (perf RAM,
+fallback emoji, fallback SSL updater, re-anuncio UDP na bandeja, `tools/mock_peer.py`) aguardando o proximo
+`build.py --version X.Y.Z --release`.

@@ -1062,6 +1062,43 @@ def _get_cached_truetype_font(font_path, size):
             _FONT_CACHE[key] = None
     return _FONT_CACHE[key]
 
+
+def _count_wrapped_lines(line, avail_px, font):
+    # Simula wrap='word' do Tk (empacota palavra por palavra, so quebra
+    # quando estoura avail_px) usando font.measure() puro em Python --
+    # NAO usa Text.count(-displaylines): esse comando do Tk pode devolver
+    # um valor pre-layout (desatualizado) quando chamado logo apos uma
+    # edicao, ja causou o bug do texto sumindo na borda antes e foi
+    # revertido (nao reintroduzir sem medir em maquina real).
+    # Palavra isolada mais larga que avail_px e quebrada em pedacos como
+    # o Tk tambem faz; a SOBRA do ultimo pedaco carrega pra proxima
+    # palavra continuar empacotando (testado contra layout real do Tk:
+    # descartar a sobra pra 0 sub-estimava linha em textos tipo caminho
+    # de arquivo/URL colado sem espaco seguido de texto normal).
+    if not line:
+        return 1
+    words = line.split(' ')
+    space_w = font.measure(' ')
+    lines = 1
+    cur = 0
+    for word in words:
+        w = font.measure(word)
+        add = w if cur == 0 else space_w + w
+        if cur + add <= avail_px:
+            cur += add
+            continue
+        if w > avail_px:
+            if cur > 0:
+                lines += 1
+            pieces = -(-w // avail_px)  # ceil(w / avail_px)
+            lines += pieces - 1
+            cur = w - (pieces - 1) * avail_px  # sobra do ultimo pedaco
+        else:
+            lines += 1
+            cur = w
+    return lines
+
+
 def _render_color_emoji(emoji_char, size=28):
     if not HAS_PIL:
         return None
@@ -4353,9 +4390,13 @@ class ChatWindow(tk.Toplevel):
         # tk.Text é usado (não tk.Entry) para suportar múltiplas linhas e imagens (emojis)
         # Altura adaptativa: inicia em 1 linha e cresce ate INPUT_MAX_H conforme
         # o conteudo (_adjust_input_height chamado no <<Modified>>).
-        # wrap='char' (nao 'word'): garante quebra mesmo em strings sem espaco
-        # (ex: "aaaaaaa..."). Com 'word' o conteudo passaria do campo e o texto
-        # "sumia" pra esquerda — bug reportado pelo usuario.
+        # wrap='word': quebra nos espacos, estilo Discord/WhatsApp (nunca no meio
+        # da palavra). O bug antigo do texto "sumindo" na borda nao era o wrap
+        # em si - era _adjust_input_height estimando altura na mao e errando a
+        # conta pro wrap='word' real. Agora usa _count_wrapped_lines (simula o
+        # empacotamento de palavras do Tk em Python) + see('insert') como rede
+        # de seguranca -- NAO usar Text.count(-displaylines), ja tentado antes
+        # e revertido por retornar valor pre-layout as vezes.
         # width=1: Text tem width default=80 chars. Se o container for menor, o
         # widget pode manter tamanho natural e horizontal-scroll em vez de wrap.
         # Setar width=1 forca o widget a iniciar minusculo; fill='both' expande
@@ -5737,26 +5778,20 @@ class ChatWindow(tk.Toplevel):
             self.after(30, self._update_mic_visibility)
 
     # Ajusta a altura do campo de entrada conforme o conteudo (1..8 linhas).
-    # Mede wrap manualmente com tkfont — count -displaylines do tk retorna
-    # valor pre-layout em alguns casos; medir em pixels e mais confiavel.
+    # Conta linhas com wrap='word' simulado em Python (_count_wrapped_lines),
+    # nao com Text.count(-displaylines) do Tk -- ja tentamos, retorna valor
+    # pre-layout as vezes e reintroduz o bug do texto sumindo (ver historico
+    # do commit 4e9b10c). padx=14 dos dois lados (28) + insertwidth + margem.
     def _adjust_input_height(self):
         n = 1
         try:
             self.entry.update_idletasks()
             wpx = self.entry.winfo_width()
-            # padx=8 dos dois lados + bd + margem de seguranca
-            avail = max(10, wpx - 20)
+            avail = max(10, wpx - 34)
             f = tkfont.Font(root=self.entry, font=self.entry.cget('font'))
             content = self.entry.get('1.0', 'end-1c')
-            total = 0
-            for line in content.split('\n'):
-                if not line:
-                    total += 1
-                    continue
-                tw = f.measure(line)
-                # ceil(tw/avail): quantas linhas quebradas ocupa
-                total += max(1, (tw + avail - 1) // avail)
-            n = max(1, min(8, total))
+            n = max(1, min(8, sum(_count_wrapped_lines(line, avail, f)
+                                   for line in content.split('\n'))))
         except Exception:
             try:
                 content = self.entry.get('1.0', 'end-1c')
@@ -5766,8 +5801,14 @@ class ChatWindow(tk.Toplevel):
         try:
             if int(self.entry.cget('height')) != n:
                 self.entry.configure(height=n)
-                # Apos crescer, reset de scroll pra mostrar desde o inicio.
-                self.entry.yview_moveto(0)
+        except Exception:
+            pass
+        try:
+            # Garante o cursor visivel mesmo se a estimativa de altura
+            # errar por 1 linha, ou se o texto passar do limite de 8
+            # linhas (yview_moveto(0) fixava o topo e escondia o final
+            # do texto colado/digitado grande).
+            self.entry.see('insert')
         except Exception:
             pass
 
@@ -6307,6 +6348,13 @@ class ChatWindow(tk.Toplevel):
     # Envia o conteúdo do campo de entrada para o contato.
     # Reconstrói emojis das imagens, limpa o campo e dispara envio em thread.
     def _send_message(self):
+        # Gravando ativamente: "Enviar" para a gravacao e ja manda direto,
+        # sem precisar clicar em pausar primeiro.
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            self._stop_recording()
+            if self._recorded_wav_bytes:
+                self._send_recording()
+            return
         # Audio gravado pendente de revisao: o botao "Enviar" e o Enter
         # tambem mandam ele, sem precisar de um botao de enviar separado.
         if self._recorded_wav_bytes:
@@ -8530,8 +8578,9 @@ class GroupChatWindow(tk.Toplevel):
         self._input_row = input_row
 
         # Altura adaptativa igual a ChatWindow: inicia em 1 e cresce com o texto.
-        # wrap='char': quebra em qualquer posicao; evita overflow horizontal em
-        # strings sem espaco. Mesmo motivo da ChatWindow.
+        # wrap='word': igual ChatWindow, quebra nos espacos estilo Discord. A
+        # altura correta vem de _count_wrapped_lines + see('insert') como rede
+        # de seguranca -- mesmo motivo da ChatWindow (nao usar -displaylines).
         # width=1: forca widget a respeitar largura do container (default=80
         # chars causaria overflow horizontal em janelas estreitas).
         self.entry = tk.Text(input_row, font=('Segoe UI', 11),
@@ -9500,6 +9549,7 @@ class GroupChatWindow(tk.Toplevel):
     def _insert_code_block(self, code, lang=''):
         import json as _json
         code = code.strip('\n')
+        # Auto-deteccao de JSON
         is_json = False
         stripped = code.strip()
         if (lang.lower() in ('json', '')
@@ -9519,14 +9569,171 @@ class GroupChatWindow(tk.Toplevel):
             last_char = ''
         if last_char and last_char != '\n':
             self.chat_text.insert('end', '\n')
-        if lang:
-            self.chat_text.insert('end', f' {lang}\n', 'code_lang')
-        if is_json:
-            self._insert_json_colored(code)
-        else:
-            self.chat_text.insert('end', code + '\n', 'code_block')
 
-    def _insert_json_colored(self, code):
+        # === Container do bloco inteiro ===
+        container = tk.Frame(self.chat_text, bg='#1e293b', bd=0,
+                             highlightthickness=0)
+
+        # Header
+        header = tk.Frame(container, bg='#0f172a', height=24)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        tk.Label(header, text=f'  {lang or "codigo"}', bg='#0f172a',
+                 fg='#94a3b8', font=('Consolas', 8, 'italic')
+                 ).pack(side='left')
+
+        btn = tk.Label(header, text='⧉ Copiar', bg='#0f172a',
+                       fg='#94a3b8', cursor='hand2',
+                       font=('Segoe UI', 8), padx=10)
+
+        def _do_copy(e=None, c=code, b=btn):
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(c)
+                self.update()
+                b.config(text='✓ Copiado', fg='#22c55e')
+                b.after(1500,
+                        lambda: b.config(text='⧉ Copiar', fg='#94a3b8'))
+            except Exception:
+                pass
+
+        btn.bind('<Button-1>', _do_copy)
+        btn.bind('<Enter>', lambda e: btn.config(fg='#cbd5e1'))
+        btn.bind('<Leave>', lambda e: btn.config(fg='#94a3b8'))
+        btn.pack(side='right')
+
+        # Corpo: Text widget com codigo + syntax highlighting
+        line_count = max(1, code.count('\n') + 1)
+        body = tk.Text(container, bg='#1e293b', fg='#e2e8f0',
+                       font=('Consolas', 9), bd=0, padx=10, pady=6,
+                       wrap='none', height=line_count,
+                       relief='flat', highlightthickness=0,
+                       cursor='arrow', insertwidth=0)
+        body.pack(fill='x')
+
+        # Configura tags de syntax no body widget
+        self._configure_code_tags_on(body)
+
+        # Highlighting
+        lang_norm = (lang or '').lower()
+        if is_json:
+            self._highlight_json_into(body, code)
+        elif lang_norm in ('python', 'py'):
+            self._highlight_python_into(body, code)
+        elif lang_norm in ('js', 'javascript', 'ts', 'typescript',
+                           'jsx', 'tsx'):
+            self._highlight_generic_into(body, code,
+                                         _JS_KEYWORDS, _JS_BUILTINS)
+        elif lang_norm in ('bash', 'sh', 'shell', 'zsh'):
+            self._highlight_generic_into(body, code,
+                                         _BASH_KEYWORDS, _BASH_BUILTINS)
+        elif lang_norm in ('sql',):
+            self._highlight_generic_into(body, code,
+                                         _SQL_KEYWORDS, set(),
+                                         case_insensitive=True)
+        else:
+            body.insert('end', code)
+
+        body.config(state='disabled')
+
+        # Calcula altura necessaria, fixa propagation pra largura responsiva.
+        try:
+            container.update_idletasks()
+            needed_h = container.winfo_reqheight()
+            container.pack_propagate(False)
+            self.chat_text.update_idletasks()
+            w = self.chat_text.winfo_width() - 24
+            if w < 100:
+                w = 600
+            container.config(width=w, height=needed_h)
+        except Exception:
+            pass
+
+        # Repassa scroll do mouse para o chat_text quando hover esta no bloco.
+        # Sem isso o Text interno (mesmo disabled) intercepta MouseWheel e o
+        # chat principal nao rola — usuario sente que travou.
+        def _wheel_to_chat(event):
+            try:
+                self.chat_text.yview_scroll(
+                    int(-1 * (event.delta / 120)), 'units')
+            except Exception:
+                pass
+            return 'break'
+
+        for w_ in (container, header, body, btn):
+            try:
+                w_.bind('<MouseWheel>', _wheel_to_chat)
+                w_.bind('<Button-4>',
+                        lambda e: self.chat_text.yview_scroll(-1, 'units'))
+                w_.bind('<Button-5>',
+                        lambda e: self.chat_text.yview_scroll(1, 'units'))
+            except Exception:
+                pass
+        # Tambem nos children do header (lang label)
+        for child in header.winfo_children():
+            try:
+                child.bind('<MouseWheel>', _wheel_to_chat)
+            except Exception:
+                pass
+
+        # Body nao deve ser focavel nem aceitar input
+        try:
+            body.config(takefocus=0)
+        except Exception:
+            pass
+
+        # Track para resize
+        if not hasattr(self, '_code_frames'):
+            self._code_frames = []
+            self.chat_text.bind('<Configure>',
+                                self._on_chat_resize_update_code, add='+')
+        self._code_frames.append(container)
+
+        # Insere o container na linha + quebra
+        self.chat_text.window_create('end', window=container,
+                                      align='top', stretch=1)
+        self.chat_text.insert('end', '\n')
+
+    # Atualiza a largura de todos os blocos de codigo embedded quando o chat resize.
+    def _on_chat_resize_update_code(self, event=None):
+        try:
+            w = self.chat_text.winfo_width() - 24
+            if w < 100:
+                return
+            for f in list(self._code_frames):
+                try:
+                    if f.winfo_exists():
+                        f.config(width=w)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Configura as tags de syntax highlighting no widget passado (Text body).
+    def _configure_code_tags_on(self, widget):
+        for tag, fg in [
+            ('code_py_keyword',   '#c586c0'),
+            ('code_py_builtin',   '#4ec9b0'),
+            ('code_py_string',    '#ce9178'),
+            ('code_py_number',    '#b5cea8'),
+            ('code_py_comment',   '#6a9955'),
+            ('code_py_funcname',  '#dcdcaa'),
+            ('code_py_classname', '#4ec9b0'),
+            ('code_py_decorator', '#dcdcaa'),
+            ('code_py_self',      '#569cd6'),
+            ('code_json_key',     '#7dd3fc'),
+            ('code_json_str',     '#86efac'),
+            ('code_json_num',     '#fca5a5'),
+            ('code_json_bool',    '#a78bfa'),
+        ]:
+            try:
+                widget.tag_configure(tag, foreground=fg,
+                                     font=('Consolas', 9))
+            except Exception:
+                pass
+
+    # === Highlighters (operam em qualquer widget Text) ===
+    def _highlight_json_into(self, widget, code):
         import re as _re
         token_re = _re.compile(
             r'("[^"\\]*(?:\\.[^"\\]*)*")(\s*:)?'
@@ -9538,22 +9745,115 @@ class GroupChatWindow(tk.Toplevel):
             for m in token_re.finditer(line):
                 start = m.start()
                 if start > pos:
-                    self.chat_text.insert('end', line[pos:start], 'code_block')
+                    widget.insert('end', line[pos:start])
                 if m.group(1):
-                    is_key = bool(m.group(2))
-                    if is_key:
-                        self.chat_text.insert('end', m.group(1), 'code_json_key')
-                        self.chat_text.insert('end', m.group(2), 'code_block')
+                    if m.group(2):
+                        widget.insert('end', m.group(1), 'code_json_key')
+                        widget.insert('end', m.group(2))
                     else:
-                        self.chat_text.insert('end', m.group(1), 'code_json_str')
+                        widget.insert('end', m.group(1), 'code_json_str')
                 elif m.group(3):
-                    self.chat_text.insert('end', m.group(3), 'code_json_num')
+                    widget.insert('end', m.group(3), 'code_json_num')
                 elif m.group(4):
-                    self.chat_text.insert('end', m.group(4), 'code_json_bool')
+                    widget.insert('end', m.group(4), 'code_json_bool')
                 pos = m.end()
             if pos < len(line):
-                self.chat_text.insert('end', line[pos:], 'code_block')
-            self.chat_text.insert('end', '\n', 'code_block')
+                widget.insert('end', line[pos:])
+            widget.insert('end', '\n')
+
+    def _highlight_python_into(self, widget, code):
+        import re as _re
+        token_re = _re.compile(
+            r'(#[^\n]*)'
+            r'|(\'\'\'[\s\S]*?\'\'\'|"""[\s\S]*?""")'
+            r'|([rRbBfFuU]{0,2}"(?:[^"\\\n]|\\.)*"|'
+            r"[rRbBfFuU]{0,2}'(?:[^'\\\n]|\\.)*')"
+            r'|(@[A-Za-z_][A-Za-z0-9_.]*)'
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'
+        )
+        prev_kw = None
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                widget.insert('end', code[pos:start])
+            if m.group(1):
+                widget.insert('end', m.group(1), 'code_py_comment')
+                prev_kw = None
+            elif m.group(2):
+                widget.insert('end', m.group(2), 'code_py_string')
+                prev_kw = None
+            elif m.group(3):
+                widget.insert('end', m.group(3), 'code_py_string')
+                prev_kw = None
+            elif m.group(4):
+                widget.insert('end', m.group(4), 'code_py_decorator')
+                prev_kw = None
+            elif m.group(5):
+                widget.insert('end', m.group(5), 'code_py_number')
+                prev_kw = None
+            elif m.group(6):
+                ident = m.group(6)
+                if prev_kw == 'def':
+                    widget.insert('end', ident, 'code_py_funcname')
+                    prev_kw = None
+                elif prev_kw == 'class':
+                    widget.insert('end', ident, 'code_py_classname')
+                    prev_kw = None
+                elif ident in _PY_KEYWORDS:
+                    widget.insert('end', ident, 'code_py_keyword')
+                    prev_kw = ident
+                elif ident in ('self', 'cls'):
+                    widget.insert('end', ident, 'code_py_self')
+                    prev_kw = None
+                elif ident in _PY_BUILTINS:
+                    widget.insert('end', ident, 'code_py_builtin')
+                    prev_kw = None
+                else:
+                    widget.insert('end', ident)
+                    prev_kw = None
+            pos = m.end()
+        if pos < len(code):
+            widget.insert('end', code[pos:])
+
+    def _highlight_generic_into(self, widget, code, keywords, builtins,
+                                case_insensitive=False):
+        import re as _re
+        token_re = _re.compile(
+            r'(//[^\n]*|#[^\n]*|--[^\n]*)'
+            r'|(/\*[\s\S]*?\*/)'
+            r'|("(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\]|\\.)*`)'
+            r'|(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)'
+            r'|(\b[A-Za-z_][A-Za-z0-9_]*\b)'
+        )
+        kw_set = (set(k.lower() for k in keywords)
+                  if case_insensitive else keywords)
+        bt_set = (set(b.lower() for b in builtins)
+                  if case_insensitive else builtins)
+        pos = 0
+        for m in token_re.finditer(code):
+            start = m.start()
+            if start > pos:
+                widget.insert('end', code[pos:start])
+            if m.group(1) or m.group(2):
+                widget.insert('end', m.group(0), 'code_py_comment')
+            elif m.group(3):
+                widget.insert('end', m.group(3), 'code_py_string')
+            elif m.group(4):
+                widget.insert('end', m.group(4), 'code_py_number')
+            elif m.group(5):
+                ident = m.group(5)
+                check = ident.lower() if case_insensitive else ident
+                if check in kw_set:
+                    widget.insert('end', ident, 'code_py_keyword')
+                elif check in bt_set:
+                    widget.insert('end', ident, 'code_py_builtin')
+                else:
+                    widget.insert('end', ident)
+            pos = m.end()
+        if pos < len(code):
+            widget.insert('end', code[pos:])
 
     def _insert_emoji_run(self, text, tag, bg):
         parts = _EMOJI_RE.split(text)
@@ -9901,23 +10201,18 @@ class GroupChatWindow(tk.Toplevel):
         if audio_recorder.HAS_SOUNDDEVICE:
             self.after(30, self._update_mic_visibility)
 
-    # Mede wrap manualmente com tkfont — mais confiavel que count -displaylines.
+    # Conta linhas com wrap='word' simulado em Python -- mesmo motivo da
+    # ChatWindow (Text.count(-displaylines) do Tk pode voltar pre-layout).
     def _adjust_input_height(self):
         n = 1
         try:
             self.entry.update_idletasks()
             wpx = self.entry.winfo_width()
-            avail = max(10, wpx - 20)
+            avail = max(10, wpx - 34)
             f = tkfont.Font(root=self.entry, font=self.entry.cget('font'))
             content = self.entry.get('1.0', 'end-1c')
-            total = 0
-            for line in content.split('\n'):
-                if not line:
-                    total += 1
-                    continue
-                tw = f.measure(line)
-                total += max(1, (tw + avail - 1) // avail)
-            n = max(1, min(8, total))
+            n = max(1, min(8, sum(_count_wrapped_lines(line, avail, f)
+                                   for line in content.split('\n'))))
         except Exception:
             try:
                 content = self.entry.get('1.0', 'end-1c')
@@ -9927,7 +10222,11 @@ class GroupChatWindow(tk.Toplevel):
         try:
             if int(self.entry.cget('height')) != n:
                 self.entry.configure(height=n)
-                self.entry.yview_moveto(0)
+        except Exception:
+            pass
+        try:
+            # Mesma rede de seguranca da ChatWindow.
+            self.entry.see('insert')
         except Exception:
             pass
 
@@ -10709,6 +11008,13 @@ class GroupChatWindow(tk.Toplevel):
 
     # Envia mensagem para todos os membros do grupo via mesh (ponto-a-ponto).
     def _send_message(self):
+        # Gravando ativamente: "Enviar" para a gravacao e ja manda direto,
+        # sem precisar clicar em pausar primeiro.
+        if self._audio_recorder and self._audio_recorder.is_recording:
+            self._stop_recording()
+            if self._recorded_wav_bytes:
+                self._send_recording()
+            return
         # Audio gravado pendente de revisao: o botao "Enviar" e o Enter
         # tambem mandam ele, sem precisar de um botao de enviar separado.
         if self._recorded_wav_bytes:
