@@ -1,5 +1,9 @@
 # Script auxiliar para testes do MB Chat: cria um peer virtual ("Bot de Teste") na rede local.
 # O Bot anuncia sua presenca via UDP e responde automaticamente mensagens recebidas via TCP.
+# Uso: python tools/mock_peer.py [--index N]  -- N=1 (padrao) e o "Bot de Teste" original;
+# N=2,3,4... gera bots adicionais com uid/nome/porta proprios, pra testar grupos com varios
+# participantes ao mesmo tempo na mesma maquina.
+import argparse
 import socket
 import struct
 import json
@@ -7,11 +11,21 @@ import time
 import threading
 import uuid
 
+_parser = argparse.ArgumentParser()
+_parser.add_argument('--index', type=int, default=1,
+                     help='Numero do bot: 1=Bot de Teste (padrao), 2+=bots adicionais')
+_args = _parser.parse_args()
+
 UDP_PORT = 50100
 MULTICAST_GROUP = '239.255.100.200'
-MOCK_UID = 'mock_peer_bot_teste'
-MOCK_NAME = 'Bot de Teste'
-MOCK_TCP_PORT = 50350
+if _args.index <= 1:
+    MOCK_UID = 'mock_peer_bot_teste'
+    MOCK_NAME = 'Bot de Teste'
+    MOCK_TCP_PORT = 50350
+else:
+    MOCK_UID = f'mock_peer_bot_teste_{_args.index}'
+    MOCK_NAME = f'Bot de Teste {_args.index}'
+    MOCK_TCP_PORT = 50350 + (_args.index - 1) * 10
 
 
 def get_local_ip():
@@ -23,6 +37,112 @@ def get_local_ip():
         return ip
     except Exception:
         return '127.0.0.1'
+
+
+# Grupos que o bot conhece: group_id -> {'name', 'group_type', 'members': [...]}.
+# Populado via group_invite; usado pra saber pra quem mandar group_message
+# (o protocolo de grupo do MBChat e mesh: cada membro manda TCP unicast
+# direto pra todo mundo, nao existe broadcast/relay central).
+KNOWN_GROUPS = {}
+_groups_lock = threading.Lock()
+
+# Peers descobertos via anuncio UDP: uid -> {'ip', 'tcp_port'}. Necessario
+# porque o app real (e este bot) pode cair em porta de fallback quando
+# TCP_PORT=50101 esta ocupada/excluida pelo SO (ex.: reserva Hyper-V/WinNAT,
+# documentada no DECISIONS.md do projeto) -- sem isso o bot responderia
+# sempre na porta fixa 50101 e a resposta nunca chegaria em quem pediu.
+KNOWN_PEERS = {}
+_peers_lock = threading.Lock()
+
+
+def listen_announces():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass
+    try:
+        sock.bind(('0.0.0.0', UDP_PORT))
+    except OSError as e:
+        print(f"[Bot] AVISO: nao consegui escutar UDP {UDP_PORT} pra descobrir "
+              f"a porta real dos outros peers ({e}). Respostas vao cair no "
+              f"fallback fixo 50101, que pode estar indisponivel.")
+        return
+    print(f"[Bot] Escutando anuncios UDP em {UDP_PORT} pra aprender a porta real dos peers...")
+    while True:
+        try:
+            data, addr = sock.recvfrom(65536)
+            pkt = json.loads(data.decode('utf-8'))
+            if pkt.get('app') != 'mbchat' or pkt.get('type') != 'announce':
+                continue
+            uid = pkt.get('user_id')
+            if not uid or uid == MOCK_UID:
+                continue
+            tcp_port = pkt.get('tcp_port')
+            if not tcp_port:
+                continue
+            with _peers_lock:
+                is_new = uid not in KNOWN_PEERS or KNOWN_PEERS[uid].get('tcp_port') != tcp_port
+                KNOWN_PEERS[uid] = {'ip': pkt.get('ip') or addr[0], 'tcp_port': tcp_port}
+            if is_new:
+                print(f"[Bot] Peer descoberto: {uid} em {pkt.get('ip') or addr[0]}:{tcp_port}")
+        except json.JSONDecodeError:
+            continue
+        except Exception as e:
+            print(f"[Bot] Erro no listener de anuncios: {e}")
+
+
+def _reply_target(uid, fallback_ip):
+    # Porta real do peer (aprendida via UDP) -- fallback pra 50101 (o
+    # default historico) so se nunca vimos o anuncio dele.
+    with _peers_lock:
+        peer = KNOWN_PEERS.get(uid)
+    if peer and peer.get('tcp_port'):
+        return peer.get('ip') or fallback_ip, peer['tcp_port']
+    return fallback_ip, 50101
+
+
+def _tcp_send(uid, fallback_ip, payload):
+    ip, port = _reply_target(uid, fallback_ip)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5.0)
+        sock.connect((ip, port))
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        sock.sendall(struct.pack('!I', len(data)) + data)
+        sock.close()
+        print(f"[Bot] Enviado pra {uid} ({ip}:{port})")
+        return True
+    except Exception as e:
+        print(f"[Bot] Erro ao enviar pra {uid} ({ip}:{port}): {e}")
+        return False
+
+
+def send_group_message_to_all(group_id, content):
+    with _groups_lock:
+        group = KNOWN_GROUPS.get(group_id)
+    if not group:
+        print(f"[Bot] Grupo {group_id} desconhecido -- nao consigo mandar mensagem")
+        return
+    msg_id = str(uuid.uuid4())
+    for member in group['members']:
+        uid = member.get('uid')
+        if uid == MOCK_UID or not member.get('ip'):
+            continue
+        payload = {
+            'type': 'group_message',
+            'to_user': uid,
+            'from_user': MOCK_UID,
+            'display_name': '🤖 ' + MOCK_NAME,
+            'group_id': group_id,
+            'group_name': group.get('name', 'Grupo'),
+            'group_type': group.get('group_type', 'temp'),
+            'msg_id': msg_id,
+            'content': content,
+            'timestamp': time.time(),
+        }
+        _tcp_send(uid, member['ip'], payload)
 
 
 def send_announces():
@@ -77,6 +197,60 @@ def send_announces():
         time.sleep(2.0)
 
 
+def _handle_individual_message(msg, addr):
+    from_user = msg.get('from_user')
+    user_text = msg.get('content', '')
+    reply_text = f"Olá! Recebi sua mensagem: '{user_text}'. Teste OK! 🤌"
+    time.sleep(0.8)
+    reply_msg = {
+        'type': 'message',
+        'from_user': MOCK_UID,
+        'to_user': from_user,
+        'display_name': '🤖 ' + MOCK_NAME,
+        'msg_id': str(uuid.uuid4()),
+        'content': reply_text,
+        'timestamp': time.time()
+    }
+    _tcp_send(from_user, addr[0], reply_msg)
+
+
+def _handle_group_invite(msg):
+    group_id = msg.get('group_id')
+    members = msg.get('members', [])
+    with _groups_lock:
+        KNOWN_GROUPS[group_id] = {
+            'name': msg.get('group_name', 'Grupo'),
+            'group_type': msg.get('group_type', 'temp'),
+            'members': members,
+        }
+    print(f"[Bot] Convidado pro grupo '{msg.get('group_name')}' ({group_id}), "
+          f"{len(members)} membro(s)")
+    time.sleep(1.0)
+    send_group_message_to_all(group_id, f"Oi! {MOCK_NAME} entrou no grupo 🤌")
+
+
+def _handle_group_message(msg):
+    group_id = msg.get('group_id')
+    sender = msg.get('from_user', '')
+    # So responde mensagem de humano (nao de outro bot) -- evita loop de
+    # bots respondendo uns aos outros infinitamente.
+    if sender.startswith('mock_peer_bot_teste'):
+        print(f"[Bot] Ignorando msg de grupo de outro bot ({sender})")
+        return
+    # Recovery: se o convite foi perdido, tenta reconstruir a lista de
+    # membros a partir do que a propria mensagem carrega (mesmo esquema
+    # que o app real usa em messenger.py).
+    with _groups_lock:
+        known = group_id in KNOWN_GROUPS
+    if not known:
+        print(f"[Bot] Grupo {group_id} desconhecido (convite perdido?) -- "
+              f"nao consigo responder no grupo")
+        return
+    content = msg.get('content', '')
+    time.sleep(0.8)
+    send_group_message_to_all(group_id, f"Recebi no grupo: '{content}'. Teste OK! 🤌")
+
+
 def handle_tcp_client(client_sock, addr):
     try:
         header = client_sock.recv(4)
@@ -90,34 +264,15 @@ def handle_tcp_client(client_sock, addr):
                 break
             data.extend(chunk)
         msg = json.loads(data.decode('utf-8'))
-        print(f"[Bot] Recebeu mensagem de {msg.get('from_user')}")
+        msg_type = msg.get('type')
+        print(f"[Bot] Recebeu '{msg_type}' de {msg.get('from_user')}")
 
-        from_user = msg.get('from_user')
-        if from_user and msg.get('type') == 'message':
-            user_text = msg.get('content', '')
-            reply_text = f"Olá! Recebi sua mensagem: '{user_text}'. Teste OK! 🤌"
-
-            time.sleep(0.8)
-            reply_msg = {
-                'type': 'message',
-                'from_user': MOCK_UID,
-                'to_user': from_user,
-                'display_name': '🤖 ' + MOCK_NAME,
-                'msg_id': str(uuid.uuid4()),
-                'content': reply_text,
-                'timestamp': time.time()
-            }
-            try:
-                sender_ip = addr[0]
-                tx_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                tx_sock.settimeout(5.0)
-                tx_sock.connect((sender_ip, 50101))
-                rdata = json.dumps(reply_msg, ensure_ascii=False).encode('utf-8')
-                tx_sock.sendall(struct.pack('!I', len(rdata)) + rdata)
-                tx_sock.close()
-                print(f"[Bot] Resposta enviada com sucesso para {sender_ip}:50101!")
-            except Exception as e:
-                print(f"[Bot] Erro ao responder via TCP: {e}")
+        if msg_type == 'message':
+            _handle_individual_message(msg, addr)
+        elif msg_type == 'group_invite':
+            _handle_group_invite(msg)
+        elif msg_type == 'group_message':
+            _handle_group_message(msg)
     except Exception as e:
         print(f"[Bot] Erro no cliente TCP: {e}")
     finally:
@@ -141,4 +296,6 @@ def run_tcp_server():
 if __name__ == '__main__':
     t_ann = threading.Thread(target=send_announces, daemon=True)
     t_ann.start()
+    t_listen = threading.Thread(target=listen_announces, daemon=True)
+    t_listen.start()
     run_tcp_server()

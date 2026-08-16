@@ -389,6 +389,36 @@ class Messenger:
     # - MT_GROUP_MSG: mensagem de grupo
     # - MT_GROUP_LEAVE: membro saiu do grupo
     # - MT_GROUP_JOIN: membro entrou no grupo
+    #
+    # Resolve o nome de exibicao de quem mandou algo num grupo (texto/imagem/
+    # audio): pacote -> contato salvo -> peer ao vivo do discovery -> UID cru
+    # como ultimo recurso. Sem o passo do discovery, um peer visto so via
+    # grupo (nunca teve chat individual aberto, sem linha em contacts) caia
+    # direto pro UID cru (ex.: "047f0e441f62_DESKTOP") mesmo com o nome
+    # certo disponivel no cache de announces UDP.
+    def _resolve_group_sender_name(self, from_user, packet_display_name):
+        if packet_display_name and packet_display_name != from_user:
+            return packet_display_name
+        contact = self.db.get_contact(from_user)
+        name = (contact.get('display_name') if contact else '') or ''
+        if name:
+            return name
+        peer = self.discovery.peers.get(from_user, {}) if self.discovery else {}
+        return peer.get('display_name', '') or from_user
+
+    # Porta TCP real do peer para MENSAGENS (nao arquivo). Mesmo padrao ja
+    # usado pro file_port em send_file: consulta o que o peer anunciou via
+    # UDP (discovery.peers[uid]['tcp_port']) antes de cair pra constante
+    # TCP_PORT. Isso so muda de comportamento quando o peer caiu numa porta
+    # de fallback (ex.: 50101 excluida por Hyper-V/WinNAT, ja documentado
+    # em DECISIONS.md) -- pra qualquer peer saudavel (a maioria), tcp_port
+    # anunciado JA E IGUAL a TCP_PORT, entao o destino nao muda em nada.
+    # Sem peer conhecido/campo ausente: cai exatamente no comportamento
+    # atual (TCP_PORT), sem risco de regressao pros PCs que ja funcionam.
+    def _peer_tcp_port(self, uid):
+        peer_live = self.discovery.peers.get(uid, {}) if self.discovery else {}
+        return peer_live.get('tcp_port', TCP_PORT)
+
     def _on_tcp_message(self, msg, addr):
         msg_type = msg.get('type')
         from_user = msg.get('from_user')
@@ -523,10 +553,8 @@ class Messenger:
 
             if group_id:
                 # Imagem de grupo — notifica via on_group_message com marcador especial
-                display_name = msg.get('display_name', '')
-                if not display_name or display_name == from_user:
-                    _c = self.db.get_contact(from_user)
-                    display_name = (_c.get('display_name') if _c else '') or from_user
+                display_name = self._resolve_group_sender_name(
+                    from_user, msg.get('display_name', ''))
                 # Persiste imagem no historico do grupo (idempotente por msg_id)
                 try:
                     if msg_id and not self.db.has_group_message(msg_id):
@@ -571,10 +599,8 @@ class Messenger:
             if group_id:
                 # Audio de grupo — notifica via on_audio com group_id (mesmo
                 # padrao da imagem de grupo)
-                display_name = msg.get('display_name', '')
-                if not display_name or display_name == from_user:
-                    _c = self.db.get_contact(from_user)
-                    display_name = (_c.get('display_name') if _c else '') or from_user
+                display_name = self._resolve_group_sender_name(
+                    from_user, msg.get('display_name', ''))
                 # Persiste audio no historico do grupo (idempotente por msg_id)
                 try:
                     if msg_id and not self.db.has_group_message(msg_id):
@@ -638,10 +664,8 @@ class Messenger:
             group_id = msg.get('group_id')
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', time.time())
-            display_name = msg.get('display_name', '')
-            if not display_name or display_name == from_user:
-                _c = self.db.get_contact(from_user)
-                display_name = (_c.get('display_name') if _c else '') or from_user
+            display_name = self._resolve_group_sender_name(
+                from_user, msg.get('display_name', ''))
             reply_to = msg.get('reply_to', '')
             mentions = msg.get('mentions', [])
             msg_id = msg.get('msg_id', '')
@@ -1087,7 +1111,8 @@ class Messenger:
             payload['reply_to'] = reply_to_id
         if is_broadcast:
             payload['is_broadcast'] = True
-        ok = TCPClient.send_message(contact['ip_address'], TCP_PORT, payload)
+        port = self._peer_tcp_port(to_user_id)
+        ok = TCPClient.send_message(contact['ip_address'], port, payload)
         return ok, msg_id
 
     # Envia imagem (bytes JPEG) para um peer
@@ -1549,7 +1574,8 @@ class Messenger:
         _grp_log = _logging.getLogger('mbchat.messenger')
 
         def _send_invite(uid, ip, pkt):
-            ok = TCPClient.send_message(ip, TCP_PORT, pkt)
+            port = self._peer_tcp_port(uid)
+            ok = TCPClient.send_message(ip, port, pkt)
             if ok:
                 _grp_log.info('Convite de grupo %s enviado para %s (%s)',
                               group_id, uid, ip)
@@ -1767,7 +1793,8 @@ class Messenger:
                 payload['reply_to'] = reply_to_id
             if mentions:
                 payload['mentions'] = mentions
-            TCPClient.send_message(member['ip'], TCP_PORT, payload)
+            port = self._peer_tcp_port(uid)
+            TCPClient.send_message(member['ip'], port, payload)
 
     # Cria enquete em grupo e envia para todos os membros
     def create_poll(self, group_id, question, options):

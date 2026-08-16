@@ -1099,6 +1099,122 @@ def _count_wrapped_lines(line, avail_px, font):
     return lines
 
 
+def _should_open_slash_menu(text_before_slash_on_line):
+    # So abre o menu "/" (estilo Notion) se a barra for o PRIMEIRO
+    # caractere da linha atual -- protege contra disparo em texto normal
+    # de contabilidade tipo data ("10/12"), fracao ou caminho de arquivo.
+    return text_before_slash_on_line == ''
+
+
+def _open_slash_format_menu(win, entry, slash_index, items):
+    # Popup de formatacao estilo Notion, ancorado acima do campo de
+    # digitacao (mesmo padrao de posicionamento do emoji picker) --
+    # visual inspirado em LanMessengerApp._open_modern_menu, mas essa
+    # nao da pra reusar direto: ela posiciona relativa a self.root (janela
+    # principal), e aqui o anchor e o entry da ChatWindow/GroupChatWindow.
+    # win: Toplevel (ChatWindow/GroupChatWindow). entry: Text de digitacao.
+    # slash_index: indice Tk exato do "/" digitado (apagado ao aplicar).
+    # items: lista de tuplas (label, callback_sem_args).
+    try:
+        if getattr(win, '_slash_menu', None) and win._slash_menu.winfo_exists():
+            win._slash_menu.destroy()
+    except Exception:
+        pass
+
+    t = getattr(win, '_theme', None) or {}
+    bg = t.get('bg_white', '#ffffff')
+    fg = t.get('fg_black', '#1a202c')
+    hover = t.get('bg_select', '#e8f0fe')
+    border = t.get('border', '#e2e8f0')
+
+    popup = tk.Toplevel(win)
+    popup.withdraw()
+    popup.overrideredirect(True)
+    popup.attributes('-topmost', True)
+    win._slash_menu = popup
+
+    outer = tk.Frame(popup, bg=border)
+    outer.pack(fill='both', expand=True)
+    inner = tk.Frame(outer, bg=bg)
+    inner.pack(fill='both', expand=True, padx=1, pady=1)
+    tk.Frame(inner, bg=bg, width=170, height=1).pack()  # largura minima
+
+    def _dismiss(*_a):
+        try:
+            popup.destroy()
+        except Exception:
+            pass
+
+    def _apply(cb):
+        _dismiss()
+        try:
+            entry.delete(slash_index, f'{slash_index}+1c')
+        except Exception:
+            pass
+        entry.focus_set()
+        win.after(10, cb)
+
+    for label, cb in items:
+        row = tk.Frame(inner, bg=bg, cursor='hand2')
+        row.pack(fill='x')
+        lbl = tk.Label(row, text=label, font=('Segoe UI', 9),
+                       bg=bg, fg=fg, anchor='w')
+        lbl.pack(side='left', fill='x', expand=True, padx=(10, 12), pady=6)
+        def _enter(e, r=row, l=lbl):
+            r.configure(bg=hover)
+            l.configure(bg=hover)
+        def _leave(e, r=row, l=lbl):
+            r.configure(bg=bg)
+            l.configure(bg=bg)
+        def _click(e, c=cb):
+            _apply(c)
+        for w in (row, lbl):
+            w.bind('<Enter>', _enter)
+            w.bind('<Leave>', _leave)
+            w.bind('<Button-1>', _click)
+
+    popup.update_idletasks()
+    pw = popup.winfo_reqwidth()
+    ph = popup.winfo_reqheight()
+    x = entry.winfo_rootx()
+    try:
+        entry_top = entry.winfo_rooty()
+        win_top = win.winfo_rooty()
+        y = entry_top - ph - 10
+        if y < win_top:
+            y = entry_top + entry.winfo_height() + 4
+    except Exception:
+        y = entry.winfo_rooty() - ph - 10
+    popup.geometry(f'{pw}x{ph}+{x}+{y}')
+    popup.deiconify()
+    popup.lift()
+    popup.bind('<Escape>', _dismiss)
+
+    def _arm_focus():
+        try:
+            if popup.winfo_exists():
+                popup.focus_force()
+                popup.bind('<FocusOut>', _dismiss)
+        except Exception:
+            pass
+    popup.after(120, _arm_focus)
+
+
+def _handle_slash_keyrelease(win, entry, build_items):
+    # Handler compartilhado do <KeyRelease-slash> -- checa se "/" foi
+    # digitado no inicio da linha e, se sim, abre o menu de formatacao.
+    # build_items: callable que retorna a lista (label, callback) na hora
+    # (late-bound, pra pegar sempre os metodos atuais da janela).
+    try:
+        slash_idx = entry.index('insert-1c')
+        before = entry.get(f'{slash_idx} linestart', slash_idx)
+        if not _should_open_slash_menu(before):
+            return
+        _open_slash_format_menu(win, entry, slash_idx, build_items())
+    except Exception:
+        log.exception('Erro ao abrir menu de formatacao (/)')
+
+
 def _render_color_emoji(emoji_char, size=28):
     if not HAS_PIL:
         return None
@@ -4300,20 +4416,6 @@ class ChatWindow(tk.Toplevel):
         self._btn_icons = {}
         icon_size = 20
 
-        # Ícone Fonte (U+E8D2)
-        ico_font = self._create_mdl2_icon('\uE8D2', icon_size, flat_fg) if HAS_PIL else None
-        if ico_font:
-            self._btn_icons['font'] = ico_font
-            btn_font = tk.Button(btn_frame, image=ico_font,
-                      bg=win_bg, relief='flat', bd=0, padx=3, pady=2,
-                      command=self._change_font, cursor='hand2')
-        else:
-            btn_font = tk.Button(btn_frame, text='A', font=('Segoe UI', 10, 'bold'),
-                      bg=win_bg, fg=flat_fg, relief='flat', bd=0,
-                      command=self._change_font, cursor='hand2')
-        btn_font.pack(side='left', pady=2, padx=(0, 2))
-        _Tooltip(btn_font, _t('font_btn'))
-
         # Ícone Emoji (U+E76E)
         ico_emoji = self._create_mdl2_icon('\uE76E', icon_size, flat_fg) if HAS_PIL else None
         if ico_emoji:
@@ -4328,25 +4430,10 @@ class ChatWindow(tk.Toplevel):
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
         _Tooltip(btn_emoji, 'Emojis')
 
-        # Botoes de formatacao: Negrito / Italico / Sublinhado / Tachado
-        import tkinter.font as _tkfont_btn
-        _fmt_u = _tkfont_btn.Font(family='Segoe UI', size=9, weight='bold', underline=True)
-        _fmt_s = _tkfont_btn.Font(family='Segoe UI', size=9, weight='bold', overstrike=True)
-        for _letter, _font, _cmd, _tip in [
-            ('B', ('Segoe UI', 9, 'bold'),
-             lambda: self._wrap_selection_fmt('*', '*'), 'Negrito (*texto*)'),
-            ('I', ('Segoe UI', 9, 'italic'),
-             lambda: self._wrap_selection_fmt('_', '_'), 'Italico (_texto_)'),
-            ('U', _fmt_u,
-             lambda: self._wrap_selection_fmt('__', '__'), 'Sublinhado (__texto__)'),
-            ('S', _fmt_s,
-             lambda: self._wrap_selection_fmt('~', '~'), 'Tachado (~texto~)'),
-        ]:
-            _b = tk.Button(btn_frame, text=_letter, font=_font,
-                           bg=win_bg, fg=flat_fg, relief='flat', bd=0,
-                           cursor='hand2', padx=4, pady=2, command=_cmd)
-            _b.pack(side='left', pady=2, padx=(0, 2))
-            _Tooltip(_b, _tip)
+        # Fonte/Negrito/Italico/Sublinhado/Tachado saíram da barra visivel --
+        # so os botoes realmente usados (Emoji/Codigo/Anexar) ficam a mostra.
+        # Os 5 formatos continuam acessiveis via menu "/" (_on_slash_key),
+        # que chama os MESMOS handlers (_change_font/_wrap_selection_fmt).
 
         # Botao <> para inserir bloco de codigo (triplo backtick)
         btn_code = tk.Button(btn_frame, text='</>',
@@ -4452,6 +4539,7 @@ class ChatWindow(tk.Toplevel):
         self.entry.bind('<<Modified>>', self._on_modified)
         # <KeyRelease> usado apenas para o indicador de digitação (não para emojis)
         self.entry.bind('<KeyRelease>', self._on_key_typing)
+        self.entry.bind('<KeyRelease-slash>', self._on_slash_key)
         # Resize do widget muda largura de wrap -> re-ajusta altura
         self.entry.bind('<Configure>', lambda e: self.after_idle(self._adjust_input_height))
         self.entry.focus_set()
@@ -4914,8 +5002,13 @@ class ChatWindow(tk.Toplevel):
             self._scroll_visible = False
 
     # Processa o scroll do mouse: rola o chat e agenda esconder a barra.
+    # Pixels, nao 'units' (linhas): um bloco de codigo embutido conta como
+    # poucas linhas pro Tk internamente apesar de ocupar milhares de px na
+    # tela -- rolar por 'units' faz 1 clique da roda pular o bloco inteiro
+    # de uma vez (medido: ate 68% do conteudo num pulo so). Pixels rolam a
+    # mesma distancia visual sempre, seja texto normal ou bloco de codigo.
     def _on_mousewheel(self, event):
-        self.chat_text.yview_scroll(-1 * (event.delta // 40), 'units')  # rola proporcionalmente
+        self.chat_text.yview_scroll(-1 * (event.delta * 51 // 120), 'pixels')
         self._show_scrollbar()  # exibe scrollbar temporariamente
         # Esconde automaticamente após 1,5 s se o mouse sair
         self.after(1500, self._hide_scrollbar)
@@ -4995,6 +5088,18 @@ class ChatWindow(tk.Toplevel):
             self.entry.focus_set()
         except Exception:
             log.exception('erro em _wrap_selection_fmt')
+
+    # Menu "/" estilo Notion: so abre se "/" for o primeiro caractere da
+    # linha (ver _should_open_slash_menu). Reaproveita os mesmos handlers
+    # que os botoes removidos da barra usavam.
+    def _on_slash_key(self, event):
+        _handle_slash_keyrelease(self, self.entry, lambda: [
+            ('Fonte', self._change_font),
+            ('Negrito', lambda: self._wrap_selection_fmt('*', '*')),
+            ('Italico', lambda: self._wrap_selection_fmt('_', '_')),
+            ('Sublinhado', lambda: self._wrap_selection_fmt('__', '__')),
+            ('Tachado', lambda: self._wrap_selection_fmt('~', '~')),
+        ])
 
     # Lê o conteúdo do campo de entrada reconstruindo emojis a partir das imagens.
     # Percorre todos os tokens do widget Text (texto puro e imagens embutidas).
@@ -5189,8 +5294,13 @@ class ChatWindow(tk.Toplevel):
         # chat principal nao rola — usuario sente que travou.
         def _wheel_to_chat(event):
             try:
-                self.chat_text.yview_scroll(
-                    int(-1 * (event.delta / 120)), 'units')
+                # Pixels, nao 'units' -- mesma correcao de _on_mousewheel.
+                # 'units' faz 1 clique da roda pular o bloco de codigo
+                # inteiro de uma vez (janela embutida = poucas "linhas"
+                # pro Tk apesar de ocupar milhares de pixels reais).
+                self.chat_text.yview_scroll(-1 * (event.delta * 51 // 120), 'pixels')
+                self._show_scrollbar()
+                self.after(1500, self._hide_scrollbar)
             except Exception:
                 pass
             return 'break'
@@ -8504,25 +8614,9 @@ class GroupChatWindow(tk.Toplevel):
                                   command=self._show_emoji_picker)
         btn_emoji.pack(side='left', pady=2, padx=(0, 2))
 
-        # Botoes de formatacao: Negrito / Italico / Sublinhado / Tachado
-        import tkinter.font as _tkfont_grp
-        _gfmt_u = _tkfont_grp.Font(family='Segoe UI', size=9, weight='bold', underline=True)
-        _gfmt_s = _tkfont_grp.Font(family='Segoe UI', size=9, weight='bold', overstrike=True)
-        for _letter, _font, _cmd, _tip in [
-            ('B', ('Segoe UI', 9, 'bold'),
-             lambda: self._wrap_selection_fmt('*', '*'), 'Negrito (*texto*)'),
-            ('I', ('Segoe UI', 9, 'italic'),
-             lambda: self._wrap_selection_fmt('_', '_'), 'Italico (_texto_)'),
-            ('U', _gfmt_u,
-             lambda: self._wrap_selection_fmt('__', '__'), 'Sublinhado (__texto__)'),
-            ('S', _gfmt_s,
-             lambda: self._wrap_selection_fmt('~', '~'), 'Tachado (~texto~)'),
-        ]:
-            _b = tk.Button(btn_frame, text=_letter, font=_font,
-                           bg=win_bg, fg=flat_fg, relief='flat', bd=0,
-                           cursor='hand2', padx=4, pady=2, command=_cmd)
-            _b.pack(side='left', pady=2, padx=(0, 2))
-            _Tooltip(_b, _tip)
+        # Negrito/Italico/Sublinhado/Tachado/Fonte sairam da barra visivel --
+        # continuam acessiveis via menu "/" (_on_slash_key), que chama os
+        # mesmos handlers (_wrap_selection_fmt/_change_font).
 
         # Botao <> para inserir bloco de codigo (triplo backtick)
         btn_code = tk.Button(btn_frame, text='</>',
@@ -8531,14 +8625,6 @@ class GroupChatWindow(tk.Toplevel):
                              bg=win_bg, padx=4, pady=2,
                              command=self._wrap_selection_code)
         btn_code.pack(side='left', pady=2, padx=(0, 2))
-
-        # Font button
-        btn_font = tk.Button(btn_frame, text='A', font=('Segoe UI', 10, 'bold'),
-                             relief='flat', bd=0, cursor='hand2',
-                             bg=win_bg, fg=flat_fg,
-                             activebackground='#e2e8f0',
-                             command=self._change_font)
-        btn_font.pack(side='left', pady=2, padx=(0, 2))
 
         # Attach file button
         _attach_ico = _create_mdl2_icon_static('\uE723', 18, flat_fg)
@@ -8628,6 +8714,7 @@ class GroupChatWindow(tk.Toplevel):
         self.entry.bind('<Control-v>', self._on_paste)
         self.entry.bind('<Control-V>', self._on_paste)
         self.entry.bind('<KeyRelease>', self._on_entry_key)
+        self.entry.bind('<KeyRelease-slash>', self._on_slash_key)
         # <<Modified>> dispara SEMPRE que o conteúdo muda (teclado, IME, Win+., paste)
         self.entry.bind('<<Modified>>', self._on_modified)
         # Resize do widget muda largura de wrap -> re-ajusta altura
@@ -8694,6 +8781,12 @@ class GroupChatWindow(tk.Toplevel):
         sb.pack(side='right', fill='y')
         self.chat_text.configure(yscrollcommand=sb.set)
         self.chat_text.pack(fill='both', expand=True)
+        # Scroll por pixels (nao o 'units' nativo do Tk): um bloco de
+        # codigo embutido conta como poucas "linhas" internamente apesar
+        # de ocupar milhares de pixels reais -- com 'units' nativo, 1
+        # clique da roda em qualquer parte do chat pula o bloco inteiro
+        # de uma vez quando ele esta na tela.
+        self.chat_text.bind('<MouseWheel>', self._on_mousewheel)
 
         # Hook DnD tambem no chat_text (agora que ja foi criado)
         if HAS_WINDND:
@@ -9032,7 +9125,7 @@ class GroupChatWindow(tk.Toplevel):
 
         note_txt = tk.Text(info_frame, font=('Segoe UI', 7, 'italic'),
                            bg='#f8fafc', fg='#718096', relief='flat', bd=0,
-                           height=1, wrap='none', highlightthickness=0,
+                           height=2, wrap='word', highlightthickness=0,
                            state='disabled', cursor='arrow')
         note_txt.bind('<FocusIn>', lambda e: self.focus_set())
         if note:
@@ -9496,6 +9589,16 @@ class GroupChatWindow(tk.Toplevel):
         except Exception:
             log.exception('erro em _wrap_selection_fmt')
 
+    # Menu "/" estilo Notion -- mesma logica da ChatWindow.
+    def _on_slash_key(self, event):
+        _handle_slash_keyrelease(self, self.entry, lambda: [
+            ('Fonte', self._change_font),
+            ('Negrito', lambda: self._wrap_selection_fmt('*', '*')),
+            ('Italico', lambda: self._wrap_selection_fmt('_', '_')),
+            ('Sublinhado', lambda: self._wrap_selection_fmt('__', '__')),
+            ('Tachado', lambda: self._wrap_selection_fmt('~', '~')),
+        ])
+
     # Extrai o conteúdo do campo de entrada, convertendo imagens de volta para texto.
     # Percorre o dump do widget Text e reconstrói a string com emojis Unicode.
     def _get_entry_content(self):
@@ -9654,8 +9757,11 @@ class GroupChatWindow(tk.Toplevel):
         # chat principal nao rola — usuario sente que travou.
         def _wheel_to_chat(event):
             try:
-                self.chat_text.yview_scroll(
-                    int(-1 * (event.delta / 120)), 'units')
+                # Pixels, nao 'units' -- mesma correcao da ChatWindow.
+                # 'units' faz 1 clique da roda pular o bloco de codigo
+                # inteiro de uma vez (janela embutida = poucas "linhas"
+                # pro Tk apesar de ocupar milhares de pixels reais).
+                self.chat_text.yview_scroll(-1 * (event.delta * 51 // 120), 'pixels')
             except Exception:
                 pass
             return 'break'
@@ -10243,6 +10349,14 @@ class GroupChatWindow(tk.Toplevel):
         if not (event.state & 1):  # state & 1 = Shift pressionado
             self._send_message()
             return 'break'  # Impede inserção de nova linha
+
+    # Processa o scroll do mouse no chat do grupo. Pixels, nao 'units': um
+    # bloco de codigo embutido conta como poucas "linhas" pro Tk apesar de
+    # ocupar milhares de pixels reais -- rolar por 'units' faz 1 clique da
+    # roda pular o bloco inteiro de uma vez quando ele esta na tela.
+    def _on_mousewheel(self, event):
+        self.chat_text.yview_scroll(-1 * (event.delta * 51 // 120), 'pixels')
+        return 'break'
 
     def _show_reply_bar(self, msg_id, sender, text_preview):
         self._reply_to = {'msg_id': msg_id, 'sender': sender,
@@ -11717,11 +11831,22 @@ class GroupChatWindow(tk.Toplevel):
             sender = msg.get('file_path', '') or msg.get('sender_name', '') or ''
             if is_mine:
                 sender = self.app.messenger.display_name
-            elif not sender:
+            elif not sender or sender == from_user:
+                # Mensagem antiga sem nome persistido (ou salva antes do fix
+                # de resolucao em messenger.py): tenta contato salvo, depois
+                # cache de peers da GUI, depois o cache de discovery ao vivo
+                # (mesma cadeia robusta usada em messenger._resolve_group_
+                # sender_name) -- so cai pro UID cru se nada souber o nome.
                 _contact = self.app.messenger.db.get_contact(from_user)
-                sender = (_contact.get('display_name', '') if _contact else '') or \
-                         self.app.peer_info.get(from_user, {}).get('display_name', '') or \
-                         from_user
+                sender = (_contact.get('display_name', '') if _contact else '') or ''
+                if not sender or sender == from_user:
+                    sender = self.app.peer_info.get(from_user, {}).get('display_name', '')
+                if not sender or sender == from_user:
+                    _disc = getattr(self.app.messenger, 'discovery', None)
+                    _peer = _disc.peers.get(from_user, {}) if _disc else {}
+                    sender = _peer.get('display_name', '')
+                if not sender:
+                    sender = from_user
             ts = msg.get('timestamp')
             content = msg.get('content', '')
             mtype = msg.get('msg_type', 'text')

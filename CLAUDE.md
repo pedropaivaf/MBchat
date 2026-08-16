@@ -904,3 +904,58 @@ pra testar grupos, audio, mensagens etc. sem precisar de PCs de verdade. Nao usa
 **Nenhum dos 3 fixes acima tem versao/release ainda** — ficaram junto dos outros commits pos-1.8.35 (perf RAM,
 fallback emoji, fallback SSL updater, re-anuncio UDP na bandeja, `tools/mock_peer.py`) aguardando o proximo
 `build.py --version X.Y.Z --release`.
+
+## Menu "/" de formatacao, fix de porta TCP por peer, nome de exibicao em grupo, scroll de bloco de codigo (pendente release)
+
+Leva grande de fixes validada com suite de testes automatizados nova (`tests/test_slash_menu.py`,
+`tests/test_peer_tcp_port.py`, `tests/test_display_name_resolution.py`, `tests/test_code_block_scroll.py` —
+58 casos, todos passando, incluindo os suites antigos). `tools/mock_peer.py` ganhou `--index N` (gera bots
+adicionais `Bot de Teste 2/3/4`, cada um com uid/porta proprios) e suporte a grupo (recebe `group_invite`,
+responde `group_message` automaticamente) — usado pra validar tudo isso sem precisar de PCs reais.
+
+1. **Menu "/" estilo Notion (ChatWindow + GroupChatWindow)**: barra de formatacao reduzida aos botoes
+   realmente usados (Emoji, Bloco de Codigo, Anexar, Enviar) — Fonte/Negrito/Italico/Sublinhado/Tachado
+   saíram da barra e viraram um menu flutuante acionado digitando `/` **apenas no inicio de uma linha vazia**
+   (campo vazio ou logo apos Shift+Enter) — checado por `_should_open_slash_menu` (modulo, helper puro e
+   testavel). Digitar `/` no meio de texto normal (data "10/12", fracao, caminho de arquivo) nunca abre nada.
+   Escolher uma opcao apaga o "/" e chama o MESMO handler que o botao antigo usava (`_wrap_selection_fmt`/
+   `_change_font`) — zero logica nova de formatacao. Popup (`_open_slash_format_menu`, modulo) e visualmente
+   inspirado em `_open_modern_menu` mas ancorado acima do campo de digitacao (nao da pra reusar o da janela
+   principal direto — aquele se posiciona relativo a `self.root`).
+
+2. **Mensagens (individual/grupo/convite) usam a porta TCP real do peer, nao mais fixa**: `messenger.py`
+   sempre mandou toda mensagem pra constante `TCP_PORT` (50101), nunca olhando o `tcp_port` que o peer
+   anuncia via UDP (so o `file_port` tinha esse tratamento, em `send_file`). Em maquinas onde 50101 esta
+   ocupada/excluida pelo SO (Hyper-V/WinNAT — ver secao acima), o peer cai numa porta de fallback e
+   **nunca mais recebe mensagem nenhuma**, silenciosamente. Fix: `Messenger._peer_tcp_port(uid)` novo,
+   consulta `discovery.peers[uid]['tcp_port']` com fallback pra `TCP_PORT` se nao souber — mesmo padrao
+   do `file_port`. Aplicado em `send_message`, `send_group_invite` (`_send_invite`) e `send_group_message`.
+   **Por construcao nao regride PC saudavel**: pra qualquer peer sem conflito de porta (a grande maioria),
+   `tcp_port` anunciado == `TCP_PORT`, entao o destino nao muda nem um pouco — o fix so age exatamente no
+   caso que ja estava quebrado. `tools/mock_peer.py` precisou do mesmo tratamento do lado dele (escuta
+   anuncio UDP com `listen_announces()`, guarda peer→porta em `KNOWN_PEERS`, usa em `_tcp_send`) — sem isso
+   o bot recebia certo mas a resposta dele voltava pra porta fixa errada, num bug simetrico do lado inverso.
+
+3. **Nome de exibicao errado em mensagem de grupo (mostrava UID/hostname cru tipo "047f0e441f62_DESKTOP"
+   em vez do nome da pessoa)**: `_on_tcp_message` (MT_GROUP_MSG/MT_IMAGE/MT_AUDIO de grupo) so tentava o
+   nome do pacote e o contato salvo — peer visto SO via grupo (nunca teve chat individual, sem linha em
+   `contacts`) caia pro UID cru. Fix: helper `Messenger._resolve_group_sender_name(from_user,
+   packet_display_name)` novo, acrescenta o cache de discovery ao vivo (`discovery.peers[uid]
+   ['display_name']`) como fallback antes de desistir — usado nos 3 lugares (texto/imagem/audio de grupo).
+   Mesma cadeia reforcada do lado da GUI em `GroupChatWindow._load_history` (releitura do historico), que
+   tambem passou a rejeitar nome "auto-referente" (igual ao proprio UID), nao so vazio. **Toda busca e
+   indexada exatamente pelo `from_user` da mensagem — nunca cruza com o registro de outra pessoa** (validado
+   com teste simulando 4 pessoas simultaneas no DB/discovery, cada uma resolve so pro proprio nome). Fica
+   de fora dessa garantia: forjamento de `from_user` por um peer malicioso na LAN (spoofing) — isso e
+   escopo do "Plano de Hardening de Seguranca" (secao acima), ainda pendente.
+
+4. **Scroll "agarra e pula" ao rolar por cima de bloco de codigo grande**: bloco de codigo embutido
+   (`window_create` em `_insert_code_block`) pode ocupar milhares de pixels reais (uma janela Python de
+   ~150 linhas mede ~2100px), mas o Tk conta isso como poucas "linhas" no modelo interno do Text widget —
+   rolar com `yview_scroll(n, 'units')` faz UM clique da roda pular o bloco inteiro de uma vez (medido e
+   reproduzido: ate 68% do conteudo total num pulo so). Fix: trocar `'units'` por `'pixels'` nos 3 pontos
+   que processam `<MouseWheel>` do chat (`ChatWindow._on_mousewheel`, e o `_wheel_to_chat` que repassa
+   scroll de dentro do bloco de codigo pro chat, nas duas janelas) — pixels rolam a mesma distancia visual
+   sempre, independente do que esta embutido. **GroupChatWindow nao tinha handler proprio de MouseWheel**
+   (dependia do scroll nativo 'units' do Tk, com o mesmo bug em qualquer parte do chat, nao so em cima do
+   bloco) — ganhou `_on_mousewheel` dedicado + bind explicito, espelhando a ChatWindow.
