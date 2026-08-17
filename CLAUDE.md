@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.35.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.36.
 
 ## Arquitetura (4 camadas)
 
@@ -858,7 +858,7 @@ design; aparece no sininho de notificacoes do destinatario como alerta, nao gera
 single-instance-lock separada, `user_id` com sufixo — permite abrir 2+ janelas do MBChat na mesma maquina/rede
 pra testar grupos, audio, mensagens etc. sem precisar de PCs de verdade. Nao usar em producao (so dev).
 
-## Fixes pos-v1.8.35: caixa de digitar, envio de audio, highlight de codigo em grupos (pendente release)
+## Fixes pos-v1.8.35: caixa de digitar, envio de audio, highlight de codigo em grupos (lancado em v1.8.36)
 
 1. **Fix definitivo do texto "sumindo" na caixa de digitar (`ChatWindow`/`GroupChatWindow`)**: `wrap='word'`
    mantido (quebra por palavra, estilo Discord/WhatsApp — `wrap='char'` foi tentado no meio do caminho e
@@ -905,7 +905,7 @@ pra testar grupos, audio, mensagens etc. sem precisar de PCs de verdade. Nao usa
 fallback emoji, fallback SSL updater, re-anuncio UDP na bandeja, `tools/mock_peer.py`) aguardando o proximo
 `build.py --version X.Y.Z --release`.
 
-## Menu "/" de formatacao, fix de porta TCP por peer, nome de exibicao em grupo, scroll de bloco de codigo (pendente release)
+## Menu "/" de formatacao, fix de porta TCP por peer, nome de exibicao em grupo, scroll de bloco de codigo (lancado em v1.8.36)
 
 Leva grande de fixes validada com suite de testes automatizados nova (`tests/test_slash_menu.py`,
 `tests/test_peer_tcp_port.py`, `tests/test_display_name_resolution.py`, `tests/test_code_block_scroll.py` —
