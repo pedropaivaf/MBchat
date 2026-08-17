@@ -157,7 +157,8 @@ def _do_build():
     # Inserido antes do --name para manter ordem de --add-data agrupada.
     sounds_dir = os.path.join(HERE, 'sounds')
     if os.path.isdir(sounds_dir):
-        cmd.insert(cmd.index(f'--add-data={ICON};assets') + 1,
+        assets_flag = f'--add-data={os.path.join(HERE, "assets")};assets'
+        cmd.insert(cmd.index(assets_flag) + 1,
                    f'--add-data={sounds_dir};sounds')
 
     print('Executando PyInstaller...')
