@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.36.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.37.
 
 ## Arquitetura (4 camadas)
 
@@ -978,3 +978,49 @@ responde `group_message` automaticamente) — usado pra validar tudo isso sem pr
    sempre, independente do que esta embutido. **GroupChatWindow nao tinha handler proprio de MouseWheel**
    (dependia do scroll nativo 'units' do Tk, com o mesmo bug em qualquer parte do chat, nao so em cima do
    bloco) — ganhou `_on_mousewheel` dedicado + bind explicito, espelhando a ChatWindow.
+
+## Multi-monitor, notificacao de Aviso, filtro online e drop multiplo (v1.8.37)
+
+1. **Janelas/menus "pulando" pro monitor primario** — `winfo_screenwidth()`/`winfo_screenheight()` do Tk
+   no Windows so enxergam o monitor PRIMARIO (via `GetSystemMetrics(SM_CXSCREEN)`), nao a tela virtual
+   inteira. Qualquer centralizacao/clamp de posicao que usasse esses valores "puxava" a janela/menu de
+   volta pro monitor primario mesmo com o app inteiro no secundario — reproduzido em ~10 pontos diferentes
+   (Ferramentas, Agendar, Transmitir, menu de contexto de mensagem, ChatWindow, GroupChatWindow,
+   Preferencias, Conta, Transferencia de Arquivos, AvatarCropDialog, About, date picker de Lembretes,
+   emoji picker do campo de nota, tooltip de nota, barras de progresso de update).
+   **Fix**: novo helper `_get_monitor_bounds(win)` (gui.py, perto de `_center_window`) usa a API Win32
+   `MonitorFromWindow`/`GetMonitorInfo` pra pegar os limites reais do monitor FISICO onde a janela de
+   referencia esta — fallback silencioso pro monitor primario (comportamento antigo) se a API falhar.
+   `_center_window(win, w, h)` reescrito: centraliza sobre `win.master` usando `winfo_rootx/rooty` (essas
+   SAO corretas multi-monitor, ao contrario de `winfo_screenwidth/height`) e trava dentro do monitor real
+   do pai. Todos os pontos com logica duplicada de clamp (`_show_msg_context_menu`, `_open_modern_menu`,
+   tooltip de nota, emoji picker de nota, date picker) passaram a usar `_get_monitor_bounds` nos mesmos
+   calculos que ja tinham; os que so centralizavam com w/h fixo (dialogs de update, About) passaram a
+   chamar `_center_window` direto, eliminando a duplicacao. `_position_right` (posicao inicial da janela
+   principal no primeiro boot) foi deixada como estava de proposito — sem pai pra herdar posicao, o
+   monitor primario e a unica referencia possivel mesmo.
+
+2. **Aviso sem notificacao/som** — `_on_aviso` so atualizava o sininho (`_bell_alerts`), sem tocar som nem
+   mostrar notificacao do Windows. Ganhou `SoundPlayer.play_msg_broadcast()` (mesmo gate/toggle que o
+   usuario ja controla em Preferencias > Alertas > Sons > Transmissao) + `_show_toast_generic(titulo,
+   texto)` (toast nativo via winotify, respeitando o gate mestre `balloon_notify`) — reusa helpers ja
+   existentes, zero codigo novo de notificacao.
+
+3. **Janela Transmitir (Mensagem/Aviso) listava contatos offline/fantasmas** — unico dos 5 pickers de
+   contato que nao filtrava por status (Criar Grupo, Adicionar Participantes, Encaminhar e Marcar Pessoas
+   ja filtravam `status != 'offline'` corretamente). Corrigido pro mesmo padrao — a lista de destinatarios
+   de Transmitir agora so mostra quem esta online/ausente/ocupado nesse instante.
+
+4. **Arrastar multiplos arquivos do Explorer enviava so 1** — `ChatWindow._on_drop_files` e
+   `GroupChatWindow._on_drop_files` (callback do `windnd`) tinham um `break` explicito logo apos o
+   primeiro arquivo do loop. Removido nos dois — `_start_file_send`/`_start_group_file_send` ja sao
+   independentes por chamada (file_id proprio, thread propria via `FileSender`), entao nao precisa de
+   nenhuma outra mudanca pra suportar N arquivos de uma vez.
+
+**Validacao**: AST parse + import de todos os modulos; testes automatizados via instancia real do app
+(`LanMessengerApp()` fora do mainloop manual, sem clique de mouse) cobrindo os 4 pontos — matematica e
+chamada Win32 de `_get_monitor_bounds`/`_center_window`, filtro online do Transmitir (peer offline
+mockado excluido da lista, online/ausente aparecem), notificacao+som do aviso (toast e
+`play_msg_broadcast` disparados, checado via monkeypatch), drop de 3 arquivos temporarios (3 chamadas de
+envio confirmadas, nao so 1). Build local + instalador Inno Setup + exe empacotado testados antes do
+release (ver checklist de release no historico de commits).
