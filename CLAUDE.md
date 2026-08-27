@@ -85,16 +85,35 @@ python build.py --version X.Y.Z --release
 ## Regras gerais
 
 - Ser AUTONOMO. Fazer tudo sem perguntar, sem esperar confirmacao
-- NUNCA perguntar "quer que eu faca X?" â€” ja faz
+- NUNCA perguntar "quer que eu faca X?" — ja faz
 - Respostas curtas e diretas
 - Se screenshot de erro, corrigir direto
+
+## REGRA RESTRITA: release/build/deploy so com ordem explicita do usuario
+
+**NUNCA rodar `python build.py --release` (ou qualquer variante com build/instalador/GitHub Release),
+`git push`, ou os scripts de deploy em massa (`tools/deploy_mbchat.ps1`) por iniciativa propria.**
+
+Isso vale mesmo que o codigo esteja pronto, testado e a versao em `version.py` esteja sem o sufixo
+`-dev`. Terminar uma implementacao/fix NAO autoriza build+release+push automaticamente — essa etapa
+fica sempre pendente ate o usuario mandar explicitamente.
+
+- Pode e deve: editar codigo, rodar testes locais, `git commit` local, deixar tudo pronto para o
+  proximo passo.
+- So fazer build/release/push/deploy quando o usuario disser um dos gatilhos: "subir versao",
+  "push", "bump", "release", "publica", "manda pro github", "builda", "faz o deploy" (ou equivalente
+  direto e inequivoco).
+- Se terminar uma tarefa e o proximo passo natural seria lancar, PARAR e avisar que esta pronto para
+  build/release, esperando confirmacao explicita — nao apenas seguir em frente.
+- Essa regra tem prioridade sobre a secao "Ser AUTONOMO" acima: autonomia vale para codigo, nao para
+  publicar/distribuir.
 
 ## Workflow de changelog (ao lancar nova versao)
 
 Apos o build+release, atualizar o changelog no cofre Obsidian:
 1. Abrir ~/obsidian-cofre/Projetos/MB-Contabilidade/MB Chat - Changelog.md
 2. Adicionar entrada no topo (abaixo do separador ---) no formato:
-   ## vX.Y.Z ï¿½ DD/MMM/AAAA ï¿½ EMOJI Tipo
+   ## vX.Y.Z — DD/MMM/AAAA — EMOJI Tipo
    Descricao curta da mudanca
 3. Atualizar campo versao-atual no frontmatter
 4. Atualizar estatisticas (total de versoes, por tipo)
@@ -127,18 +146,18 @@ Emojis: ver legenda no proprio changelog
 
 Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-recuperaveis:
 
-1. **Log rotativo de rede** em `%APPDATA%\.mbchat\network.log` â€” RotatingFileHandler 1MB x 3 backups.
+1. **Log rotativo de rede** em `%APPDATA%\.mbchat\network.log` — RotatingFileHandler 1MB x 3 backups.
    Grava cada bind/IGMP join, stats de send/recv, erros engolidos. Fail-safe (NullHandler se IO falhar).
-   Acessado via `network._log()` â€” uma unica linha por evento, nunca levanta excecao para caller.
+   Acessado via `network._log()` — uma unica linha por evento, nunca levanta excecao para caller.
 
 2. **Health dict** em `UDPDiscovery.health` (network.py:201) com `bound_port`, `bind_fallback`,
    `multicast_joined`, `packets_sent`, `packets_received`, `sendto_errors`, `last_peer_seen_at`,
    `started_at`, `bind_errors`. Exposto via `get_health()` que adiciona `uptime` e `peers_count`
    on-the-fly. Todos os contadores sao incrementados nos pontos que antes tinham `except: pass`
-   silencioso â€” zero impacto no caminho feliz, instrumentacao pura.
+   silencioso — zero impacto no caminho feliz, instrumentacao pura.
 
 3. **Banner de diagnostico** na janela principal (gui.py `_update_health_banner`). Rearma a cada 30s.
-   - **VERMELHO** se `bind_fallback=True` (porta UDP 50100 ocupada, cai em porta aleatoria â€” discovery quebrado)
+   - **VERMELHO** se `bind_fallback=True` (porta UDP 50100 ocupada, cai em porta aleatoria — discovery quebrado)
    - **AMARELO** se uptime>30s, pacotes enviados>0, mas zero recebidos (firewall inbound bloqueado)
    - **AMARELO** se uptime>60s, multicast nao joinado e nenhum peer (rede filtrando)
    - Nos PCs saudaveis o banner NUNCA aparece (condicionais sao `and not healthy`).
@@ -159,7 +178,7 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    botoes **Copiar tudo** (clipboard), **Atualizar**, **Fechar**. Reusa `_center_window` e
    `_apply_rounded_corners`.
 
-6. **tools/fix_firewall.bat** â€” Script standalone para casos extremos: executa como admin,
+6. **tools/fix_firewall.bat** — Script standalone para casos extremos: executa como admin,
    deleta todas as regras MBChat, recria Allow Inbound por porta, reinicia o MBChat.
    Enviar por WhatsApp se o auto-fix via UAC falhar ou for recusado.
 
@@ -170,18 +189,18 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    ou `C:\Program Files\MBChat\`). Documentado na landing (`docs/index.html#doc-firewall`) e
    em `docs/DECISIONS.md`.
 
-7. **tools/sniff_mbchat.py** â€” Sniffer UDP 50100 passivo, standalone, diagnostico remoto.
+7. **tools/sniff_mbchat.py** — Sniffer UDP 50100 passivo, standalone, diagnostico remoto.
    Lista todos os peers anunciando na LAN com IP src vs IP declarado (detecta `get_local_ip()` bugado).
    Rodar com MBChat local fechado. Usado para confirmar se PC com problema esta enviando/recebendo.
 
 **Hipotese confirmada v1.4.59**: 2 PCs de 30 ficaram invisiveis (lista vazia) porque nao tinham
-regras de firewall inbound. Reinstalacao + apagar `%APPDATA%\.mbchat` nao resolve â€” o Windows
+regras de firewall inbound. Reinstalacao + apagar `%APPDATA%\.mbchat` nao resolve — o Windows
 Defender Firewall nao re-pergunta "Permitir?" ao user e o installer roda com `PrivilegesRequired=lowest`
 (sem admin, nao consegue criar regras via netsh). O `_add_firewall_rule()` em network.py:40 tambem
 falha silenciosamente sem admin. Diagnostico feito via `Test-NetConnection` do PC do Pedro:
-TCP 50101 `TcpTestSucceeded: False`, `PingSucceeded: True` â†’ inbound bloqueado, L2/L3 ok.
+TCP 50101 `TcpTestSucceeded: False`, `PingSucceeded: True` → inbound bloqueado, L2/L3 ok.
 Sniffer confirmou que PC problematico envia UDP announces normalmente (outbound ok) mas nao recebe
-nada (inbound bloqueado). **Nao alfroxar** `_add_firewall_rule()` ou o `except Exception: pass` â€”
+nada (inbound bloqueado). **Nao alfroxar** `_add_firewall_rule()` ou o `except Exception: pass` —
 o problema nao e o codigo tentar silenciosamente, e a falta de feedback ao user quando falha.
 O auto-fix via UAC e a solucao definitiva: pede permissao uma vez, cria regras por porta, resolve.
 
@@ -191,52 +210,52 @@ Janela em **Preferencias > Aparencia > Tema > Criar tema personalizado...** perm
 montar temas custom (40+ tokens de cor: bg/fg/bordas/bolhas/header/status), persistidos em
 `%APPDATA%\.mbchat\user_themes.json`. Ao abrir o app, `gui.py` faz merge aditivo dos temas
 salvos no dict global `THEMES` (sem sobrescrever os 3 fixos: Classico, Night Mode, MB
-Contabilidade â€” protegidos via `BUILTIN_THEMES`).
+Contabilidade — protegidos via `BUILTIN_THEMES`).
 
 Mudancas estruturais que vieram junto:
 
-1. **`apply_theme` propaga globais** (gui.py:8758) â€” `BG_WINDOW`, `BG_WHITE`, `BG_HEADER`,
+1. **`apply_theme` propaga globais** (gui.py:8758) — `BG_WINDOW`, `BG_WHITE`, `BG_HEADER`,
    `FG_BLACK`, etc. agora sao reescritas globalmente a cada troca de tema. Janelas reabertas
    (Preferences, Builder, Diagnostico) reconstroem com a paleta atual.
 
-2. **`PreferencesWindow` respeita o tema** â€” sidebar/categorias leem `app._theme` no `__init__`
+2. **`PreferencesWindow` respeita o tema** — sidebar/categorias leem `app._theme` no `__init__`
    e usam `_sweep_theme()` recursivo apos cada `_select_category` para forcar `fg/bg` em
    `Label`, `Labelframe`, `Checkbutton`, `Radiobutton`, `Entry` (muitos `_build_*` nao
-   passavam `fg` explicito â€” em Night Mode ficavam pretos sobre fundo escuro).
+   passavam `fg` explicito — em Night Mode ficavam pretos sobre fundo escuro).
 
-3. **`PreferencesWindow` reabre ao mudar tema** â€” o `_save_all` detecta `theme` mudou,
+3. **`PreferencesWindow` reabre ao mudar tema** — o `_save_all` detecta `theme` mudou,
    chama `apply_theme` e faz `self.destroy() + PreferencesWindow(app, initial_tab=idx)`
    com delay 100ms (preserva aba atual via `_current_idx`). Mesmo comportamento no
    `_open_theme_builder` quando o builder retorna com tema novo aplicado.
 
-4. **`ThemeBuilderWindow` se adapta ao tema do host** â€” le `app._theme` no `__init__` e
+4. **`ThemeBuilderWindow` se adapta ao tema do host** — le `app._theme` no `__init__` e
    monta dict `self.ui` (panel/window/border/text/muted/accent/etc.) usado em toda a UI
    principal. **Preview interno permanece usando `self.tokens`** (mostra o tema sendo
    construido, nao o tema do host).
 
-5. **Temas fixos completados** â€” Classico e Night Mode ganharam as keys que faltavam
+5. **Temas fixos completados** — Classico e Night Mode ganharam as keys que faltavam
    (`msg_my_bg`, `msg_peer_bg`, `hover`, `accent`, `online`, `away`, `busy`,
    `offline_color`, `select_border`). Night Mode reformulado com contraste serio
    (texto `#e8e8e8` sobre `#1e1e1e`, accent `#7cb8f0`). MB Contabilidade **intacto**
    como tema principal/default.
 
 **Contrato com `app` host (`tools/theme_builder.py`)**: builder chama apenas `app._theme`
-(dict â€” opcional), `app.THEMES` (dict global â€” opcional, propaga tema novo) e
+(dict — opcional), `app.THEMES` (dict global — opcional, propaga tema novo) e
 `app.apply_theme(name)` (so no Salvar e Aplicar). Se algum nao existir, builder degrada
 sem crashar. `LanMessengerApp.__init__` expoe `self.THEMES = THEMES` (gui.py:8419) para
 que o builder propague o tema novo no mesmo dict que `apply_theme` consulta.
 
-**Validacao no JSON salvo**: regex `^#[0-9a-fA-F]{6}$` â€” `rgb(...)` ou nomes sao rejeitados.
+**Validacao no JSON salvo**: regex `^#[0-9a-fA-F]{6}$` — `rgb(...)` ou nomes sao rejeitados.
 Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao crasha
 (`load_user_themes()` retorna `{}` + log).
 
 ## UX fixes v1.5.1
 
 1. **Barra de acoes "Transmitir | Criar Grupo" redesenhada** (gui.py:9115-9175).
-   Antes: dois tk.Button pill coloridos (`#1a3f7a`) com emojis ðŸ“¢/ðŸ’¬ acima da caixa de notas.
+   Antes: dois tk.Button pill coloridos (`#1a3f7a`) com emojis acima da caixa de notas.
    Agora: **rodape** abaixo do note_row, duas celulas 50/50 com grid uniforme, divider
    horizontal sutil acima e divider vertical fino entre elas, fundo transparente NAVY, icones
-   line (`â€¢))` em `#7cb8f0` para Transmitir como aÃ§Ã£o primaria, `ðŸ‘¥` para Criar Grupo), hover
+   line em `#7cb8f0` para Transmitir como acao primaria, para Criar Grupo, hover
    em `#1a3f7a`. Layout compacto (fontes 8-10pt, pady=3) pra liberar ~20px verticais e mostrar
    mais contatos na lista sem scroll.
 
@@ -244,12 +263,12 @@ Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao 
    Janela nasce `withdraw()`, `_center_window` aplica posicao, todos os widgets empacotam
    escondidos, `update_idletasks()` + `deiconify()` no final. Elimina o flash no canto
    superior esquerdo que acontecia quando o WM do Windows mostrava a janela antes da
-   geometry final. Se `start_hidden=True` (surfacing via tray), `deiconify` no fim e pulado â€”
+   geometry final. Se `start_hidden=True` (surfacing via tray), `deiconify` no fim e pulado —
    caller continua responsavel.
 
 3. **Emoji picker posicionado dinamicamente acima do input** (gui.py:5531-5559).
    Altura entre 200-300px (calculada via `entry_top - win_top - 60`), gap de 40px acima do
-   `self.entry.winfo_rooty()`. `popup.withdraw()` -> setup completo -> `deiconify()` â€” sem
+   `self.entry.winfo_rooty()`. `popup.withdraw()` -> setup completo -> `deiconify()` — sem
    flash no canto. Grid 8 cols x 34px, rolavel com `bind_all('<MouseWheel>')`.
 
 4. **Theme Builder: scroll global + centralizado** (tools/theme_builder.py:284-308, 388-411).
@@ -260,24 +279,24 @@ Chaves ausentes herdam do `MB_DEFAULT` (fallback completo). JSON corrompido nao 
 5. **Scrollbar minimalista na janela Lembretes** (gui.py:12246-12369). Substituiu
    `ttk.Scrollbar` por Canvas 6px com thumb arredondado (oval + retangulo), hover muda para
    10px em tom `#94a3b8`, auto-hide quando conteudo cabe (`lo<=0 && hi>=1`). MouseWheel
-   ignora scroll se nao ha overflow â€” previne "rolar pra vazio" quando tem so 1 item.
+   ignora scroll se nao ha overflow — previne "rolar pra vazio" quando tem so 1 item.
 
 ## Historico estilo LAN Messenger + fix mensagens sumindo (v1.5.3)
 
 Usuarios relataram que mensagens antigas "sumiam" do chat individual e da janela global de historico.
 Investigacao mostrou 2 limites hardcoded + 1 UX confusa:
 
-1. **ChatWindow `_load_history`** (gui.py:3590) carregava so as ultimas 40 msgs ao abrir chat â€”
-   contatos com historico mais longo tinham mensagens antigas invisiveis. **Fix**: `limit=None` â€”
+1. **ChatWindow `_load_history`** (gui.py:3590) carregava so as ultimas 40 msgs ao abrir chat —
+   contatos com historico mais longo tinham mensagens antigas invisiveis. **Fix**: `limit=None` —
    carrega TODAS as mensagens do par ao abrir. `get_chat_history(limit=None)` em database.py
    ja suportava e retornava em ordem ASC.
 
-2. **`search_all_messages`** (database.py:719) com default `limit=500` â€” em escritorio de 30
+2. **`search_all_messages`** (database.py:719) com default `limit=500` — em escritorio de 30
    pessoas, ~2 semanas de uso ja passam disso e mensagens antigas ficavam fora de busca.
    **Fix**: `limit=None` suportado (SQL sem clausula LIMIT), default subiu pra 5000.
 
 3. **Janela Historico redesenhada estilo LAN Messenger** (gui.py:11088 `_show_all_history`).
-   Antes mostrava apenas resumo de contatos (nome + data ultima msg) ate o usuario filtrar â€”
+   Antes mostrava apenas resumo de contatos (nome + data ultima msg) ate o usuario filtrar —
    confuso, parecia que nao tinha mensagens. Agora: 2-pane horizontal (900x600), Treeview
    de contatos a esquerda (320px, ordenado por last_ts DESC), painel de conversa a direita
    com TODAS as mensagens do contato selecionado em ordem cronologica ASC. Busca por palavra
@@ -286,11 +305,11 @@ Investigacao mostrou 2 limites hardcoded + 1 UX confusa:
 
 4. **Performance da filtragem**: adicionados 2 helpers em database.py que usam SQL DISTINCT/COUNT
    em vez de carregar tudo na memoria:
-   - `get_peers_with_match(search_text, date_from, date_to)` â€” retorna set de peer_ids que tem
+   - `get_peers_with_match(search_text, date_from, date_to)` — retorna set de peer_ids que tem
      match. DISTINCT CASE no SQL, rapido mesmo em DBs com 100k+ msgs.
-   - `count_matching_messages(...)` â€” COUNT(*) no SQL, leve.
+   - `count_matching_messages(...)` — COUNT(*) no SQL, leve.
 
-   Com esses dois, o filtro do Historico **nao tem mais limite** de mensagens inspecionadas â€”
+   Com esses dois, o filtro do Historico **nao tem mais limite** de mensagens inspecionadas —
    qualquer mensagem antiga aparece na busca. Zero risco de "sumir".
 
 **Contrato**: `db.get_messages_with_peer(user_a, peer_id, date_from, date_to, search_text)`
@@ -305,107 +324,107 @@ Para detalhes alem deste resumo, consultar:
 - `docs/DECISIONS.md` - Decisoes tecnicas, troubleshooting, discovery robusto
 - `docs/FEATURES.md` - Lista completa de funcionalidades com detalhes de implementacao
 
-## Estabilização de Identidade e Notificações (v1.6.8 / v1.6.9)
+## Estabilizacao de Identidade e Notificacoes (v1.6.8 / v1.6.9)
 
-1. **Notificações Independentes (v1.6.8)**: 
-   - Substituição de focus_displayof() por _window_is_foreground (Win32 API GetForegroundWindow).
-   - Garante que cada janela de chat pisque independentemente na barra de tarefas, parando apenas quando aquela janela específica ganha foco real no Windows.
+1. **Notificacoes Independentes (v1.6.8)**: 
+   - Substituicao de focus_displayof() por _window_is_foreground (Win32 API GetForegroundWindow).
+   - Garante que cada janela de chat pisque independentemente na barra de tarefas, parando apenas quando aquela janela especifica ganha foco real no Windows.
 
 2. **User ID Persistente (v1.6.9)**: 
-   - O user_id agora é salvo na tabela local_user do banco de dados SQLite.
-   - Em vez de gerar um novo ID a cada troca de interface de rede (Wi-Fi vs Ethernet), o app reutiliza o ID persistente. Isso evita a fragmentação do histórico e o surgimento de usuários fantasmas.
+   - O user_id agora e salvo na tabela local_user do banco de dados SQLite.
+   - Em vez de gerar um novo ID a cada troca de interface de rede (Wi-Fi vs Ethernet), o app reutiliza o ID persistente. Isso evita a fragmentacao do historico e o surgimento de usuarios fantasmas.
 
-3. **Histórico de Grupos (v1.6.9)**: 
-   - Adicionado seletor Contatos / Grupos na janela de histórico global.
-   - Carregamento de histórico para grupos fixos com resolução de nomes dos remetentes (armazenados no campo file_path de mensagens de grupo).
-   - Correção do bug de mensagens sumidas: Janelas individuais agora carregam o histórico completo ao abrir, garantindo visibilidade total de respostas enviadas anteriormente.
+3. **Historico de Grupos (v1.6.9)**: 
+   - Adicionado seletor Contatos / Grupos na janela de historico global.
+   - Carregamento de historico para grupos fixos com resolucao de nomes dos remetentes (armazenados no campo file_path de mensagens de grupo).
+   - Correcao do bug de mensagens sumidas: Janelas individuais agora carregam o historico completo ao abrir, garantindo visibilidade total de respostas enviadas anteriormente.
 
-## Fix VPN PPTP + Botão Remover (v1.8.12)
+## Fix VPN PPTP + Botao Remover (v1.8.12)
 
-Três bugs de código impediam que o notebook em home-office (PPTP VPN) visse colegas da LAN (`Peers conhecidos: 0`):
+Tres bugs de codigo impediam que o notebook em home-office (PPTP VPN) visse colegas da LAN (`Peers conhecidos: 0`):
 
 1. **Relay quebrado — MCAST_GRP (network.py:790)**
-   - Constante `MCAST_GRP` não existe; o nome correto é `MULTICAST_GROUP`.
-   - O `NameError` era silenciado pelo `try/except`, então o relay da âncora para a LAN **nunca funcionava**.
+   - Constante `MCAST_GRP` nao existe; o nome correto e `MULTICAST_GROUP`.
+   - O `NameError` era silenciado pelo `try/except`, entao o relay da ancora para a LAN **nunca funcionava**.
    - Fix: substituir por `MULTICAST_GROUP`.
 
-2. **Respostas VPN iam para porta efêmera (network.py:774)**
-   - `_sock_send` (socket de envio) não tem bind explícito → OS atribui porta aleatória (ex.: 54321).
-   - A âncora respondia com `port=addr[1]` = 54321, mas `_sock_recv` escuta **apenas em 50100**.
+2. **Respostas VPN iam para porta efemera (network.py:774)**
+   - `_sock_send` (socket de envio) nao tem bind explicito → OS atribui porta aleatoria (ex.: 54321).
+   - A ancora respondia com `port=addr[1]` = 54321, mas `_sock_recv` escuta **apenas em 50100**.
    - Resultado: todas as respostas dos 27 PCs da LAN eram perdidas → `Peers conhecidos: 0`.
    - Fix: `port=addr[1]` → `port=UDP_PORT` no VPN handshake reply.
 
-3. **Botão "Remover" invisível na janela VPN (gui.py `_open_vpn_peers`)**
+3. **Botao "Remover" invisivel na janela VPN (gui.py `_open_vpn_peers`)**
    - `btns.pack(side='bottom')` era chamado **depois** de `body.pack(fill='both', expand=True)`.
-   - O `body` com `expand=True` consumia todo o espaço; `btns` ficava com 0px de altura.
-   - Fix: separar criação de `body` do `.pack()`, empacotar `btns` antes de `body.pack()`.
-   - Adicionado: ao remover o último peer, VPN é desativada automaticamente (`set_vpn_enabled(False)`).
+   - O `body` com `expand=True` consumia todo o espaco; `btns` ficava com 0px de altura.
+   - Fix: separar criacao de `body` do `.pack()`, empacotar `btns` antes de `body.pack()`.
+   - Adicionado: ao remover o ultimo peer, VPN e desativada automaticamente (`set_vpn_enabled(False)`).
 
-**Limitação de rede (não código):** se o roteador do escritório não rotear `10.0.0.x` de volta ao cliente PPTP, LAN → notebook TCP falha. O notebook sempre consegue iniciar mensagens (via túnel). Não alterar a lógica de relay para contornar isso sem testar.
+**Limitacao de rede (nao codigo):** se o roteador do escritorio nao rotear `10.0.0.x` de volta ao cliente PPTP, LAN → notebook TCP falha. O notebook sempre consegue iniciar mensagens (via tunel). Nao alterar a logica de relay para contornar isso sem testar.
 
-**Teste automatizado:** `test_vpn_fixes.py` — 11 checks, inclui teste comportamental com sockets reais no localhost que confirma a resposta chegando em `UDP_PORT=50100` e nada na porta efêmera.
+**Teste automatizado:** `test_vpn_fixes.py` — 11 checks, inclui teste comportamental com sockets reais no localhost que confirma a resposta chegando em `UDP_PORT=50100` e nada na porta efemera.
 
-## Plano de Hardening de Segurança (v1.8.13 — pendente)
+## Plano de Hardening de Seguranca (v1.8.13 — pendente)
 
-Análise completa da superfície de ataque revelou que qualquer PC na mesma LAN pode forjar mensagens, envenenar roteamento via UDP announce falso e fazer spam sem rate limit. Ameaça realista: funcionário mal-intencionado ou curioso na rede interna.
+Analise completa da superficie de ataque revelou que qualquer PC na mesma LAN pode forjar mensagens, envenenar roteamento via UDP announce falso e fazer spam sem rate limit. Ameaca realista: funcionario mal-intencionado ou curioso na rede interna.
 
-**9 fixes planejados (NÃO implementados ainda):**
+**9 fixes planejados (NAO implementados ainda):**
 
 1. **IP Pinning UDP (network.py `_handle_packet`)** — se `ip` declarado no announce diverge do IP real do socket, corrige para o real. Elimina envenenamento de roteamento.
 
-2. **IP Pinning TCP (messenger.py `_on_tcp_message`)** — verifica que `from_user` veio do IP cadastrado para esse user_id. Rejeita silenciosamente se divergir. Exceção: peers VPN com `ts_ip`.
+2. **IP Pinning TCP (messenger.py `_on_tcp_message`)** — verifica que `from_user` veio do IP cadastrado para esse user_id. Rejeita silenciosamente se divergir. Excecao: peers VPN com `ts_ip`.
 
-3. **Rate Limiting por IP (network.py)** — janela deslizante 10s/10 pacotes UDP por IP. Máximo 30 conexões TCP/min por IP. Previne DDoS interno.
+3. **Rate Limiting por IP (network.py)** — janela deslizante 10s/10 pacotes UDP por IP. Maximo 30 conexoes TCP/min por IP. Previne DDoS interno.
 
-4. **Replay Protection (network.py / messenger.py)** — rejeita `MT_MESSAGE`, `MT_FILE_OFFER`, `MT_MEETING_INVITE` com timestamp > 120s no passado ou > 30s no futuro. Não aplica a `MT_ANNOUNCE`.
+4. **Replay Protection (network.py / messenger.py)** — rejeita `MT_MESSAGE`, `MT_FILE_OFFER`, `MT_MEETING_INVITE` com timestamp > 120s no passado ou > 30s no futuro. Nao aplica a `MT_ANNOUNCE`.
 
-5. **HMAC com Chave de Rede (network.py + database.py + gui.py)** — chave gerada em `secrets.token_hex(32)` na primeira execução, salva em settings `network_hmac_key`. Campo `sig` em cada pacote. Modo degradado (aceita sem `sig`) para rollout gradual. UI em Ferramentas > Segurança de Rede para copiar/colar chave entre PCs.
+5. **HMAC com Chave de Rede (network.py + database.py + gui.py)** — chave gerada em `secrets.token_hex(32)` na primeira execucao, salva em settings `network_hmac_key`. Campo `sig` em cada pacote. Modo degradado (aceita sem `sig`) para rollout gradual. UI em Ferramentas > Seguranca de Rede para copiar/colar chave entre PCs.
 
 6. **MT_PEER_LIST Subnet Filter (network.py)** — rejeita IPs fora da subnet /24 local, Tailscale (100.x.x.x) ou manual_peers cadastrado. Usa `ipaddress.ip_network`.
 
-7. **Validação IP em manual_peers (database.py)** — `ipaddress.ip_address(ip)` antes de INSERT. Rejeita hostnames e strings inválidas.
+7. **Validacao IP em manual_peers (database.py)** — `ipaddress.ip_address(ip)` antes de INSERT. Rejeita hostnames e strings invalidas.
 
-8. **Block List (database.py + messenger.py + gui.py)** — nova tabela `block_list`. Clique direito em contato → "Bloquear usuário". Ferramentas > Usuários Bloqueados para gerenciar. Peer bloqueado some da lista e é ignorado em todos os handlers.
+8. **Block List (database.py + messenger.py + gui.py)** — nova tabela `block_list`. Clique direito em contato → "Bloquear usuario". Ferramentas > Usuarios Bloqueados para gerenciar. Peer bloqueado some da lista e e ignorado em todos os handlers.
 
 9. **SHA256 no Auto-Update (updater.py + build.py)** — `build.py` publica hash no release body. `updater.py` verifica antes de aplicar. Abort com `showerror` se divergir.
 
-**Fora do escopo:** TLS no TCP, SQLCipher, PKI/ECDSA por usuário.
+**Fora do escopo:** TLS no TCP, SQLCipher, PKI/ECDSA por usuario.
 
-## Superpoderes Admin + Senha Segura (v1.8.18 — WIP, NÃO lançada ainda)
+## Superpoderes Admin + Senha Segura (v1.8.18 — WIP, NAO lancada ainda)
 
-Commit: `a3a0363` — branch main, aguardando validação e release pelo usuário.
+Commit: `a3a0363` — branch main, aguardando validacao e release pelo usuario.
 
 ### O que foi implementado (gui.py + network.py)
 
 **Senha admin segura (substituiu hardcode `1234512345`):**
-- **Primeiro acesso:** formulário "Defina uma senha para esta instalação" — cada instalação tem senha própria
+- **Primeiro acesso:** formulario "Defina uma senha para esta instalacao" — cada instalacao tem senha propria
 - Hash SHA256 salvo em `db.get_setting('admin_password_hash')` via `database.py`
 - Login normal: compara SHA256(entrada) com hash salvo
-- **Reset:** criar arquivo vazio `%APPDATA%\.mbchat\admin_reset` → na próxima abertura do Admin, hash é apagado e volta ao formulário de criação
-- Botão "Mudar Senha Admin" visível no painel desbloqueado (seção Segurança)
+- **Reset:** criar arquivo vazio `%APPDATA%\.mbchat\admin_reset` → na proxima abertura do Admin, hash e apagado e volta ao formulario de criacao
+- Botao "Mudar Senha Admin" visivel no painel desbloqueado (secao Seguranca)
 
-**Monitor de versões:**
-- `network.py`: campo `'version': pkt.get('version', '')` adicionado ao dict `peer_info` nos dois lugares onde ele é montado (announce direto ~linha 864 e peer_list ~linha 808)
-- Cada peer card no Admin mostra `v{versão}` em cinza (atualizado) ou **vermelho** (desatualizado vs `APP_VERSION`)
+**Monitor de versoes:**
+- `network.py`: campo `'version': pkt.get('version', '')` adicionado ao dict `peer_info` nos dois lugares onde ele e montado (announce direto ~linha 864 e peer_list ~linha 808)
+- Cada peer card no Admin mostra `v{versao}` em cinza (atualizado) ou **vermelho** (desatualizado vs `APP_VERSION`)
 
 **Auditoria de conversas (por peer card):**
-- Botão "Ver conversa" → Toplevel read-only com histórico completo (todos os `get_messages_with_peer`)
-- Botão "Exportar" → `filedialog.asksaveasfilename` → TXT com timestamps `[dd/mm/yyyy HH:MM] Remetente: texto`
+- Botao "Ver conversa" → Toplevel read-only com historico completo (todos os `get_messages_with_peer`)
+- Botao "Exportar" → `filedialog.asksaveasfilename` → TXT com timestamps `[dd/mm/yyyy HH:MM] Remetente: texto`
 
 **Busca global de mensagens:**
-- Seção "Busca em Todas as Conversas" após stats row
-- Campo Entry + botão Buscar (ou Enter) → `db.search_all_messages(q, limit=200)`
-- Resultados agrupados por contato (até 10 peers, até 3 msgs por peer)
-- Após renderizar resultados: chama `_bind_wheel(inner)` para manter scroll funcionando
+- Secao "Busca em Todas as Conversas" apos stats row
+- Campo Entry + botao Buscar (ou Enter) → `db.search_all_messages(q, limit=200)`
+- Resultados agrupados por contato (ate 10 peers, ate 3 msgs por peer)
+- Apos renderizar resultados: chama `_bind_wheel(inner)` para manter scroll funcionando
 
 **Superadmin de grupos:**
-- Seção "Grupos Ativos": cada grupo tem botões "Ver membros" e "Deletar"
+- Secao "Grupos Ativos": cada grupo tem botoes "Ver membros" e "Deletar"
 - "Ver membros" → Toplevel com lista (★ = admin)
-- "Deletar" → `messenger.delete_group_globally(gid)` — funciona para qualquer grupo, não só os criados pelo admin
+- "Deletar" → `messenger.delete_group_globally(gid)` — funciona para qualquer grupo, nao so os criados pelo admin
 
 ### O que FALTA para fechar v1.8.18
-- Validação manual completa: senha (primeiro acesso → login → mudar → reset), monitor versão com peer desatualizado, busca, exportar TXT, grupos
-- Após validação: `git commit` de qualquer ajuste + `python build.py --version 1.8.18 --release`
+- Validacao manual completa: senha (primeiro acesso → login → mudar → reset), monitor versao com peer desatualizado, busca, exportar TXT, grupos
+- Apos validacao: `git commit` de qualquer ajuste + `python build.py --version 1.8.18 --release`
 - Notas de release humanizadas para o sino do app
 
 ## Transferencia de Arquivos — Fixes de file_port + Persistencia da Lista (commit fd9961e)
@@ -461,43 +480,43 @@ schtasks /delete /s IP_DO_PC /tn "FixMBChat" /f
 
 1. **Proxy de Descoberta VPN (Announce Relay)**: 
    - Resolvido o problema de visibilidade de peers em redes remotas (Tailscale).
-   - O PC Âncora no escritório recebe o "unicast announce" (contendo a flag `via_manual: True` e o IP `ts_ip`) da máquina remota.
-   - A Âncora então age como Relay: altera a flag para `False`, substitui o IP pelo IP Tailscale remoto, e retransmite (multicast/broadcast) esse anúncio para a rede local da empresa. 
-   - Resultado: Todos os computadores do escritório (mesmo os que não têm o IP da máquina remota configurado manualmente) "descobrem" a máquina externa automaticamente com o IP do túnel, permitindo comunicação bidirecional perfeita sem sobrecarregar a rede primária com conflitos de sub-rede.
+   - O PC Ancora no escritorio recebe o "unicast announce" (contendo a flag `via_manual: True` e o IP `ts_ip`) da maquina remota.
+   - A Ancora entao age como Relay: altera a flag para `False`, substitui o IP pelo IP Tailscale remoto, e retransmite (multicast/broadcast) esse anuncio para a rede local da empresa. 
+   - Resultado: Todos os computadores do escritorio (mesmo os que nao tem o IP da maquina remota configurado manualmente) "descobrem" a maquina externa automaticamente com o IP do tunel, permitindo comunicacao bidirecional perfeita sem sobrecarregar a rede primaria com conflitos de sub-rede.
 
 2. **Updates em Tempo Real (P2P)**:
-   - Pacotes de `MT_ANNOUNCE` agora carregam a versão atual do app remoto.
-   - O receiver compara as versões local e remota; se a remota for mais recente, exibe um Toast e incrementa o "sininho" de atualização sem precisar aguardar a verificação via GitHub (background).
+   - Pacotes de `MT_ANNOUNCE` agora carregam a versao atual do app remoto.
+   - O receiver compara as versoes local e remota; se a remota for mais recente, exibe um Toast e incrementa o "sininho" de atualizacao sem precisar aguardar a verificacao via GitHub (background).
 
-3. **Correções de Usabilidade (Dropdown Sino)**:
-   - **Bug do Badge Vazio:** O `_bell_badge` (crachá vermelho de notificações) não estava propagando cliques, causando um bug onde clicar exatamente no número "1" ignorava o evento, impedindo a abertura do pop-up. Corrigido adicionando binding de `<Button-1>` ao próprio label do crachá.
-   - **Instant FocusOut:** A janela Toplevel do dropdown (`overrideredirect`) apresentava um problema em que o evento residual do clique do mouse causava uma perda de foco prematura (`<FocusOut>`), fazendo o pop-up se fechar milissegundos após abrir. Foi resolvido retardando a inserção da rotina de `<FocusOut>` no ciclo de eventos usando `.after()`.
+3. **Correcoes de Usabilidade (Dropdown Sino)**:
+   - **Bug do Badge Vazio:** O `_bell_badge` (cracha vermelho de notificacoes) nao estava propagando cliques, causando um bug onde clicar exatamente no numero "1" ignorava o evento, impedindo a abertura do pop-up. Corrigido adicionando binding de `<Button-1>` ao proprio label do cracha.
+   - **Instant FocusOut:** A janela Toplevel do dropdown (`overrideredirect`) apresentava um problema em que o evento residual do clique do mouse causava uma perda de foco prematura (`<FocusOut>`), fazendo o pop-up se fechar milissegundos apos abrir. Foi resolvido retardando a insercao da rotina de `<FocusOut>` no ciclo de eventos usando `.after()`.
 
-## Arquitetura do Atualizador e Fixes Críticos (v1.8.22 - v1.8.23)
+## Arquitetura do Atualizador e Fixes Criticos (v1.8.22 - v1.8.23)
 
 Problemas resolvidos:
-1. **GitHub API Rate Limit**: PCs rodando a checagem em background a cada 30min esgotavam o limite de 60 req/h (HTTP 403 Forbidden). Isso "cegava" o botão Atualizar de funcionar.
-   - **Fix**: Se a variável self._pending_update estiver preenchida (ativada por outro peer na rede avisando que há versão nova), a checagem em background via API é **silenciada**. O limite de IP fica intacto para quando o usuário clicar no botão Atualizar.
+1. **GitHub API Rate Limit**: PCs rodando a checagem em background a cada 30min esgotavam o limite de 60 req/h (HTTP 403 Forbidden). Isso "cegava" o botao Atualizar de funcionar.
+   - **Fix**: Se a variavel self._pending_update estiver preenchida (ativada por outro peer na rede avisando que ha versao nova), a checagem em background via API e **silenciada**. O limite de IP fica intacto para quando o usuario clicar no botao Atualizar.
 
-2. **Permissões do PowerShell (UAC)**: O script PowerShell update.ps1 que o Python gerava tentava rodar o app novo via [System.Diagnostics.Process]::Start. Sem direitos de administrador, o app falhava silenciosamente e não reabria.
-   - **Fix**: O script update.ps1 foi mudado para utilizar o cmdlet nativo Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue. Isso roda de forma 100% lisa no nível do usuário atual.
+2. **Permissoes do PowerShell (UAC)**: O script PowerShell update.ps1 que o Python gerava tentava rodar o app novo via [System.Diagnostics.Process]::Start. Sem direitos de administrador, o app falhava silenciosamente e nao reabria.
+   - **Fix**: O script update.ps1 foi mudado para utilizar o cmdlet nativo Start-Process -FilePath "{target_exe}" -ArgumentList {args} -ErrorAction SilentlyContinue. Isso roda de forma 100% lisa no nivel do usuario atual.
 
-3. **UX da Atualização (Barra de Progresso e Botão OK)**: O app simplesmente sumia da tela por vários segundos enquanto baixava a versão nova, gerando confusão.
-   - **Fix**: Criada janela de atualização (progress bar borderless moderna) desenhada via Canvas em gui.py. 
-   - Ao bater 100%, a janela não fecha o app imediatamente. Ela exibe um botão "OK".
-   - Quando o usuário clica em "OK", o update.ps1 é executado injetando a flag --show.
-   - O novo MBChat.exe liga, lê o sys.argv, enxerga o --show e invoca pp.root.deiconify() + app.root.lift() para forçar a UI na tela (sobrescrevendo a rotina padrão de iniciar na bandeja).
+3. **UX da Atualizacao (Barra de Progresso e Botao OK)**: O app simplesmente sumia da tela por varios segundos enquanto baixava a versao nova, gerando confusao.
+   - **Fix**: Criada janela de atualizacao (progress bar borderless moderna) desenhada via Canvas em gui.py. 
+   - Ao bater 100%, a janela nao fecha o app imediatamente. Ela exibe um botao "OK".
+   - Quando o usuario clica em "OK", o update.ps1 e executado injetando a flag --show.
+   - O novo MBChat.exe liga, le o sys.argv, enxerga o --show e invoca pp.root.deiconify() + app.root.lift() para forcar a UI na tela (sobrescrevendo a rotina padrao de iniciar na bandeja).
 
-**Regras estritas para não quebrar o instalador novamente**:
-- NUNCA remover ou alterar a lógica de repasse do argumento --show no updater.py e em main() do gui.py. É ele quem garante a continuidade de UX.
-- NUNCA usar [System.Diagnostics.Process] no updater.py para relançar o aplicativo. Mantenha Start-Process.
-- NUNCA forçar requests à API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.
+**Regras estritas para nao quebrar o instalador novamente**:
+- NUNCA remover ou alterar a logica de repasse do argumento --show no updater.py e em main() do gui.py. E ele quem garante a continuidade de UX.
+- NUNCA usar [System.Diagnostics.Process] no updater.py para relancar o aplicativo. Mantenha Start-Process.
+- NUNCA forcar requests a API do GitHub se self._pending_update for avaliado como verdadeiro no loop de _schedule_periodic_update_check.
 
-## Transfer�ncia de Arquivos (v1.8.23+)
-- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transfer�ncia.
-- **Scroll Wheel Global:** O scroll na tela de transfer�ncias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inv�s do Canvas.
-- **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de ilename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
-- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transfer�ncias por nome do arquivo ou do contato.
+## Transferencia de Arquivos (v1.8.23+)
+- **Filtros e Scroll UI:** Adicionamos barra de filtros modernos (Todos, Recebidos, Enviados) na janela de Transferencia.
+- **Scroll Wheel Global:** O scroll na tela de transferencias agora escuta globalmente a janela via self.bind('<MouseWheel>') ao inves do Canvas.
+- **Paths Corrigidos:** O _open_entry_file foi fixado com fallback de filename + download_dir (Documents\MBFiles) para manter compatibilidade com registros antigos no DB cujo filepath era vazio.
+- **Barra de Pesquisa:** Adicionada barra minimalista de busca textual para filtrar transferencias por nome do arquivo ou do contato.
 
 ## Regra de Versionamento
 Ao desenvolver localmente, use o sufixo '-dev' na versao em version.py (ex: 1.8.23-dev). Isso impede que a rede P2P notifique erroneamente uma atualizacao aos outros usuarios durante a sua fase de teste. No momento do build/lancamento final da release, retire esse sufixo.
@@ -641,7 +660,7 @@ O Revo Uninstaller no modo **Avancado** varre o disco por arquivos "orfaos" e po
 ### Banco corrompido (DatabaseError: database disk image is malformed)
 
 Causa mais comum: copia do `.db` enquanto o MBChat estava aberto (WAL nao foi checkpointed).
-Fix: se tiver os tres arquivos (`.db` + `.db-wal` + `.db-shm`) da mesma sessao, restaurar os tres juntos e abrir o MBChat — o SQLite faz o checkpoint automaticamente e recupera os dados.
+Fix: se tiver os tres arquivos (`.db` + `.db-wal` + `.db-shm`) da mesma sessao, restaurar os tres juntos e abrir o MBChat — o SQLite faz o checkpoint automatico e recupera os dados.
 Se so tiver o `.db` sem os WAL files e estiver corrompido, os dados sao irrecuperaveis.
 
 ## Clean install no webinstaller (installer.iss)
