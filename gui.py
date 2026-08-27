@@ -805,10 +805,9 @@ def _show_msg_context_menu(host, x_root, y_root, items, on_emoji):
     menu.update_idletasks()
     mw = menu.winfo_reqwidth()
     mh = menu.winfo_reqheight()
-    sw = menu.winfo_screenwidth()
-    sh = menu.winfo_screenheight()
-    px = max(0, min(x_root, sw - mw - 4))
-    py = max(0, min(y_root, sh - mh - 4))
+    left, top, right, bottom = _get_monitor_bounds(host)
+    px = max(left, min(x_root, right - mw - 4))
+    py = max(top, min(y_root, bottom - mh - 4))
     menu.geometry(f'+{px}+{py}')
     menu.deiconify()
     menu.lift()
@@ -1315,12 +1314,69 @@ def _scan_entry_emojis(text_widget, emoji_cache, img_map, prefix='emoji', size=1
                 pass
 
 # Centraliza uma janela na tela.
+# Retorna (left, top, right, bottom) da area de trabalho do monitor FISICO
+# onde a janela `win` esta. winfo_screenwidth()/winfo_screenheight() do Tk no
+# Windows so enxergam o monitor PRIMARIO — em setups de 2+ monitores, qualquer
+# centralizacao/clamp de janela ou menu que use esses valores "puxa" a janela
+# de volta pro monitor primario mesmo quando o app inteiro esta no secundario.
+# Usa a API Win32 MonitorFromWindow/GetMonitorInfo para pegar os limites reais
+# do monitor onde `win` esta fisicamente. Fallback silencioso pro monitor
+# primario (comportamento antigo) se a API falhar ou `win` nao tiver hwnd.
+def _get_monitor_bounds(win):
+    try:
+        import ctypes
+        MONITOR_DEFAULTTONEAREST = 2
+
+        class RECT(ctypes.Structure):
+            _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                        ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [('cbSize', ctypes.c_ulong), ('rcMonitor', RECT),
+                        ('rcWork', RECT), ('dwFlags', ctypes.c_ulong)]
+
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        hmon = ctypes.windll.user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            r = info.rcWork
+            if r.right > r.left and r.bottom > r.top:
+                return r.left, r.top, r.right, r.bottom
+    except Exception:
+        pass
+    return 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()
+
+
+# Centraliza `win` (w x h) sobre seu pai (win.master) quando disponivel — usa
+# winfo_rootx/rooty do pai, que (ao contrario de winfo_screenwidth/height) SAO
+# coordenadas corretas de tela virtual multi-monitor. Sem pai mapeado, cai pro
+# centro do monitor de referencia. Sempre trava dentro dos limites do monitor
+# fisico onde o pai esta (_get_monitor_bounds) pra nunca nascer cortada perto
+# da borda de um monitor secundario menor que o primario.
 def _center_window(win, w, h):
     win.update_idletasks()
-    sx = win.winfo_screenwidth()
-    sy = win.winfo_screenheight()
-    x = (sx - w) // 2
-    y = (sy - h) // 2
+    parent = win.master
+    x = y = None
+    try:
+        if parent is not None and parent.winfo_exists() and parent.winfo_ismapped():
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            if pw > 1 and ph > 1:
+                x = parent.winfo_rootx() + (pw - w) // 2
+                y = parent.winfo_rooty() + (ph - h) // 2
+    except Exception:
+        x = y = None
+
+    ref_win = parent if (x is not None and parent is not None) else win
+    left, top, right, bottom = _get_monitor_bounds(ref_win)
+
+    if x is None:
+        x = left + (right - left - w) // 2
+        y = top + (bottom - top - h) // 2
+    else:
+        x = max(left, min(x, right - w))
+        y = max(top, min(y, bottom - h))
+
     win.geometry(f'{w}x{h}+{x}+{y}')
 
 
@@ -4857,13 +4913,14 @@ class ChatWindow(tk.Toplevel):
 
         # self._load_history()
 
-    # Callback do windnd: arquivos arrastados para a janela
+    # Callback do windnd: arquivos arrastados para a janela. Envia TODOS os
+    # arquivos soltos (nao so o primeiro) — cada _start_file_send e
+    # independente (file_id proprio, thread propria via FileSender).
     def _on_drop_files(self, files):
         for f in files:
             path = f.decode('utf-8') if isinstance(f, bytes) else str(f)
             if os.path.isfile(path):
                 self.app._start_file_send(self.peer_id, path)
-                break  # envia apenas o primeiro arquivo
 
     # Carrega e exibe as mensagens não lidas acumuladas desde o último acesso.
     # Após exibir, marca todas como lidas no banco de dados.
@@ -10818,13 +10875,14 @@ class GroupChatWindow(tk.Toplevel):
         _show_forward_dialog(self, self.app, self.messenger, messages,
                              exclude_group_id=self.group_id)
 
-    # Callback do windnd: arquivos arrastados para a janela do grupo
+    # Callback do windnd: arquivos arrastados para a janela do grupo. Envia
+    # TODOS os arquivos soltos (nao so o primeiro) — cada _start_group_file_send
+    # roda em thread propria.
     def _on_drop_files(self, files):
         for f in files:
             path = f.decode('utf-8') if isinstance(f, bytes) else str(f)
             if os.path.isfile(path):
                 self.app._start_group_file_send(self.group_id, path)
-                break
 
     # Extrai @mencoes do texto para enviar no payload
     def _extract_mentions(self, text):
@@ -12739,10 +12797,9 @@ class LanMessengerApp:
         px = min(px, rx + rw - mw - 2)
         px = max(px, rx + 2)
         py = self.root.winfo_rooty()
-        sw = menu.winfo_screenwidth()
-        sh = menu.winfo_screenheight()
-        px = max(0, min(px, sw - mw - 4))
-        py = max(0, min(py, sh - mh - 4))
+        left, top, right, bottom = _get_monitor_bounds(self.root)
+        px = max(left, min(px, right - mw - 4))
+        py = max(top, min(py, bottom - mh - 4))
         menu.geometry(f'+{px}+{py}')
         menu.deiconify()
         menu.lift()
@@ -13282,22 +13339,21 @@ class LanMessengerApp:
             tw_w = tw.winfo_reqwidth()
             tw_h = tw.winfo_reqheight()
             try:
-                sw = self.root.winfo_screenwidth()
-                sh = self.root.winfo_screenheight()
+                sx0, sy0, sw1, sh1 = _get_monitor_bounds(self.root)
             except Exception:
-                sw, sh = 1920, 1080
+                sx0, sy0, sw1, sh1 = 0, 0, 1920, 1080
             margin = 8
             x = x_root - tw_w - 14   # esquerda do cursor por padrao
-            if x < margin:
+            if x < sx0 + margin:
                 # Nao coube a esquerda: tenta a direita
                 x = x_root + 14
-                if x + tw_w > sw - margin:
-                    x = sw - tw_w - margin
+                if x + tw_w > sw1 - margin:
+                    x = sw1 - tw_w - margin
             y = y_root + 18
-            if y + tw_h > sh - margin:
+            if y + tw_h > sh1 - margin:
                 y = y_root - tw_h - 8
-                if y < margin:
-                    y = margin
+                if y < sy0 + margin:
+                    y = sy0 + margin
             tw.wm_geometry(f'+{x}+{y}')
             self._note_tip = tw
 
@@ -13989,8 +14045,7 @@ class LanMessengerApp:
             root_y = self.root.winfo_rooty()
             root_w = self.root.winfo_width()
             root_h = self.root.winfo_height()
-            screen_w = self.root.winfo_screenwidth()
-            screen_h = self.root.winfo_screenheight()
+            mon_left, mon_top, screen_w, screen_h = _get_monitor_bounds(self.root)
             note_y = self.note_entry.winfo_rooty()
 
             # 1) tenta DIREITA da janela principal
@@ -13998,7 +14053,7 @@ class LanMessengerApp:
                 x = root_x + root_w + 8
                 y = note_y - 20
             # 2) tenta ESQUERDA da janela principal
-            elif root_x - popup_w - 8 >= 0:
+            elif root_x - popup_w - 8 >= mon_left:
                 x = root_x - popup_w - 8
                 y = note_y - 20
             # 3) fullscreen / tela cheia: posiciona DENTRO da janela,
@@ -14007,9 +14062,9 @@ class LanMessengerApp:
                 x = root_x + root_w - popup_w - 12
                 y = note_y + self.note_entry.winfo_height() + 8
 
-            # Clamp pra nao sair do monitor
-            x = max(0, min(x, screen_w - popup_w))
-            y = max(40, min(y, screen_h - popup_h - 40))
+            # Clamp pra nao sair do monitor (fisico, onde a janela principal esta)
+            x = max(mon_left, min(x, screen_w - popup_w))
+            y = max(mon_top + 40, min(y, screen_h - popup_h - 40))
         except Exception:
             x = self.note_entry.winfo_rootx()
             y = self.note_entry.winfo_rooty() - popup_h - 10
@@ -16076,22 +16131,20 @@ class LanMessengerApp:
                        selectcolor='#e8f0fe', anchor='w',
                        command=toggle_all).pack(fill='x')
 
-        # Dedupe por display_name: prefere entrada NAO-offline (uid antigo de
-        # migracao costuma ficar travado em offline). Sem isso, peers aparecem
-        # em duplicidade se ainda existir um uid antigo no cache peer_info.
+        # So contatos ONLINE (mesmo criterio de _show_group_chat_dialog e
+        # _add_participants_dialog) — sem isso a lista mostrava tambem
+        # contatos offline e "fantasmas" que so restaram no historico local
+        # e nem usam mais o app, poluindo a selecao de transmissao/aviso.
+        # Dedupe por display_name (uid antigo de migracao pode duplicar).
         _dedup = {}  # name_lc -> (uid, info)
         for uid, info in self.peer_info.items():
-            name = info.get('display_name', uid)
             status = info.get('status', 'offline')
+            if status == 'offline':
+                continue
+            name = info.get('display_name', uid)
             key = name.strip().lower()
-            existing = _dedup.get(key)
-            if existing is None:
+            if key not in _dedup:
                 _dedup[key] = (uid, info)
-            else:
-                ex_status = existing[1].get('status', 'offline')
-                # Substitui se a nova entrada esta online e a anterior offline
-                if status != 'offline' and ex_status == 'offline':
-                    _dedup[key] = (uid, info)
         # Ordem alfabetica (case-insensitive) pra ficar consistente
         _peers_ordered = sorted(_dedup.values(),
                                  key=lambda t: t[1].get('display_name', '').lower())
@@ -18021,21 +18074,20 @@ class LanMessengerApp:
             top.update_idletasks()
             pw = top.winfo_reqwidth()
             ph = top.winfo_reqheight()
-            sh = top.winfo_screenheight()
-            sw = top.winfo_screenwidth()
+            mon_l, mon_t, sw, sh = _get_monitor_bounds(entry)
             ex = entry.winfo_rootx()
             ey = entry.winfo_rooty()
             eh = entry.winfo_height()
             y_down = ey + eh + 2
             if y_down + ph > sh - 10:
                 y = ey - ph - 2
-                if y < 10:
-                    y = max(10, sh - ph - 10)
+                if y < mon_t + 10:
+                    y = max(mon_t + 10, sh - ph - 10)
             else:
                 y = y_down
             x = ex
             if x + pw > sw - 10:
-                x = max(10, sw - pw - 10)
+                x = max(mon_l + 10, sw - pw - 10)
             top.geometry(f'+{x}+{y}')
 
             def _close_on_focus(e):
@@ -19366,12 +19418,7 @@ class LanMessengerApp:
         lbl_warn.pack(pady=(10, 10))
 
         try:
-            win.update_idletasks()
-            sx = win.winfo_screenwidth()
-            sy = win.winfo_screenheight()
-            x = (sx - 360) // 2
-            y = (sy - 190) // 2
-            win.geometry(f'360x190+{max(0, x)}+{max(0, y)}')
+            _center_window(win, 360, 190)
         except Exception:
             win.geometry('360x190')
         win.deiconify()
@@ -19470,12 +19517,7 @@ class LanMessengerApp:
 
         # Centraliza
         try:
-            win.update_idletasks()
-            sx = win.winfo_screenwidth()
-            sy = win.winfo_screenheight()
-            x = (sx - 380) // 2
-            y = (sy - 240) // 2
-            win.geometry(f'380x240+{max(0, x)}+{max(0, y)}')
+            _center_window(win, 380, 240)
         except Exception:
             win.geometry('380x240')
         win.deiconify()
@@ -19591,12 +19633,7 @@ class LanMessengerApp:
     # Centraliza o dialog no centro da tela (monitor principal).
     def _center_about_dialog(self, dlg, w, h):
         try:
-            dlg.update_idletasks()
-            sx = dlg.winfo_screenwidth()
-            sy = dlg.winfo_screenheight()
-            x = (sx - w) // 2
-            y = (sy - h) // 2
-            dlg.geometry(f'{w}x{h}+{max(0, x)}+{max(0, y)}')
+            _center_window(dlg, w, h)
         except Exception:
             dlg.geometry(f'{w}x{h}')
 
@@ -20495,10 +20532,17 @@ class LanMessengerApp:
     def _on_aviso(self, from_user, display_name, text, timestamp):
         if not hasattr(self, '_bell_alerts'):
             self._bell_alerts = []
+        title = f'Aviso de {display_name}'
         self._bell_alerts.append({'type': 'aviso',
-                                  'title': f'Aviso de {display_name}',
+                                  'title': title,
                                   'msg': text})
         self._refresh_bell_badge()
+        # Aviso e um alerta de transmissao — reusa som/gate de broadcast (mesmo
+        # toggle que o usuario ja controla em Preferencias > Alertas > Sons) e
+        # dispara notificacao nativa do Windows (toast + som), respeitando o
+        # gate mestre 'balloon_notify' ja aplicado dentro de _show_toast_generic.
+        SoundPlayer.play_msg_broadcast()
+        self._show_toast_generic('\U0001f4e2 ' + title, text)
 
     # Callback: indicador de digitacao recebido via TCP (MT_TYPING).
     #
