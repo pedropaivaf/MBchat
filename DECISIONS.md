@@ -1,0 +1,284 @@
+# MB Chat - Decisoes Tecnicas e Troubleshooting
+
+## PRINCÍPIO FUNDAMENTAL: ESTABILIDADE E NÃO-REGRESSÃO
+
+Toda e qualquer alteração no código deve seguir a **REGRA DE NÃO-QUEBRA**: o objetivo é implementar melhorias sem nunca introduzir regressões em funcionalidades que já estão estáveis. 
+
+> [!CAUTION]
+> Se uma nova funcionalidade ou correção causa efeitos colaterais (bugs em outras áreas), a alteração deve ser reavaliada e isolada imediatamente.
+
+---
+## Descoberta de peers (por que MBChat e mais confiavel que LAN Messenger)
+
+LAN Messenger tem bug onde peers somem em redes com VPN, Hyper-V, switches gerenciados ou filtros de multicast. MBChat resolveu com 5 decisoes que trabalham juntas — NAO afrouxar nenhuma sem entender o impacto:
+
+1. **Tri-broadcast** em `_send_announce()` (network.py:348): cada announce sai por 3 caminhos — multicast `239.255.100.200`, broadcast global `255.255.255.255` e subnet-directed broadcast (`_get_subnet_broadcast()`). Se multicast for filtrado, os broadcasts garantem entrega.
+2. **Anuncio imediato em eventos** (network.py:295-316): `update_status`/`update_name`/`update_note`/`update_avatar` chamam `_send_announce()` na hora, sem esperar o ciclo.
+3. **Anuncio no startup** (network.py:283): primeiro announce sai antes do loop periodico.
+4. **Deteccao correta de NIC** em `get_local_ip()`: rota real pro 8.8.8.8 + enumeracao + filtro de interfaces virtuais.
+5. **Ciclo curto** (`DISCOVERY_INTERVAL = 15`, `PING_TIMEOUT = 45`): NAO aumentar para 60s estilo LAN Messenger.
+
+## Troubleshooting de rede
+
+Se um PC nao descobre peers:
+1. **Firewall (v1.4.59+ auto-fix via UAC)**: o app detecta regras ausentes na 1a execucao e pede permissao. Se recusar, liberar manualmente em:
+   `Painel de Controle > Sistema e Seguranca > Windows Defender Firewall > Aplicativos permitidos` — marcar **MBChat** nas colunas **Particular** e **Publico**. Se nao aparecer, `Permitir outro aplicativo... > Procurar... > MBChat.exe`.
+   Via CLI (admin): `netsh advfirewall firewall add rule name="MBChat UDP In" dir=in action=allow protocol=UDP localport=50100,50110,50120 profile=any` + mesmo para TCP 50101,50102 (single-instance roda em porta loopback per-user — nao precisa de regra firewall). Ou rodar `tools/fix_firewall.bat` como admin.
+2. **Antivirus**: Kaspersky, Norton podem bloquear. Adicionar excecao.
+3. **Multiplas NICs**: VPN, Hyper-V, Docker criam interfaces virtuais. get_local_ip() tenta detectar a correta, mas pode pegar a errada. Desativar NICs virtuais resolve.
+4. **Subnet diferente**: PC deve estar na mesma subnet /24.
+5. **Porta ocupada**: Se 50100 ocupada, app tenta +10, +20, depois aleatoria. Porta aleatoria nao recebe broadcasts. Verificar com `netstat -an | findstr 50100`.
+7. **TCP 50102 bloqueado — envio de arquivo falha com "Erro"**: `FileReceiver` do destinatario pode estar em porta fallback (50112...) se 50102 ocupada, ou firewall bloqueia inbound 50102. Diagnose: `Test-NetConnection -ComputerName IP -Port 50102`. Se `TcpTestSucceeded: False` → criar regra: `netsh advfirewall firewall add rule name="MBChat TCP In" dir=in action=allow protocol=TCP localport=50101,50102 profile=any`. Fix permanente: instalador v1.8.18+ cria as regras automaticamente (PrivilegesRequired=admin). Fix remoto via admin de dominio: ver secao "Fix file_port dinamico" no CLAUDE.md.
+6. **Hyper-V / WinNAT reservando porta TCP 50101** (descoberto 2026-05): O Windows reserva faixas de porta dinamicamente para Hyper-V, WSL, Docker e WinNAT. Em alguns PCs a faixa 50101-50400 inteira fica reservada — o app nao consegue bindar em 50101, 50111 nem 50121, cai para porta dinamica (ex: 50078). Com porta dinamica, peer remoto nao sabe onde conectar E regra de firewall nao cobre a porta nova → mensagens nao chegam (outbound funciona, inbound nao).
+   Diagnose: `netsh int ipv4 show excludedportrange protocol=tcp` — se 50101 aparecer num range, e esse o problema.
+   Fix permanente (requer admin + reboot): `net stop winnat && netsh int ipv4 add excludedportrange protocol=tcp startport=50100 numberofports=5 && net start winnat` — protege 50100-50104 antes do Hyper-V reservar no proximo boot.
+   Fix imediato (sem reboot): `netsh advfirewall firewall add rule name="MBChat TCP In Dynamic" protocol=TCP dir=in localport=50060-50130 action=allow profile=any` — cobre o range de fallback.
+   Nota: o TCP_PORT_ANNOUNCE via UDP ja anuncia a porta real, entao peers que recebem o announce sabem a porta correta — o problema e o firewall bloquear a porta dinamica.
+
+## Decisoes de build
+
+- **--onedir** (NAO --onefile): --onefile causa "Failed to load Python DLL" no Win10 porque o loader de DLLs nao resolve dependencias dentro da pasta temporaria _MEI*.
+- **--noupx**: evita compressao que corrompe DLLs do VC runtime.
+- **PowerShell no auto-update**: usar `[Diagnostics.Process]::Start` com `UseShellExecute=$false` (CreateProcess herda env vars do pai). NUNCA usar `Start-Process`, `start ""` ou `explorer.exe` — usam ShellExecute que ignora env e causa "Failed to load Python DLL" em maquinas com caminho 8.3 no %TEMP%.
+- **_apply_and_restart()**: NAO pode ter messagebox antes de `os._exit()` — bloqueia o script e o move falha porque o exe fica travado.
+
+## VPN / Home-office — conexao externa para LAN do escritorio (v1.4.63+)
+
+**Problema:** multicast UDP (239.255.100.200) e broadcast (255.255.255.255) nao
+atravessam tuneis VPN L3. Um funcionario em home-office com VPN tem IP da rede
+interna mas nao enxerga os colegas pelo discovery padrao — so tcp unicast
+funciona naturalmente.
+
+**Solucao aditiva (nao quebra os 30 LAN-only):**
+
+1. Tabela `manual_peers (ip, note, created_at)` persistida em DB.
+2. Setting `vpn_enabled` (default `False`) no DB controla se os peers sao aplicados.
+3. `UDPDiscovery._manual_announce_loop` (thread 4, daemon) dorme DISCOVERY_INTERVAL
+   e envia announce unicast a cada IP em `_unicast_targets` se e somente se a
+   lista nao esta vazia. Lista vazia = zero overhead.
+4. `Messenger.set_vpn_enabled(True)` aplica os IPs salvos (chamada
+   `discovery.set_manual_peers(ips)`); `False` aplica lista vazia (para de
+   anunciar, mas mantem IPs no DB).
+5. **Peer exchange** via `MT_PEER_LIST`: quando o peer ancora recebe um
+   announce com flag `via_manual=True`, responde unicast com `{peers:[...]}`.
+   O cliente VPN adiciona esses IPs como `'auto'` targets (memoria only) e
+   passa a anunciar pra eles tambem. Resultado: 1 IP cadastrado = LAN inteira
+   visivel.
+
+**Defaults seguros:**
+- `vpn_enabled=False` por default (setting nao existe = retorna False)
+- Lista `manual_peers` vazia por default
+- Loop dorme e nao faz IO quando vazio
+- Caminho multicast/broadcast/subnet-broadcast intocado
+- Zero impacto nos 30 LAN users
+
+**Verificado com 9 cenarios end-to-end** (`audit_vpn.db` test):
+1. LAN normal sem config — comportamento original
+2. Cadastra peer com VPN off — persiste mas nao aplica
+3. Ativa VPN — aplica IPs salvos imediatamente
+4. Add novo peer com VPN on — novo IP aplicado imediatamente
+5. Desativa VPN — limpa targets ativos, IPs permanecem no DB
+6. Remove peer com VPN off — sem efeito colateral
+7. Religa — reaplica apenas peers restantes
+8. Fecha/reabre app — estado persiste (ON/OFF e lista)
+9. Lista vazia + VPN off — no crash
+
+**Por que peer exchange usa `'auto'` em memoria:** se persistisse, a lista
+cresceria sem controle (cada reinicio adicionaria todos os peers vistos).
+Memoria-only garante que so os peers ativos no ciclo atual ficam no loop —
+quando usuario desliga VPN e religa, so os `'manual'` persistidos sao
+reaplicados; os `'auto'` sao reconstruidos via peer exchange.
+
+## Single-instance lock por usuario (v1.4.64+)
+
+**Problema:** ate v1.4.63, `SINGLE_INSTANCE_PORT = 50199` era fixo. Em maquinas
+multi-usuario (PC compartilhado onde logins trocam), se o usuario A deixasse
+MBChat rodando em background e o usuario B entrasse, B nao conseguia abrir
+o app: `_check_single_instance()` detectava o lock TCP de A e saia silencioso
+via `os._exit(0)`. Pedro viveu esse bug em sua propria maquina apos outro
+login usar o app.
+
+**Fix:** porta deterministica por login Windows, dentro de `[50200, 51200)`:
+
+```python
+user = getpass.getuser().lower()
+h = int(hashlib.md5(user.encode()).hexdigest()[:8], 16)
+SINGLE_INSTANCE_PORT = 50200 + (h % 1000)
+```
+
+Cada usuario tem sua propria porta — `pedro.paiva` -> 50854,
+`guilherme.barra` -> 51054, etc. Sessoes diferentes nao colidem.
+
+**Nao reverter** para porta fixa. Nao diminuir o range de 1000 portas
+(colisoes explodem pelo paradoxo do aniversario).
+
+## Decisoes de arquitetura
+
+1. **1 usuario por maquina**: user_id = MAC + hostname, sem login/senha
+2. **Portas independentes do LAN Messenger**: 50100-50102 (LAN Messenger usa 50000-50002)
+3. **SQLite local, sem servidor central**: cada maquina e independente
+4. **tkinter nativo**: zero dependencias de GUI externas
+5. **Dependencias opcionais com graceful degradation**: PIL, pystray, winotify
+6. **Thread-safe by design**: root.after(), conexao SQL por thread, I/O em threads daemon
+7. **Chat limpo ao abrir**: historico via botao History
+8. **Contatos offline persistidos**: PCs ja vistos aparecem como offline
+9. **Firewall auto-config**: netsh na importacao de network.py
+10. **Protocolo URL customizado**: mbchat:// registrado em HKCU
+11. **Grupo mesh**: sem servidor de grupo, cada membro envia para todos via TCP
+12. **Emojis coloridos via PIL**: seguiemj.ttf com embedded_color=True
+
+## Ponto unico de entrega de mensagens
+
+### Chat individual
+`messenger._on_tcp_message` chama `db.save_message()` ANTES de disparar o callback `on_message`. Quando `_open_chat(surface_only=True)` cria a janela, ja carrega a mensagem via `get_unread_messages`. O callback `gui._on_message`/`_on_image` NAO deve chamar `cw.receive_message()` depois de `_open_chat(surface_only=True)` — duplica a msg. No branch "janela ja existe", chamar `receive_message` e correto.
+
+### Grupos
+Usam buffer `_pending_group_msgs` em memoria (nao DB). `_open_group` pop'a esse buffer ao criar a janela. `_on_group_message` NAO deve empurrar para o buffer antes do surface e DEVE chamar `gw.receive_message` na lambda `_create` apos o surface. Nao misturar os dois padroes.
+
+## Taskbar LAN Messenger-style
+
+AppUserModelID (`MBContabilidade.MBChat`) agrupa todas as janelas sob o mesmo icone na taskbar. Cada Toplevel recebe `WS_EX_APPWINDOW` via `_force_taskbar_entry()`. `_force_taskbar_entry` so faz o ciclo `SW_HIDE`+`SW_SHOWNA` se `winfo_ismapped()` — em janela withdrawn pula o SW_SHOWNA para evitar flash visivel.
+
+Quando mensagem chega com app no tray, `_surface_chat_from_tray()` cria janela oculta, aplica estilo sem SW_SHOWNA, minimiza via `SW_SHOWMINNOACTIVE` e pisca SOMENTE a propria janela. Root NAO pisca.
+
+## Notificacoes Windows (winotify)
+
+v1.4.54: para o clique no toast dispatchar o `launch`, Windows exige AUMID registrado via atalho Start Menu. `_ensure_start_menu_shortcut()` cria atalho em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\MB Chat.lnk` com `System.AppUserModel.ID = APP_AUMID` via `IPropertyStore`. Roda so em frozen, idempotente.
+
+v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `_open_from_notification(peer)` substitui `_restore_and_open` para notificacoes.
+
+## Decisão Técnica: Refatoração do Atualizador e Correções (v1.8.22 - v1.8.23)
+
+### O Problema
+1. O atualizador bloqueava devido ao **Rate Limit da API do GitHub** (60 req/h). O app rodava um timer a cada 30 min, consumindo o limite rapidamente em redes grandes com vários PCs saindo pelo mesmo IP.
+2. A reinstalação falhava em alguns PCs devido à falta de **permissões UAC** ao usar [System.Diagnostics.Process]::Start dentro do script PowerShell do atualizador, impedindo que o novo processo subisse.
+3. A experiência do usuário era ruim: a tela congelava, fechava, demorava vários segundos e não exibia nenhum sinal visual, gerando pânico e duplos cliques desnecessários.
+
+### A Solução Implementada
+
+1. **GitHub API (Mitigação do Limite):** Em gui.py, no loop de polling de atualizações em background, adicionou-se a regra de que se self._pending_update for True, o polling é pulado. Como o MB Chat tem um recurso P2P que "espalha" o aviso de atualização via rede local de forma instantânea (UDP), o primeiro PC a perceber a versão nova notifica todos os outros e desliga as checagens em background em massa na rede toda, economizando os requests do IP.
+
+2. **Substituição por Start-Process:** No updater.py, o script do PowerShell foi adaptado para usar o cmdlet Start-Process, que é nativo e menos suscetível a ser bloqueado por não possuir a janela de Prompt Interativa aberta quando usado com -WindowStyle Hidden e CreationFlags.
+
+3. **UX Aprimorada e "Restart Visível" (--show):** 
+   - A atualização agora exibe uma barra de progresso customizada via Canvas no tkinter.
+   - O término da cópia pausa a janela exibindo o botão "OK".
+   - Ao clicar em "OK", o update.ps1 é gerado e repassa o argumento --show para o novo MBChat.exe.
+   - O entry-point main() do app novo, se deparando com --show, anula o comportamento padrão de esconder o app na bandeja e o traz forçadamente para deiconify() e lift(), mantendo a continuidade lógica para o usuário.
+
+**ATENÇÃO ABSOLUTA PARA FUTURAS MODIFICAÇÕES:**
+- NUNCA reverter o parâmetro --show na pipeline de relançamento do atualizador.
+- NUNCA trocar o Start-Process por métodos nativos em C# (System.Diagnostics) novamente, sob pena de reintroduzir "processos fantasmas" que falham ao reabrir em perfis padrão de usuário Windows.
+
+## Refinamentos UI de Transfer�ncias de Arquivos
+- **Mousewheel e Filtros:** Melhorias UX implementadas na v1.8.23 para possibilitar a navega��o via scroll sem necessidade de hover em componentes e painel de segmenta��o nativo entre Recebidos e Enviados, em gui.py.
+- **Preven��o contra Bug do Explorer:** O explorador de arquivos do Windows abortava a sele��o (/select,) de arquivos com espa�o devido ao uso inseguro de subprocess do Python. Isso foi padronizado em todas as rotinas visuais de duplo-clique.
+- **Busca de Transfer�ncias:** Barra de busca em tempo real na aba de Transfer�ncias. Foi implementada varrendo o hist�rico em RAM ao inv�s de DB querries repetidas para evitar lentid�o.
+## Geometria de janelas: por que `_center_window` e do jeito que e (pos-v1.8.37)
+
+Tres armadilhas medidas. Todas ja foram cometidas uma vez — nao repetir.
+
+1. **Nunca ancorar janela filha no retangulo do pai.** A `root` vive no canto direito da tela
+   (`_position_right`, intocado desde a v1.0). Centralizar a filha sobre o pai — o que a v1.8.37 fez —
+   cola toda janela secundaria na principal. O pai serve so pra descobrir **em qual monitor**
+   centralizar; X/Y saem sempre da work area de `_get_monitor_bounds`.
+
+2. **A ordem `geometry -> alpha -> update_idletasks` e obrigatoria.**
+   - `geometry` antes de qualquer mapeamento: era o `update_idletasks` que mapeava a janela na
+     posicao/tamanho default (`mapped=1 viewable=1 pos=(112,135)`, 200x200) — a "mini janela branca"
+     que piscava no canto superior-esquerdo.
+   - `alpha` **depois** da geometry: aplicado antes, o Windows realiza o HWND cedo demais e joga a janela
+     no cascade padrao (`+156+156`), perdendo a centralizacao. So reproduz depois de algumas janelas
+     abertas/fechadas antes.
+   - `update_idletasks` nunca pode sair: sem ele `GetParent(winfo_id())` retorna 0 e
+     `_apply_rounded_corners`/`_force_taskbar_entry` falham calados
+     (`DwmSetWindowAttribute HRESULT=-2147024890`).
+
+3. **Esconder com `alpha`, nunca com `withdraw()`.** 8 dialogos chamam `grab_set()` depois do
+   `_center_window`; `grab_set` em janela nao-viewable levanta
+   `TclError: grab failed: window not viewable` e mata a modalidade. Com alpha a janela segue mapeada.
+   Janela que o caller ja escondeu (`state()=='withdrawn'`) e ignorada — senao quebra o `start_hidden`
+   do surfacing via tray.
+
+O reveal usa `after(0)` (timer) e nao `after_idle`: varios builders chamam `update_idletasks()` no meio da
+montagem, o que dispararia um handler idle cedo demais.
+
+Cobertura: `tests/test_center_window.py` (7) e `tests/test_window_reveal.py` (11).
+
+## Protocolo `mbchat://` em dev x producao
+
+`_register_url_protocol` roda no boot e reescreve `HKCU\Software\Classes\mbchat`. O ramo `frozen` registra
+`"<caminho>\MBChat.exe" "%1"` e esta correto. O ramo de **dev** precisa de tres coisas, senao o clique na
+notificacao nao funciona:
+
+1. **Caminho do script** junto do interpretador — sem ele o Windows chama `python.exe mbchat://open/UID`,
+   o Python trata a URL como nome de arquivo, o console pisca e fecha.
+2. **`pythonw.exe`** em vez de `python.exe` — senao um cmd preto aparece por cima da tela. Em producao nao
+   acontece porque o `MBChat.exe` e `--windowed`.
+3. **`--instance` preservado** — senao a URL cai na porta de single-instance da producao.
+
+**Atencao ao depurar em dev**: rodar `python gui.py` **sobrescreve** o registro do `MBChat.exe` instalado.
+A producao so se recupera quando o exe abre de novo e re-registra. Conferir o registro depois de testar.
+
+A cadeia toda (toast -> protocolo -> IPC loopback -> `_open_from_notification`) era silenciosa; agora loga
+4 etapas com prefixo `[NOTIF]` em `%APPDATA%\MBChat\mbchat.log`.
+
+## Restaurar janela de chat ja aberta
+
+`lift()` + `focus_force()` **nao** trazem de volta janela minimizada ou oculta. Como os chats sao
+restaurados **minimizados** no boot (`open_chats_on_exit` + `iconify()`), o branch "janela ja existe" de
+`_open_chat`/`_open_group` precisa de `deiconify()` + `state('normal')` antes do `lift()`. Nao
+re-centralizar janela ja existente — o usuario pode ter arrastado ela.
+
+## Editar arquivos .md: mesmo cuidado dos .py grandes
+
+O Edit tool ja converteu `CLAUDE.md` e `docs/DECISIONS.md` de LF para CRLF de uma vez so e, pior,
+**corrompeu 4 linhas pre-existentes** do DECISIONS.md que carregavam um byte latin-1 solto
+(`Transfer\xeancias` virou `Transfer\xef\xbf\xbdncias`, o replacement char U+FFFD). O estrago passa
+despercebido porque o texto renderiza parecido — so aparece comparando bytes contra o `HEAD`.
+
+Regra: editar os `.md` do projeto por script, lendo e gravando em **bytes**, detectando o newline
+dominante do arquivo e preservando-o. Depois conferir com `git diff --numstat` que o resultado e
+**adicao pura** (`N  0`); qualquer deducao diferente de zero significa que algo pre-existente foi
+reescrito. Se acontecer, reconstruir a partir de `git show HEAD:<arquivo>` em vez de tentar consertar
+a mao.
+
+## Auto-update: nunca apagar antes de ter a versao nova no lugar
+
+O `apply_update` apagava `_internal` e so depois copiava a versao nova. Sem ponto de retorno: uma
+falha no meio (antivirus, disco cheio, arquivo travado) deixava a pasta sem `_internal`, e o exe
+passava a falhar com *"Failed to load Python DLL"* em toda abertura seguinte — inclusive muito
+depois, sem o usuario estar atualizando nada.
+
+Regras que passam a valer:
+
+1. **Backup por `Rename-Item`, nunca `Remove-Item`.** Rename e reversivel e nao copia bytes. Se o
+   rename falhar (app ainda rodando), aborta sem ter alterado nada — estado melhor que o antigo,
+   que ja tinha destruido.
+2. **Rollback em qualquer falha depois do backup**, restaurando `_internal` **e** o exe juntos. Os
+   dois precisam ser sempre do mesmo par: a mistura e o que quebra o load da DLL.
+3. **Verificar o exe, nao so `_internal`.** O `Copy-Item` copia `_internal` antes do `MBChat.exe`
+   (ordem verificada), entao o check antigo — que so contava arquivos de `_internal` — deixava
+   passar `_internal` novo com exe velho.
+4. **Descartar os backups so depois** de todos os sanity checks. `.bak` orfao de execucao
+   interrompida e limpo no inicio da proxima.
+
+### `apply_update` nao espera o resultado
+
+Ela retorna `True` assim que o PowerShell e **lancado**. O `main()` entao sempre fazia
+`os._exit(0)`; se o script falhasse, o app fechava, o marcador continuava e o boot seguinte
+repetia — loop de "o app fecha sozinho e nao abre". Existe agora um contador de tentativas em
+`update_attempts.txt`, que desiste apos 3 e abre o app normal.
+
+O contador fica em arquivo **separado** de proposito: `is_update_pending()` faz `f.read().strip()`
+e devolve o conteudo inteiro do `update_pending.txt` como caminho — qualquer linha extra ali
+quebraria o parse.
+
+### O update que aplica e o da versao INSTALADA
+
+O `apply_update` que executa um salto e o congelado dentro do exe ja instalado. Qualquer melhoria
+aqui so protege a partir da versao seguinte. Para tirar a frota de uma versao sem rollback, o
+caminho seguro e o `MBChat_WebInstaller.exe` (URL fixa `releases/latest/download/MBChat_Setup.exe`,
+resolvida pelo GitHub na hora — o mesmo arquivo serve para sempre) ou o `tools/deploy_mbchat.ps1`.
+
+Cobertura: `tests/test_update_rollback.py`.
