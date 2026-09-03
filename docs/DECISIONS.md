@@ -174,3 +174,58 @@ v1.4.55: clique no toast abre apenas a janela do chat alvo sem restaurar root. `
 - **Mousewheel e Filtros:** Melhorias UX implementadas na v1.8.23 para possibilitar a navegação via scroll sem necessidade de hover em componentes e painel de segmentação nativo entre Recebidos e Enviados, em gui.py.
 - **Prevenção contra Bug do Explorer:** O explorador de arquivos do Windows abortava a seleção (/select,) de arquivos com espaço devido ao uso inseguro de subprocess do Python. Isso foi padronizado em todas as rotinas visuais de duplo-clique.
 - **Busca de Transferências:** Barra de busca em tempo real na aba de Transferências. Foi implementada varrendo o histórico em RAM ao invés de DB querries repetidas para evitar lentidão.
+## Geometria de janelas: por que `_center_window` e do jeito que e (pos-v1.8.37)
+
+Tres armadilhas medidas. Todas ja foram cometidas uma vez â€” nao repetir.
+
+1. **Nunca ancorar janela filha no retangulo do pai.** A `root` vive no canto direito da tela
+   (`_position_right`, intocado desde a v1.0). Centralizar a filha sobre o pai â€” o que a v1.8.37 fez â€”
+   cola toda janela secundaria na principal. O pai serve so pra descobrir **em qual monitor**
+   centralizar; X/Y saem sempre da work area de `_get_monitor_bounds`.
+
+2. **A ordem `geometry -> alpha -> update_idletasks` e obrigatoria.**
+   - `geometry` antes de qualquer mapeamento: era o `update_idletasks` que mapeava a janela na
+     posicao/tamanho default (`mapped=1 viewable=1 pos=(112,135)`, 200x200) â€” a "mini janela branca"
+     que piscava no canto superior-esquerdo.
+   - `alpha` **depois** da geometry: aplicado antes, o Windows realiza o HWND cedo demais e joga a janela
+     no cascade padrao (`+156+156`), perdendo a centralizacao. So reproduz depois de algumas janelas
+     abertas/fechadas antes.
+   - `update_idletasks` nunca pode sair: sem ele `GetParent(winfo_id())` retorna 0 e
+     `_apply_rounded_corners`/`_force_taskbar_entry` falham calados
+     (`DwmSetWindowAttribute HRESULT=-2147024890`).
+
+3. **Esconder com `alpha`, nunca com `withdraw()`.** 8 dialogos chamam `grab_set()` depois do
+   `_center_window`; `grab_set` em janela nao-viewable levanta
+   `TclError: grab failed: window not viewable` e mata a modalidade. Com alpha a janela segue mapeada.
+   Janela que o caller ja escondeu (`state()=='withdrawn'`) e ignorada â€” senao quebra o `start_hidden`
+   do surfacing via tray.
+
+O reveal usa `after(0)` (timer) e nao `after_idle`: varios builders chamam `update_idletasks()` no meio da
+montagem, o que dispararia um handler idle cedo demais.
+
+Cobertura: `tests/test_center_window.py` (7) e `tests/test_window_reveal.py` (11).
+
+## Protocolo `mbchat://` em dev x producao
+
+`_register_url_protocol` roda no boot e reescreve `HKCU\Software\Classes\mbchat`. O ramo `frozen` registra
+`"<caminho>\MBChat.exe" "%1"` e esta correto. O ramo de **dev** precisa de tres coisas, senao o clique na
+notificacao nao funciona:
+
+1. **Caminho do script** junto do interpretador â€” sem ele o Windows chama `python.exe mbchat://open/UID`,
+   o Python trata a URL como nome de arquivo, o console pisca e fecha.
+2. **`pythonw.exe`** em vez de `python.exe` â€” senao um cmd preto aparece por cima da tela. Em producao nao
+   acontece porque o `MBChat.exe` e `--windowed`.
+3. **`--instance` preservado** â€” senao a URL cai na porta de single-instance da producao.
+
+**Atencao ao depurar em dev**: rodar `python gui.py` **sobrescreve** o registro do `MBChat.exe` instalado.
+A producao so se recupera quando o exe abre de novo e re-registra. Conferir o registro depois de testar.
+
+A cadeia toda (toast -> protocolo -> IPC loopback -> `_open_from_notification`) era silenciosa; agora loga
+4 etapas com prefixo `[NOTIF]` em `%APPDATA%\MBChat\mbchat.log`.
+
+## Restaurar janela de chat ja aberta
+
+`lift()` + `focus_force()` **nao** trazem de volta janela minimizada ou oculta. Como os chats sao
+restaurados **minimizados** no boot (`open_chats_on_exit` + `iconify()`), o branch "janela ja existe" de
+`_open_chat`/`_open_group` precisa de `deiconify()` + `state('normal')` antes do `lift()`. Nao
+re-centralizar janela ja existente â€” o usuario pode ter arrastado ela.

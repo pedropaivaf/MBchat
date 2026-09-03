@@ -1348,36 +1348,73 @@ def _get_monitor_bounds(win):
     return 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()
 
 
-# Centraliza `win` (w x h) sobre seu pai (win.master) quando disponivel — usa
-# winfo_rootx/rooty do pai, que (ao contrario de winfo_screenwidth/height) SAO
-# coordenadas corretas de tela virtual multi-monitor. Sem pai mapeado, cai pro
-# centro do monitor de referencia. Sempre trava dentro dos limites do monitor
-# fisico onde o pai esta (_get_monitor_bounds) pra nunca nascer cortada perto
-# da borda de um monitor secundario menor que o primario.
-def _center_window(win, w, h):
-    win.update_idletasks()
-    parent = win.master
-    x = y = None
+# Centraliza `win` (w x h) na WORK AREA do monitor FISICO onde o app esta.
+# O pai (win.master) e usado APENAS para descobrir em qual monitor centralizar
+# (via _get_monitor_bounds) — NUNCA como origem de X/Y. Ancorar no retangulo do
+# pai colava toda janela secundaria na janela principal, que vive no canto
+# direito da tela (_position_right). Multi-monitor continua correto: o monitor
+# de referencia e o do pai/app, nao o primario.
+# w/h ausentes caem para winfo_reqwidth/reqheight (evita TypeError silencioso).
+def _center_window(win, w=None, h=None):
+    # ORDEM IMPORTA (medido, nao e estilo):
+    # 1) geometry ANTES de qualquer mapeamento. Era o update_idletasks() daqui
+    #    que mapeava a janela no tamanho/posicao default -- a "mini janela
+    #    branca" que aparecia no canto superior-esquerdo antes da janela real.
+    # 2) alpha DEPOIS da geometry. Aplicado antes, o Windows realiza o HWND
+    #    cedo demais e reposiciona a janela no cascade padrao (+156+156),
+    #    perdendo a centralizacao.
+    # 3) update_idletasks continua obrigatorio: e ele que faz o HWND existir
+    #    de verdade. Sem ele GetParent() retorna 0 e _apply_rounded_corners /
+    #    _force_taskbar_entry falham silenciosamente (cantos quadrados).
+    if w is None or h is None:
+        win.update_idletasks()  # so aqui precisa medir o tamanho pedido
+        if w is None:
+            w = win.winfo_reqwidth()
+        if h is None:
+            h = win.winfo_reqheight()
+
+    ref = win
     try:
+        parent = win.master
         if parent is not None and parent.winfo_exists() and parent.winfo_ismapped():
-            pw, ph = parent.winfo_width(), parent.winfo_height()
-            if pw > 1 and ph > 1:
-                x = parent.winfo_rootx() + (pw - w) // 2
-                y = parent.winfo_rooty() + (ph - h) // 2
+            ref = parent
     except Exception:
-        x = y = None
+        ref = win
 
-    ref_win = parent if (x is not None and parent is not None) else win
-    left, top, right, bottom = _get_monitor_bounds(ref_win)
-
-    if x is None:
-        x = left + (right - left - w) // 2
-        y = top + (bottom - top - h) // 2
-    else:
-        x = max(left, min(x, right - w))
-        y = max(top, min(y, bottom - h))
-
+    left, top, right, bottom = _get_monitor_bounds(ref)
+    x = left + (right - left - w) // 2
+    y = top + (bottom - top - h) // 2
+    x = max(left, min(x, right - w))
+    y = max(top, min(y, bottom - h))
     win.geometry(f'{w}x{h}+{x}+{y}')
+
+    # Invisibiliza enquanto o caller termina de montar os widgets; revela no
+    # proximo ciclo do event loop, com a janela ja pronta. Usa alpha e NAO
+    # withdraw porque 8 dialogos chamam grab_set() depois daqui, e grab_set em
+    # janela nao-viewable levanta TclError (quebraria a modalidade deles).
+    _hidden = False
+    try:
+        if win.state() != 'withdrawn':
+            win.attributes('-alpha', 0.0)
+            _hidden = True
+    except Exception:
+        _hidden = False  # sem suporte a alpha: segue como antes, sem quebrar
+
+    win.update_idletasks()
+
+    if _hidden:
+        # after(0) e evento de timer: NAO dispara em update_idletasks() feito
+        # no meio da montagem, so quando o builder devolve o controle ao loop.
+        def _reveal():
+            try:
+                if win.winfo_exists():
+                    win.attributes('-alpha', 1.0)
+            except Exception:
+                pass
+        try:
+            win.after(0, _reveal)
+        except Exception:
+            _reveal()  # sem event loop: revela na hora (nunca deixa invisivel)
 
 
 # Aplica bordas levemente arredondadas em uma janela via API DWM do Windows 11+.
@@ -14998,6 +15035,10 @@ class LanMessengerApp:
             gw = self.group_windows[group_id]
             if not surface_only:
                 gw.deiconify()   # exibe se estava oculta (hidden)
+                try:
+                    gw.state('normal')  # restaura se estava minimizada (iconic)
+                except Exception:
+                    pass
                 gw.lift()        # traz para frente de outras janelas
                 gw.focus_force() # forca o foco do sistema operacional
                 try:
@@ -15210,6 +15251,14 @@ class LanMessengerApp:
         if peer_id in self.chat_windows:  # janela de chat ja esta aberta?
             cw = self.chat_windows[peer_id]
             if not surface_only:
+                # lift() sozinho NAO traz de volta janela minimizada/oculta
+                # (ex: chats restaurados minimizados no boot). deiconify +
+                # state('normal') cobrem os casos iconic e withdrawn.
+                try:
+                    cw.deiconify()
+                    cw.state('normal')
+                except Exception:
+                    pass
                 cw.lift()        # traz para frente
                 cw.focus_force() # forca o foco
                 try:
@@ -21273,6 +21322,7 @@ class LanMessengerApp:
     # abrir a janela especifica (peer offline, grupo nao existe), cai no
     # _restore_and_open como fallback para pelo menos mostrar algo.
     def _open_from_notification(self, peer):
+        log.info('[NOTIF] _open_from_notification peer=%r', peer)
         if not peer:
             self._restore_and_open()
             return
@@ -21300,7 +21350,13 @@ class LanMessengerApp:
         cw = self._open_chat(peer)
         if cw is not None:
             self._bring_chat_window_to_front(cw)
+            try:
+                log.info('[NOTIF] chat aberto state=%s viewable=%s geom=%s',
+                         cw.state(), cw.winfo_viewable(), cw.geometry())
+            except Exception:
+                pass
         else:
+            log.warning('[NOTIF] _open_chat retornou None para %r', peer)
             self._restore_and_open(peer)
 
     # Garante que uma janela de chat/grupo fique visivel, minimizavel e focada
@@ -21457,8 +21513,24 @@ def _register_url_protocol():
         # Funciona tanto em desenvolvimento (python gui.py) quanto como exe (PyInstaller)
         if getattr(sys, 'frozen', False):  # rodando como executavel frozen?
             exe_path = sys.executable      # caminho do .exe
+            cmd_prefix = f'"{exe_path}"'
         else:
             exe_path = sys.executable      # caminho do python.exe (desenvolvimento)
+            # pythonw.exe e a variante SEM console: sem isso o Windows abre um
+            # cmd preto por cima da tela ao ativar o protocolo. Em producao o
+            # MBChat.exe ja e --windowed, entao isso vale so pro dev.
+            _pyw = os.path.join(os.path.dirname(exe_path), 'pythonw.exe')
+            _launcher = _pyw if os.path.exists(_pyw) else exe_path
+            # Dev precisa do caminho do script tambem, senao o Windows chama
+            # `python.exe mbchat://open/UID` e o Python trata a URL como nome
+            # de arquivo (console pisca e fecha, chat nao abre).
+            _script = os.path.abspath(sys.argv[0])
+            cmd_prefix = f'"{_launcher}" "{_script}"'
+            # Preserva --instance para que a URL chegue na instancia certa
+            for _i, _a in enumerate(sys.argv):
+                if _a == '--instance' and _i + 1 < len(sys.argv):
+                    cmd_prefix += f' --instance {sys.argv[_i + 1]}'
+                    break
         # Cria a chave raiz do protocolo: HKCU\Software\Classes\mbchat
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                                r'Software\Classes\mbchat')
@@ -21471,7 +21543,7 @@ def _register_url_protocol():
         # Registra o comando que sera executado ao ativar o protocolo
         cmd_key = winreg.CreateKey(key, r'shell\open\command')
         winreg.SetValueEx(cmd_key, '', 0, winreg.REG_SZ,
-                          f'"{exe_path}" "%1"')  # %1 = a URL mbchat:// completa
+                          f'{cmd_prefix} "%1"')  # %1 = a URL mbchat:// completa
         winreg.CloseKey(cmd_key)
         winreg.CloseKey(key)
     except Exception:
@@ -21562,6 +21634,7 @@ def _start_instance_listener(app):
                 client.close()  # fecha a conexao imediatamente
                 if data.startswith('OPEN:'):  # comando para abrir chat/grupo especifico
                     peer_id = data[5:].strip()  # extrai uid ou group:gid
+                    log.info('[NOTIF] listener recebeu OPEN peer_id=%r', peer_id)
                     # Notificacao clicavel: abre SO a janela do chat, sem restaurar root
                     app.root.after(0, lambda p=peer_id: app._open_from_notification(p))
                 elif data == 'SHOW':  # comando para apenas mostrar a janela
@@ -21608,6 +21681,8 @@ def main():
                 peer_id = f'group:{gid}'                   # formato: group:GID
             elif '/open/' in arg:        # e uma URL de chat (mbchat://open/UID)?
                 peer_id = arg.split('/open/')[-1].strip('/')  # extrai o uid
+            log.info('[NOTIF] URL recebida: %r -> peer_id=%r (porta %d)',
+                     arg, peer_id, SINGLE_INSTANCE_PORT)
             try:
                 # Envia comando para a instancia ja em execucao via loopback
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -21616,8 +21691,10 @@ def main():
                 cmd = f'OPEN:{peer_id}' if peer_id else 'SHOW'
                 sock.sendall(cmd.encode())  # envia o comando
                 sock.close()
-            except Exception:
-                pass  # instancia nao respondeu: ignora e sai
+                log.info('[NOTIF] comando %r entregue a instancia ativa', cmd)
+            except Exception as e:
+                log.warning('[NOTIF] falhou entregar na porta %d: %s',
+                            SINGLE_INSTANCE_PORT, e)
             os._exit(0)  # usa os._exit para encerramento imediato e limpo
 
     if not _check_single_instance():  # ja existe outra instancia rodando?

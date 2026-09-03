@@ -14,10 +14,28 @@ import uuid
 _parser = argparse.ArgumentParser()
 _parser.add_argument('--index', type=int, default=1,
                      help='Numero do bot: 1=Bot de Teste (padrao), 2+=bots adicionais')
+_parser.add_argument('--target', default='',
+                     help='IP:UDP_PORT[:TCP_PORT] do app alvo. Use quando o discovery '
+                          'normal falha porque o SO reservou a faixa 50100+ (Hyper-V/'
+                          'WinNAT). Ex: 127.0.0.1:62732:52754')
+_parser.add_argument('--spam', type=float, default=0.0,
+                     help='Manda uma mensagem nao solicitada a cada N segundos (0=off). '
+                          'Serve pra testar toast/flash/render de mensagem recebida.')
 _args = _parser.parse_args()
 
 UDP_PORT = 50100
 MULTICAST_GROUP = '239.255.100.200'
+
+# --target IP:UDP[:TCP] -- rota direta pro app quando o discovery multicast/
+# broadcast nao chega (porta 50100 na faixa de exclusao do SO). Com isso o bot
+# anuncia direto no socket de recepcao do app e responde direto na porta TCP
+# real dele, sem depender de aprender nada via UDP.
+TARGET_IP = TARGET_UDP = TARGET_TCP = None
+if _args.target:
+    _tp = _args.target.split(':')
+    TARGET_IP = _tp[0]
+    TARGET_UDP = int(_tp[1]) if len(_tp) > 1 and _tp[1] else UDP_PORT
+    TARGET_TCP = int(_tp[2]) if len(_tp) > 2 and _tp[2] else None
 if _args.index <= 1:
     MOCK_UID = 'mock_peer_bot_teste'
     MOCK_NAME = 'Bot de Teste'
@@ -94,6 +112,9 @@ def listen_announces():
 
 
 def _reply_target(uid, fallback_ip):
+    # --target manda tudo direto pro app, sem depender de aprender porta via UDP.
+    if TARGET_TCP:
+        return TARGET_IP, TARGET_TCP
     # Porta real do peer (aprendida via UDP) -- fallback pra 50101 (o
     # default historico) so se nunca vimos o anuncio dele.
     with _peers_lock:
@@ -154,6 +175,10 @@ def send_announces():
         pass
 
     local_ip = get_local_ip()
+    # Com --target o app vai conectar de volta no IP que anunciamos; usar o
+    # mesmo IP do alvo (ex: 127.0.0.1) garante que a resposta chega no bot.
+    if TARGET_IP:
+        local_ip = TARGET_IP
     parts = local_ip.split('.')
     subnet_bcast = f"{parts[0]}.{parts[1]}.{parts[2]}.255" if len(parts) == 4 else '255.255.255.255'
 
@@ -186,6 +211,8 @@ def send_announces():
         ('255.255.255.255', UDP_PORT),
         ('127.0.0.1', UDP_PORT)
     ]
+    if TARGET_IP:
+        targets.append((TARGET_IP, TARGET_UDP))
     while True:
         data['time'] = time.time()
         pkt = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -251,6 +278,37 @@ def _handle_group_message(msg):
     send_group_message_to_all(group_id, f"Recebi no grupo: '{content}'. Teste OK! 🤌")
 
 
+# Manda mensagens nao solicitadas num intervalo fixo -- pra testar como o app
+# renderiza mensagem recebida (toast, flash da taskbar, bolha, badge de nao lido)
+# sem precisar de um humano do outro lado digitando.
+def spam_loop(interval):
+    n = 0
+    time.sleep(5)  # da tempo do app descobrir o bot antes da 1a mensagem
+    while True:
+        n += 1
+        now = time.strftime('%H:%M:%S')
+        base = {
+            'type': 'message',
+            'from_user': MOCK_UID,
+            'display_name': '🤖 ' + MOCK_NAME,
+            'msg_id': str(uuid.uuid4()),
+            'content': f'[auto #{n}] {now} — mensagem de teste de visualizacao 🤌',
+            'timestamp': time.time(),
+        }
+        if TARGET_TCP:
+            _tcp_send(MOCK_UID, TARGET_IP, base)  # _reply_target ignora o uid quando --target
+        else:
+            with _peers_lock:
+                peers = list(KNOWN_PEERS.items())
+            if not peers:
+                print(f"[Bot] spam #{n}: nenhum peer conhecido ainda, pulando")
+            for uid, info in peers:
+                p = dict(base)
+                p['to_user'] = uid
+                _tcp_send(uid, info['ip'], p)
+        time.sleep(interval)
+
+
 def handle_tcp_client(client_sock, addr):
     try:
         header = client_sock.recv(4)
@@ -294,8 +352,14 @@ def run_tcp_server():
 
 
 if __name__ == '__main__':
+    if _args.target:
+        print(f"[Bot] Modo --target: app em {TARGET_IP} (UDP {TARGET_UDP}"
+              + (f", TCP {TARGET_TCP}" if TARGET_TCP else "") + ")")
     t_ann = threading.Thread(target=send_announces, daemon=True)
     t_ann.start()
     t_listen = threading.Thread(target=listen_announces, daemon=True)
     t_listen.start()
+    if _args.spam and _args.spam > 0:
+        print(f"[Bot] Spam ligado: 1 mensagem a cada {_args.spam:g}s")
+        threading.Thread(target=spam_loop, args=(_args.spam,), daemon=True).start()
     run_tcp_server()

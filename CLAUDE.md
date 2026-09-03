@@ -1024,3 +1024,111 @@ mockado excluido da lista, online/ausente aparecem), notificacao+som do aviso (t
 `play_msg_broadcast` disparados, checado via monkeypatch), drop de 3 arquivos temporarios (3 chamadas de
 envio confirmadas, nao so 1). Build local + instalador Inno Setup + exe empacotado testados antes do
 release (ver checklist de release no historico de commits).
+
+## Posicao/abertura de janelas + notificacao clicavel (pos-v1.8.37, SEM release ainda)
+
+Cinco fixes em `gui.py`. Codigo pronto e commitado, **build/release/deploy pendentes** ate ordem explicita.
+
+### 1. REGRESSAO da v1.8.37: janelas secundarias colando na principal
+
+O fix multi-monitor da v1.8.37 fez `_center_window` centralizar **sobre o retangulo do pai**
+(`parent.winfo_rootx/rooty`). O pai e sempre a `root`, e a `root` e forcada pro **canto direito** da tela
+por `_position_right()` (intocado desde a v1.0) — entao toda janela secundaria passou a nascer colada na
+principal em vez de centralizada. O clamp `min(x, right - w)` so impedia sair do monitor, nao devolvia a
+centralizacao. Afetava tudo que usa `_center_window`: chats, grupos, Preferencias, Conta, Transferencias,
+Historico, Lembretes, Transmitir, Criar Grupo, Encaminhar, Diagnostico, VPN, Sobre, dialogos de update.
+
+**Fix**: volta a centralizar na **work area do monitor**; o pai serve APENAS pra descobrir em qual monitor
+(via `_get_monitor_bounds`), NUNCA como origem de X/Y. `_get_monitor_bounds`, `_position_right`,
+`_open_modern_menu`, `_show_msg_context_menu`, tooltips, date picker e emoji picker **nao foram tocados**.
+
+`w`/`h` viraram opcionais (fallback `winfo_reqwidth/reqheight`), corrigindo de quebra a chamada
+`_center_window(dlg)` sem args do Diagnostico de rede (existente desde a v1.4.59): levantava `TypeError`
+engolido por `try/except`, impedindo o `_apply_rounded_corners` seguinte. A janela **abria centralizada**
+(havia uma chamada correta antes) — o unico efeito era perder os cantos arredondados.
+
+### 2. "Mini janela branca" no canto superior-esquerdo (bug ANTIGO, nao da v1.8.37)
+
+Causa medida: o `update_idletasks()` dentro do `_center_window` **mapeia** a janela na posicao/tamanho
+default antes da geometry final e antes dos widgets existirem (`mapped=1 viewable=1 pos=(112,135)`, 200x200).
+
+**A ordem das 3 operacoes veio de medicao, nao de estilo — nao reordenar:**
+1. `geometry()` **antes** de qualquer mapeamento — a janela ja nasce no lugar certo.
+2. `attributes('-alpha', 0.0)` **depois** da geometry. Antes dela, o Windows realiza o HWND cedo demais e
+   joga a janela no cascade padrao (`+156+156`), perdendo a centralizacao.
+3. `update_idletasks()` continua **obrigatorio**: sem ele `GetParent(winfo_id())` retorna 0 e
+   `_apply_rounded_corners`/`_force_taskbar_entry` falham calados (`HRESULT=-2147024890`, cantos quadrados).
+
+Reveal agendado com `win.after(0, ...)` — evento de **timer**, que nao dispara em `update_idletasks()`
+feito no meio da montagem (varios builders fazem isso), so quando o builder devolve o controle ao loop.
+
+**Alpha e NAO `withdraw()`**: 8 dialogos chamam `grab_set()` DEPOIS do `_center_window`, e `grab_set` em
+janela nao-viewable levanta `TclError: grab failed: window not viewable`. Com alpha a janela segue mapeada.
+Janela que o caller ja escondeu (`state()=='withdrawn'`, padrao do `ChatWindow`/`AvatarCropDialog`) e
+**ignorada** — senao quebra o `start_hidden` do surfacing via tray.
+
+### 3. Chat/grupo minimizado nao restaurava no duplo-clique (bug ANTIGO)
+
+`lift()` + `focus_force()` **nao** trazem de volta janela minimizada. Como os chats sao restaurados
+**minimizados** no boot (`open_chats_on_exit` + `iconify()`), o duplo-clique so piscava na taskbar.
+**Fix**: `deiconify()` + `state('normal')` antes do `lift()` em `_open_chat` e `_open_group`. Nao
+re-centraliza janela existente (o usuario pode ter arrastado).
+
+### 4. Protocolo `mbchat://` registrado errado em DEV — e sobrescrevendo o de producao
+
+`_register_url_protocol` usava `sys.executable` nos **dois** ramos do `if frozen`. Em dev registrava
+`"python.exe" "%1"` **sem o caminho do script**: o Windows chamava `python.exe mbchat://open/UID`, o Python
+tratava a URL como nome de arquivo, um console piscava e fechava, e o chat nunca abria. **Pior**: rodar o
+app em dev **sobrescreve** a chave do `MBChat.exe` instalado, quebrando a notificacao da producao ate
+alguem reabrir o exe (que re-registra no boot).
+
+**Fix** (padrao que `_setup_autostart` ja usava certo): em dev o comando vira
+`"pythonw.exe" "<caminho do gui.py>" [--instance NOME] "%1"` — caminho do script (senao a URL vira nome de
+arquivo), `pythonw.exe` (senao cmd preto; em producao o exe ja e `--windowed`) e `--instance` preservado
+(senao cai na porta de single-instance da producao). **Producao nao muda**: ramo `frozen` continua
+`"<caminho>\\MBChat.exe" "%1"`.
+
+### 5. Logs `[NOTIF]` na cadeia da notificacao clicavel
+
+Todo o caminho toast -> protocolo -> IPC loopback -> abertura era `except: pass`, entao "clico em Abrir e
+nao acontece nada" nao deixava rastro. Agora loga 4 etapas em `%APPDATA%\MBChat\mbchat.log`. Fluxo
+completo validado em dev:
+
+```
+[NOTIF] URL recebida: 'mbchat://open/<uid>' -> peer_id='<uid>' (porta 50841)
+[NOTIF] listener recebeu OPEN peer_id='<uid>'
+[NOTIF] _open_from_notification peer='<uid>'
+[NOTIF] chat aberto state=normal viewable=1 geom=420x480+558+168
+```
+
+**Se o clique tambem falhar na versao instalada a causa e outra** (o registro de producao ja estava
+correto) — os logs passam a apontar em qual das 4 etapas parou.
+
+### Testes (2 suites novos, fora do mainloop, sem clique de mouse)
+
+- `tests/test_center_window.py` (7) — centralizacao no monitor primario e no secundario, janela maior que
+  o monitor (clamp), `w/h` ausentes, e a garantia de que a filha **nao** fica colada na root.
+- `tests/test_window_reveal.py` (11) — invisibilidade durante a montagem, reveal ao terminar,
+  `update_idletasks` no meio do build nao revelando cedo, **`grab_set()` apos `_center_window`**,
+  janela ja withdrawn nao sendo tocada, **centralizacao sobrevivendo ao cascade** e **`GetParent` valido
+  pros cantos arredondados**. As tres ultimas travam regressoes cometidas e detectadas durante este fix.
+
+Suites existentes seguem passando (slash menu 18, peer tcp port 10, display name 14, code block 5,
+reply hittest 15). **Total 80.**
+
+### `tools/mock_peer.py`: 2 flags novas
+
+- `--target IP:UDP[:TCP]` — fala direto com o app quando o discovery nao chega porque o SO reservou a
+  faixa 50100+ (reserva Hyper-V/WinNAT, ver DECISIONS.md); usa as portas de fallback reais do app.
+- `--spam N` — manda mensagem nao solicitada a cada N segundos, pra testar toast, flash da taskbar, badge
+  de nao-lido e render da bolha sem alguem digitando do outro lado.
+
+### NAO e regressao (verificado, deixado como esta)
+
+- **Posicao da janela principal nunca foi persistida** — `_position_right` e byte-a-byte identico ao
+  commit inicial (v1.0) e nenhum commit da historia salvou geometria. Ela reabre sempre no mesmo pixel
+  porque o calculo e deterministico, o que da a impressao de posicao salva.
+- **Clicar na notificacao nao restaura a janela principal** — decisao deliberada da v1.4.55
+  (`_open_from_notification` substituiu `_restore_and_open`), ja documentada em `docs/DECISIONS.md`.
+  A principal so volta pra taskbar via `_surface_chat_from_tray` (mensagem chegando com app na bandeja)
+  ou com `minimize_on_close=1`.
