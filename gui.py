@@ -21730,14 +21730,33 @@ def main():
         import updater
         pending_update_dir = updater.is_update_pending()
         if pending_update_dir:
-            log.info(f"Aplicando update pendente no boot: {pending_update_dir}")
-            if updater.apply_update(pending_update_dir):
-                os._exit(0)
-            else:
-                # Staging invalido/falhou: limpa o pending e SEGUE o boot normal.
-                # Nunca travar a abertura do app por um update pendente quebrado.
+            # apply_update() retorna True assim que o PowerShell e LANCADO —
+            # ela nao espera nem confere o resultado. Se o script falhar (UAC
+            # negado, antivirus, arquivo travado), o app fecha, o marcador
+            # continua la e o proximo boot tenta de novo: loop de "o app fecha
+            # sozinho e nao abre". O contador corta esse ciclo.
+            attempts = updater.bump_update_attempt()
+            if attempts > 3:
                 updater.clear_update_pending()
-                log.warning("Update pendente invalido — limpo; abrindo app normal")
+                updater.reset_update_attempts()
+                log.warning("Update pendente falhou %d vezes — desistindo e "
+                            "abrindo o app normal", attempts - 1)
+            else:
+                log.info("Aplicando update pendente no boot (tentativa %d): %s",
+                         attempts, pending_update_dir)
+                if updater.apply_update(pending_update_dir):
+                    os._exit(0)
+                else:
+                    # Staging invalido/falhou: limpa o pending e SEGUE o boot
+                    # normal. Nunca travar a abertura do app por um update
+                    # pendente quebrado.
+                    updater.clear_update_pending()
+                    updater.reset_update_attempts()
+                    log.warning("Update pendente invalido — limpo; "
+                                "abrindo app normal")
+        else:
+            # Sem update pendente: zera o contador (idempotente).
+            updater.reset_update_attempts()
     except Exception as e:
         log.error(f"Erro ao verificar update_pending no boot: {e}")
 

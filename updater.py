@@ -219,26 +219,66 @@ Log "Staging dir: {staging_dir}"
 Stop-Process -Name "MBChat" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 5
 
-# Remove _internal/ antiga com retry
+$internalDir = Join-Path "{target_dir}" "_internal"
+$bakInternal = Join-Path "{target_dir}" "_internal.bak"
+$targetExe = "{target_exe}"
+$bakExe = "{target_exe}.bak"
+
+# Restos de uma tentativa anterior interrompida
+if (Test-Path $bakInternal) {{ Remove-Item -Path $bakInternal -Recurse -Force -ErrorAction SilentlyContinue }}
+if (Test-Path $bakExe) {{ Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue }}
+
+# Volta ao estado anterior. Chamado em QUALQUER falha depois do backup.
+# Sem isso a pasta ficava com _internal novo + exe velho (ou sem _internal
+# nenhum), que e o que produz "Failed to load Python DLL" e deixa o app
+# quebrado em toda abertura seguinte, mesmo sem estar atualizando.
+function Restore-Backup {{
+    Log "ROLLBACK: restaurando versao anterior"
+    try {{
+        if (Test-Path $internalDir) {{
+            Remove-Item -Path $internalDir -Recurse -Force -ErrorAction SilentlyContinue
+        }}
+        if (Test-Path $bakInternal) {{
+            Rename-Item -Path $bakInternal -NewName "_internal" -ErrorAction Stop
+        }}
+        if (Test-Path $bakExe) {{
+            Copy-Item -Path $bakExe -Destination $targetExe -Force -ErrorAction Stop
+            Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue
+        }}
+        Log "ROLLBACK OK - app continua na versao anterior, funcionando"
+    }} catch {{
+        Log "ROLLBACK FALHOU: $_"
+    }}
+}}
+
+# Backup do _internal por RENAME (nao delete): reversivel e nao copia bytes.
 $ok = $false
 for ($i = 0; $i -lt 10; $i++) {{
     try {{
-        $internalDir = Join-Path "{target_dir}" "_internal"
         if (Test-Path $internalDir) {{
-            Remove-Item -Path $internalDir -Recurse -Force -ErrorAction Stop
+            Rename-Item -Path $internalDir -NewName "_internal.bak" -ErrorAction Stop
         }}
         $ok = $true
-        Log "Remove _internal OK"
+        Log "Backup _internal OK"
         break
     }} catch {{
-        Log "Remove falhou (tentativa $i): $_"
+        Log "Backup falhou (tentativa $i): $_"
         Start-Sleep -Seconds 2
     }}
 }}
 
 if (-not $ok) {{
-    Log "ERRO: nao conseguiu remover _internal"
+    Log "ERRO: nao conseguiu mover _internal (app ainda rodando?). Nada foi alterado."
     exit 1
+}}
+
+# Backup do exe por copia: se a substituicao falhar no meio, da pra voltar.
+if (Test-Path $targetExe) {{
+    try {{
+        Copy-Item -Path $targetExe -Destination $bakExe -Force -ErrorAction Stop
+    }} catch {{
+        Log "AVISO: nao consegui copiar backup do exe: $_"
+    }}
 }}
 
 # Copia novos arquivos
@@ -247,24 +287,47 @@ try {{
     Log "Copy OK"
 }} catch {{
     Log "ERRO ao copiar: $_"
+    Restore-Backup
     exit 1
 }}
 
 Start-Sleep -Seconds 1
 
-# Sanity check: _internal deve existir com pelo menos 50 arquivos
-$internalNew = Join-Path "{target_dir}" "_internal"
-$fileCount = (Get-ChildItem -Path $internalNew -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+# Sanity 1: _internal precisa existir com pelo menos 50 arquivos
+$fileCount = (Get-ChildItem -Path $internalDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
 if ($fileCount -lt 50) {{
-    Log "ERRO: _internal incompleto ($fileCount arquivos). Abortando lancamento."
+    Log "ERRO: _internal incompleto ($fileCount arquivos)"
+    Restore-Backup
     exit 1
 }}
-Log "Sanity OK: $fileCount arquivos em _internal"
+Log "Sanity _internal OK: $fileCount arquivos"
 
-# Limpa staging e arquivo de pending
+# Sanity 2: o exe precisa ter sido REALMENTE substituido. O Copy-Item copia
+# _internal ANTES do exe (ordem verificada), entao uma falha so no exe deixava
+# _internal novo + exe velho -- combinacao que quebra o load da DLL e passava
+# batido no check antigo, que so contava arquivos de _internal.
+$stagingExe = Join-Path "{staging_dir}" "MBChat.exe"
+if (Test-Path $stagingExe) {{
+    $srcLen = (Get-Item $stagingExe).Length
+    $dstLen = -1
+    if (Test-Path $targetExe) {{ $dstLen = (Get-Item $targetExe).Length }}
+    if ($srcLen -ne $dstLen) {{
+        Log "ERRO: MBChat.exe nao foi substituido (staging=$srcLen destino=$dstLen)"
+        Restore-Backup
+        exit 1
+    }}
+    Log "Sanity exe OK: $dstLen bytes"
+}}
+
+# Sucesso confirmado: descarta os backups
+Remove-Item -Path $bakInternal -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue
+
+# Limpa staging e marcadores
 Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'MBChat_update.zip')}" -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'update_pending.txt')}" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "{os.path.join(_UPDATE_DIR, 'update_attempts.txt')}" -Force -ErrorAction SilentlyContinue
 Log "Cleanup OK"
 
 # Remove executaveis antigos soltos para evitar conflito de atalhos e versoes
@@ -362,12 +425,49 @@ def check_update_async(callback):
     t.start()
 
 
+def _attempts_file():
+    return os.path.join(_UPDATE_DIR, 'update_attempts.txt')
+
+
+# Conta quantas vezes este update pendente ja foi tentado. Fica em arquivo
+# SEPARADO de proposito: is_update_pending() devolve o conteudo inteiro do
+# update_pending.txt como caminho, entao qualquer linha extra la quebraria.
+def bump_update_attempt():
+    path = _attempts_file()
+    n = 0
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                n = int((f.read() or '0').strip() or 0)
+    except Exception:
+        n = 0
+    n += 1
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(str(n))
+    except Exception as e:
+        log.warning(f'Nao consegui gravar contador de tentativas: {e}')
+    return n
+
+
+def reset_update_attempts():
+    try:
+        path = _attempts_file()
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def mark_update_ready(staging_dir):
     # Salva o caminho do update para ser aplicado no proximo boot
     pending_file = os.path.join(_UPDATE_DIR, 'update_pending.txt')
     try:
         with open(pending_file, 'w', encoding='utf-8') as f:
             f.write(staging_dir)
+        # Update novo comeca com o contador zerado, senao um contador velho
+        # de um update que falhou bloquearia um download bom.
+        reset_update_attempts()
         log.info(f'Update marcado como pronto: {pending_file}')
         return True
     except Exception as e:

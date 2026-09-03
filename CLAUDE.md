@@ -1149,3 +1149,91 @@ Testado com o app real rodando via `python gui.py --instance test` + dois bots
   (`_open_from_notification` substituiu `_restore_and_open`), ja documentada em `docs/DECISIONS.md`.
   A principal so volta pra taskbar via `_surface_chat_from_tray` (mensagem chegando com app na bandeja)
   ou com `minimize_on_close=1`.
+
+## Auto-update com rollback: fim do "Failed to load Python DLL" (pos-v1.8.37, SEM release ainda)
+
+### O bug
+
+`updater.apply_update` gerava um PowerShell que **apagava** `_internal` e so DEPOIS copiava a
+versao nova:
+
+```
+Remove-Item _internal -Recurse -Force     # ponto sem volta
+Copy-Item staging\* -> target
+```
+
+Qualquer falha entre os dois passos (antivirus, disco cheio, arquivo travado) deixava a pasta
+**sem `_internal`**, e a partir dai o `MBChat.exe` nunca mais abria: *"Failed to load Python DLL"*
+em TODA abertura, mesmo sem estar atualizando. Isso explica os dois sintomas relatados em producao
+("deu erro ao atualizar" e "as vezes sem atualizar tambem" — a maquina ja estava quebrada de um
+update anterior).
+
+Comprovado rodando o `apply_update` congelado da tag `v1.8.37` num sandbox e forcando a falha da
+copia: `rc=1  _internal existe=False  exe existe=True`.
+
+O sanity check antigo tambem nao ajudava: so contava arquivos de `_internal` (>= 50), **nunca
+verificava o exe**. Como o `Copy-Item` copia `_internal` ANTES do `MBChat.exe` (ordem verificada),
+uma falha so no exe deixava `_internal` novo + exe velho — combinacao que quebra o load da DLL e
+passava batido.
+
+### O fix
+
+1. **Backup por rename, nao delete**: `_internal` -> `_internal.bak` (reversivel, nao copia bytes)
+   + copia do exe em `MBChat.exe.bak`. Se o rename falhar (app ainda rodando), aborta **sem ter
+   alterado nada** — melhor que hoje, que ja tinha apagado.
+2. **`Restore-Backup`** chamada em QUALQUER falha depois do backup: devolve `_internal` e o exe
+   juntos. O app volta a versao anterior funcionando em vez de ficar quebrado.
+3. **Sanity novo do exe**: compara o tamanho do `MBChat.exe` de destino com o do staging. Se
+   divergir, faz rollback. Falso positivo aqui e inofensivo — no pior caso o update nao aplica e o
+   app segue na versao que funciona.
+4. **Backups descartados so depois** de os dois sanity checks passarem. `.bak` orfao de uma
+   execucao interrompida e limpo no inicio da proxima.
+5. **Contador de tentativas** (`bump_update_attempt` / `reset_update_attempts`): `apply_update`
+   retorna `True` assim que o PowerShell e LANCADO — ela nao espera nem confere o resultado, entao
+   o `main()` sempre fazia `os._exit(0)`. Se o script falhava, o app fechava, o marcador continuava
+   la e o proximo boot tentava de novo: loop de "o app fecha sozinho e nao abre". Agora desiste
+   apos 3 tentativas e abre o app normal. O contador fica em `update_attempts.txt` **separado** de
+   proposito — `is_update_pending()` devolve o conteudo inteiro do `update_pending.txt` como
+   caminho, entao qualquer linha extra ali quebraria o parse. `mark_update_ready` zera o contador
+   para um download novo nao herdar as falhas de um update velho.
+
+### ATENCAO: o rollback nao vale para o salto v1.8.37 -> proxima
+
+O `apply_update` que executa um update e o que esta **congelado dentro do exe instalado**. As 30
+maquinas em 1.8.37 tem o codigo antigo, sem rollback — a protecao so comeca a valer de 1.8.38 em
+diante. Sobra exatamente **um** update sem rede de seguranca.
+
+Auditoria do caminho congelado da v1.8.37 (rodando o codigo da tag contra um staging realista de
+1084 arquivos, com PowerShell de verdade):
+
+- aplica corretamente em condicoes normais: exe e `_internal` trocados, staging e pending limpos, `rc=0`
+- deteccao de versao OK (1.8.37 oferece 1.8.38 / 1.8.40 / 1.9.0; ignora 1.8.36 e a propria)
+- estrutura do zip do `build.py` bate com o `Copy-Item staging\*` (exe + `_internal/` na raiz)
+- SHA256 verificado quando publicado; ausente nao trava
+- **UAC negado e falha SEGURA**: o script segue sem admin, o `Remove-Item` em `Program Files` falha
+  nas 10 tentativas e sai com `exit 1` sem destruir nada
+
+**Forma recomendada de fazer esse salto: pedir para todos rodarem o `MBChat_WebInstaller.exe`.**
+O stub aponta para a URL fixa `releases/latest/download/MBChat_Setup.exe`, resolvida pelo GitHub na
+hora — **e sempre o mesmo arquivo**, nao precisa gerar nem redistribuir nada a cada versao. Assim
+ninguem passa pelo caminho sem rollback. Requer UAC (`PrivilegesRequired=admin`); onde os usuarios
+nao sao admin local, usar `tools/deploy_mbchat.ps1` (roda como SYSTEM, sem prompt).
+
+Se optar pelo botao do app mesmo assim: buildar com o **mesmo Python 3.14** (o `_internal`
+instalado tem `python314.dll`; trocar de minor piora o estrago de uma copia parcial) e deixar o
+`MBChat_Setup.exe` a mao. Um PC que quebrar **some da lista de contatos** (o app nao abre, entao
+nao anuncia na rede) — e assim que da pra identificar quem precisa de reinstalacao manual.
+
+### Testes
+
+`tests/test_update_rollback.py` (19 checks) monta pasta de install e staging reais e roda o
+`update.ps1` gerado com PowerShell de verdade: caminho feliz, copia falhando, `_internal`
+incompleto, exe nao substituido, `.bak` orfao e o contador de tentativas. O bloco de auto-elevacao
+UAC e o relancamento sao removidos do script no teste (o primeiro abriria prompt; o segundo esta
+fora do escopo da mudanca).
+
+Zero regressao: as suites existentes ficaram identicas ao baseline medido com `git stash`
+(`test_update_installer_fixes` 35/1 e `test_vpn_fixes` 9/1 antes e depois — as duas falhas sao
+pre-existentes). O check de guarda "os._exit(0) so dentro do if apply_update(...)" chegou a quebrar
+porque um `log.info` afastou as duas linhas; **o codigo foi reestruturado em vez de afrouxar o
+teste**.

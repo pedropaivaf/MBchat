@@ -242,3 +242,43 @@ dominante do arquivo e preservando-o. Depois conferir com `git diff --numstat` q
 **adicao pura** (`N  0`); qualquer deducao diferente de zero significa que algo pre-existente foi
 reescrito. Se acontecer, reconstruir a partir de `git show HEAD:<arquivo>` em vez de tentar consertar
 a mao.
+
+## Auto-update: nunca apagar antes de ter a versao nova no lugar
+
+O `apply_update` apagava `_internal` e so depois copiava a versao nova. Sem ponto de retorno: uma
+falha no meio (antivirus, disco cheio, arquivo travado) deixava a pasta sem `_internal`, e o exe
+passava a falhar com *"Failed to load Python DLL"* em toda abertura seguinte — inclusive muito
+depois, sem o usuario estar atualizando nada.
+
+Regras que passam a valer:
+
+1. **Backup por `Rename-Item`, nunca `Remove-Item`.** Rename e reversivel e nao copia bytes. Se o
+   rename falhar (app ainda rodando), aborta sem ter alterado nada — estado melhor que o antigo,
+   que ja tinha destruido.
+2. **Rollback em qualquer falha depois do backup**, restaurando `_internal` **e** o exe juntos. Os
+   dois precisam ser sempre do mesmo par: a mistura e o que quebra o load da DLL.
+3. **Verificar o exe, nao so `_internal`.** O `Copy-Item` copia `_internal` antes do `MBChat.exe`
+   (ordem verificada), entao o check antigo — que so contava arquivos de `_internal` — deixava
+   passar `_internal` novo com exe velho.
+4. **Descartar os backups so depois** de todos os sanity checks. `.bak` orfao de execucao
+   interrompida e limpo no inicio da proxima.
+
+### `apply_update` nao espera o resultado
+
+Ela retorna `True` assim que o PowerShell e **lancado**. O `main()` entao sempre fazia
+`os._exit(0)`; se o script falhasse, o app fechava, o marcador continuava e o boot seguinte
+repetia — loop de "o app fecha sozinho e nao abre". Existe agora um contador de tentativas em
+`update_attempts.txt`, que desiste apos 3 e abre o app normal.
+
+O contador fica em arquivo **separado** de proposito: `is_update_pending()` faz `f.read().strip()`
+e devolve o conteudo inteiro do `update_pending.txt` como caminho — qualquer linha extra ali
+quebraria o parse.
+
+### O update que aplica e o da versao INSTALADA
+
+O `apply_update` que executa um salto e o congelado dentro do exe ja instalado. Qualquer melhoria
+aqui so protege a partir da versao seguinte. Para tirar a frota de uma versao sem rollback, o
+caminho seguro e o `MBChat_WebInstaller.exe` (URL fixa `releases/latest/download/MBChat_Setup.exe`,
+resolvida pelo GitHub na hora — o mesmo arquivo serve para sempre) ou o `tools/deploy_mbchat.ps1`.
+
+Cobertura: `tests/test_update_rollback.py`.
