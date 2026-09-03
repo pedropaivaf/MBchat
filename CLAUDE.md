@@ -1116,6 +1116,23 @@ correto) — os logs passam a apontar em qual das 4 etapas parou.
 Suites existentes seguem passando (slash menu 18, peer tcp port 10, display name 14, code block 5,
 reply hittest 15). **Total 80.**
 
+### Validacao manual (feita, aprovada)
+
+Testado com o app real rodando via `python gui.py --instance test` + dois bots
+(`tools/mock_peer.py --target ... --spam 10`), cobrindo:
+
+- Preferencias, Conta, Transferencia de Arquivos, Historico e Lembretes abrindo **prontas e
+  centralizadas**, sem a mini janela branca no canto superior-esquerdo;
+- cantos arredondados preservados nessas janelas;
+- modais (Alterar Nome, Nota Privada) bloqueando a janela de tras — `grab_set` intacto;
+- clique em **Abrir** no toast do Windows abrindo o chat centralizado, **sem cmd preto**;
+- duplo-clique no contato abrindo o chat no centro com a principal na direita (lado a lado);
+- menus Ferramentas / Agendar / Transmitir e menu de contexto de mensagem ancorados no botao,
+  sem vazar da tela;
+- chat minimizado restaurando sozinho no duplo-clique do contato.
+
+**Pendente: apenas o build/release.** O codigo esta aprovado e commitado.
+
 ### `tools/mock_peer.py`: 2 flags novas
 
 - `--target IP:UDP[:TCP]` — fala direto com o app quando o discovery nao chega porque o SO reservou a

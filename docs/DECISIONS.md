@@ -229,3 +229,16 @@ A cadeia toda (toast -> protocolo -> IPC loopback -> `_open_from_notification`) 
 restaurados **minimizados** no boot (`open_chats_on_exit` + `iconify()`), o branch "janela ja existe" de
 `_open_chat`/`_open_group` precisa de `deiconify()` + `state('normal')` antes do `lift()`. Nao
 re-centralizar janela ja existente — o usuario pode ter arrastado ela.
+
+## Editar arquivos .md: mesmo cuidado dos .py grandes
+
+O Edit tool ja converteu `CLAUDE.md` e `docs/DECISIONS.md` de LF para CRLF de uma vez so e, pior,
+**corrompeu 4 linhas pre-existentes** do DECISIONS.md que carregavam um byte latin-1 solto
+(`Transfer\xeancias` virou `Transfer\xef\xbf\xbdncias`, o replacement char U+FFFD). O estrago passa
+despercebido porque o texto renderiza parecido — so aparece comparando bytes contra o `HEAD`.
+
+Regra: editar os `.md` do projeto por script, lendo e gravando em **bytes**, detectando o newline
+dominante do arquivo e preservando-o. Depois conferir com `git diff --numstat` que o resultado e
+**adicao pura** (`N  0`); qualquer deducao diferente de zero significa que algo pre-existente foi
+reescrito. Se acontecer, reconstruir a partir de `git show HEAD:<arquivo>` em vez de tentar consertar
+a mao.
