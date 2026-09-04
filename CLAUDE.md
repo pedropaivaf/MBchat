@@ -671,9 +671,16 @@ Em 27/mai/2026 o `installer.iss` foi reforcado para garantir **instalacao 100% l
 
 **Fase 1 - Pre-install (Pascal `CurStepChanged(ssInstall)`):**
 1. `taskkill /f /im MBChat.exe` — mata o app em qualquer lugar (mais robusto que o `CloseApplications=force` sozinho)
-2. Le do registro `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{MB-CHAT-APP}_is1` (e WOW6432Node + HKCU como fallback) o caminho do `unins000.exe`
-3. Roda o uninstaller anterior com `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPDATA` — desinstala a versao antiga sem prompt nenhum, e o `/SUPPRESSMSGBOXES` faz o MsgBox "manter historico?" retornar IDYES default → preserva os dados
-4. `taskkill` de novo (defensivo, caso o uninstaller tenha relancado algo)
+
+**CORRECAO (o texto abaixo descrevia o que foi REVERTIDO).** Os passos 2-4 originais
+(ler `unins000.exe` do registro e rodar o uninstaller da versao anterior com
+`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) **nao existem mais**: `GetUninstallerPath`
+e `UninstallPreviousVersion` foram removidos em `c18eb73` ("remove buggy uninstaller
+trigger"). Rodar o desinstalador da versao ANTIGA significa executar codigo Pascal de
+uma versao que ja se sabe bugada, e um travamento la abortava a atualizacao inteira.
+O Inno Setup sobrescreve os arquivos sozinho, e o `[InstallDelete]` (Fase 2) cobre os
+resquicios em locais nao-padrao. **Nao reintroduzir** — ha guarda automatica em
+`tests/test_update_installer_fixes.py::test_iss_no_uninstaller_trigger`.
 
 **Fase 2 - InstallDelete (limpeza de resquicios em locais nao-padrao):**
 
@@ -1237,3 +1244,79 @@ Zero regressao: as suites existentes ficaram identicas ao baseline medido com `g
 pre-existentes). O check de guarda "os._exit(0) so dentro do if apply_update(...)" chegou a quebrar
 porque um `log.info` afastou as duas linhas; **o codigo foi reestruturado em vez de afrouxar o
 teste**.
+
+## Gate de verificacao obrigatorio (`tools/prerelease_check.py`)
+
+A v1.8.37 saiu com uma regressao de posicionamento de janela que passou por todo o
+caminho sem ninguem reprovar: o codigo importava, o build gerou, a release subiu, e o
+problema so apareceu depois de instalado nas 30 maquinas. **Nao existia nenhum ponto
+obrigado a dizer "nao".** Agora existe um so, rodado em dois lugares.
+
+### O que o gate checa
+
+1. **Sintaxe** — `ast.parse` em todo `.py` da raiz, `tools/` e `tests/`.
+2. **Imports** — `gui, messenger, network, database, updater, version, audio_recorder`.
+3. **Suites de teste** — TODAS as `tests/test_*.py`, exit 0 obrigatorio (timeout 180s cada).
+4. **Invariantes de janela** (a regressao da .37) — `_center_window` nao pode usar
+   `winfo_rootx/rooty` (posicao do pai como origem → janela cola na root) nem
+   `winfo_screenwidth/height` (so enxerga o monitor primario); precisa resolver o
+   monitor por `_get_monitor_bounds`, esconder por alpha (nao `withdraw`, senao quebra
+   `grab_set` dos modais) e respeitar `state()=='withdrawn'` (senao quebra o
+   `start_hidden` do surfacing via bandeja).
+5. **Invariantes do auto-update** — backup por `Rename-Item`, `Restore-Backup` em todo
+   `exit 1` que nao declare "Nada foi alterado", sanity do exe, `CreateProcess` com
+   `Start-Process` de fallback, `--show`, contador de tentativas, `os._exit(0)` do boot
+   dentro do `if apply_update(...)` e `_on_ready` so com download bem-sucedido.
+6. **Versao** — `version.py` casa com `AppVersion`/`AppVerName` do `installer.iss`;
+   com `--release`, tambem exige ausencia do sufixo `-dev`.
+7. **Arvore git limpa** (so com `--release`) — impede publicar binario gerado de codigo
+   que nao esta no GitHub. `--allow-version-bump` libera apenas `version.py` e
+   `installer.iss`, que o proprio `build.py` acabou de escrever no bump.
+
+### Onde roda
+
+- **`build.py`** chama o gate ANTES de gerar qualquer artefato e aborta se fechar —
+  entao nem chega a existir exe/instalador pra alguem publicar por engano.
+  `--skip-checks` existe so pra build local de teste; publicar com ele e exatamente
+  como a v1.8.37 quebrou.
+- **`.github/workflows/ci.yml`** roda o mesmo script a cada push/PR em `windows-latest`
+  (o app e Windows-only: os testes de janela usam tkinter real e APIs Win32
+  `MonitorFromWindow`/`GetMonitorInfo`/DWM — em ubuntu nem carregariam). Em tag `v*`
+  roda tambem o modo `--release`.
+
+Uso manual: `python tools/prerelease_check.py` (dev) ou `--release` (publicacao).
+
+### Testes VISUAIS ficam fora do gate
+
+`tests/test_avatar_crop.py` e `tests/test_modern_pb.py` chamam `root.mainloop()` e
+esperam clique humano — travariam o gate pra sempre. Sao marcados no proprio arquivo
+com `MANUAL_TEST = True` e o gate os pula reportando como manuais. **Teste manual novo
+deve levar essa marca**; a deteccao e por marca, nao por lista, justamente pra ninguem
+precisar lembrar de editar o `prerelease_check.py`.
+
+### Armadilhas ja corrigidas no conjunto de testes (nao repetir)
+
+- **Teste que depende da rede de quem roda.** `test_vpn_relay.py` (testes 1 e 2) nunca
+  fixava `get_local_ip`, e a regra
+  `if is_vpn_subnet(local_ip) and is_private(declared): trust_declared = True` em
+  `network.py` trata `10.x`/`100.x`/`172.16-31.x` como "eu sou o cliente VPN". Resultado:
+  verde no escritorio (192.168.x), vermelho em hotspot de celular (172.20.x), VPN ligada
+  ou runner de CI. Use o helper `fixed_local_ip('192.168.0.11')` desse arquivo.
+- **Teste que engole excecao e sai 0.** `test_add_member.py` quebrava e continuava verde.
+  Todo teste precisa terminar com `sys.exit(0 if not FAIL else 1)`.
+- **Teste que abre o banco de PRODUCAO.** `Messenger()` chama `Database()` sem argumento,
+  que resolve `%APPDATA%\.mbchat\mbchat.db`. Redirecione `database.get_db_path` para um
+  arquivo temporario ANTES de importar `messenger`/`gui`.
+- **Limitacao de ambiente contada como FAIL.** O bind em UDP 50100 e impossivel em
+  maquina com reserva do SO (Hyper-V/WinNAT). Isso e `SKIP`, nao `FAIL` — vermelho
+  cronico por ambiente treina a ignorar vermelho, que e como uma regressao real passa.
+- **Teste cobrando codigo removido de proposito.** O check de
+  `RegDeleteKeyIncludingSubkeys` apontava pra dentro da rotina apagada em `c18eb73`.
+  Virou guarda invertida (`test_iss_no_uninstaller_trigger`): o gatilho nao pode voltar.
+
+### Como validar que o gate realmente pega uma regressao
+
+Reinjete o bug e confirme que fecha. Para a regressao da v1.8.37, trocar em
+`_center_window` o calculo por `ref.winfo_rootx() + ...` faz o gate reprovar por tres
+caminhos independentes: `test_center_window`, `test_window_reveal` e o invariante
+estatico. Reverta com `git checkout gui.py`.

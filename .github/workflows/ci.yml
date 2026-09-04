@@ -53,8 +53,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # O ambiente do runner e reportado ANTES do gate de proposito: quando algo
+      # falha so aqui e nao na maquina do dev, a causa costuma estar nestes
+      # numeros (resolucao da tela virtual, IP da maquina, DWM ativo ou nao).
+      - name: Ambiente do runner
+        run: python tools/ci_env_report.py
+
       - name: Gate (sintaxe, imports, testes, invariantes de janela e de update)
-        run: python tools/prerelease_check.py
+        shell: pwsh
+        run: |
+          # Tee pro summary: o resultado aparece na pagina do run, sem precisar
+          # abrir o log bruto (que exige permissao de admin no repo).
+          python tools/prerelease_check.py 2>&1 | Tee-Object -Variable saida
+          $code = $LASTEXITCODE
+          "## Gate de verificacao" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```'                    | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $saida                   | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```'                    | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          exit $code
 
       - name: Exigencias extras de publicacao (so em tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
