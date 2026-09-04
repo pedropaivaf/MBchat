@@ -180,20 +180,29 @@ def run():
     #     retorna 0 e _apply_rounded_corners falha calado -> cantos quadrados.
     # ---------------------------------------------------------------
     print('\n[7] HWND real disponivel (cantos arredondados aplicam)')
+    # O invariante do CODIGO e so este: o HWND tem que existir depois do
+    # _center_window. O retorno do DwmSetWindowAttribute e capacidade do SO —
+    # o proprio gui.py trata a ausencia dela como normal ("No Windows 10 ou
+    # anterior, a API nao existe e a excecao e silenciada"). Exigir HRESULT=0
+    # transformava maquina sem composicao DWM (Win10, sessao de CI, RDP) em
+    # FAIL por algo que o app ja tolera de proposito.
     try:
         import ctypes
         hparent = ctypes.windll.user32.GetParent(w.winfo_id())
         if hparent:
-            hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hparent, 33, ctypes.byref(ctypes.c_int(2)), 4)
-            if hr == 0:
-                ok(f'GetParent={hparent} e DwmSetWindowAttribute HRESULT=0')
-            else:
-                fail(f'DwmSetWindowAttribute HRESULT={hr} (cantos nao aplicam)')
+            ok(f'GetParent={hparent}: HWND real existe, _apply_rounded_corners aplica')
         else:
             fail('GetParent=0: janela sem HWND real, _apply_rounded_corners falharia')
+
+        try:
+            hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hparent, 33, ctypes.byref(ctypes.c_int(2)), 4)
+            print(f'  INFO  DwmSetWindowAttribute HRESULT={hr}'
+                  + ('' if hr == 0 else ' (sem cantos arredondados neste ambiente)'))
+        except Exception as e:
+            print(f'  INFO  API DWM indisponivel neste ambiente: {e}')
     except Exception as e:
-        print(f'  SKIP  sem API DWM disponivel: {e}')
+        fail(f'nao foi possivel resolver o HWND: {e}')
     w.destroy()
     gui._get_monitor_bounds = orig_bounds
 

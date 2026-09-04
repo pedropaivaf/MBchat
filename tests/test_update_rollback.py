@@ -71,6 +71,21 @@ def build_sandbox(base, internal_files=60):
     return inst, stg
 
 
+# O apply_update passa TODO caminho por updater._get_long_path() antes de
+# escrever no script PS - e o fix documentado pro caso 8.3 (conta
+# "nome.sobrenome" vira "PEDRO~1.PAI"). Entao o caminho que sai no PS pode nao
+# ser, string a string, o que entrou.
+#
+# Estes testes comparavam a string crua do tempfile.mkdtemp() com o conteudo do
+# PS. Na maquina do dev os dois batem (o temp nao e 8.3) e o teste passava; no
+# runner do CI o temp fica sob C:\Users\RUNNER~1\..., a comparacao falhava e o
+# teste virava falso-negativo - justamente na maquina que REPRODUZ a condicao
+# 8.3 pra qual o fix existe. Normalize sempre pelo mesmo helper do codigo.
+def _long(p):
+    import updater
+    return updater._get_long_path(p)
+
+
 def gen_script(base, inst, stg):
     # Gera o update.ps1 real, sem lancar o PowerShell.
     import updater
@@ -223,8 +238,11 @@ def caso_exe_nao_trocado():
         # nao substitui o exe.
         with open(ps, encoding='utf-8') as f:
             c = f.read()
-        c = c.replace('Copy-Item -Path "%s\\*"' % stg,
-                      'Copy-Item -Path "%s\\_internal"' % stg)
+        stg_ps = _long(stg)   # o PS carrega o caminho LONGO, nao o do mkdtemp
+        alvo = 'Copy-Item -Path "%s\\*"' % stg_ps
+        assert alvo in c, ('padrao do Copy-Item nao encontrado no PS gerado - '
+                           'o teste nao estaria simulando nada')
+        c = c.replace(alvo, 'Copy-Item -Path "%s\\_internal"' % stg_ps)
         with open(ps, 'w', encoding='utf-8') as f:
             f.write(c)
         rc, _ = run_ps(ps)

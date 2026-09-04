@@ -164,11 +164,19 @@ def test_updater_valid_staging_ps_script():
     else:
         fail(f'Placeholders nao-renderizados no PS: {leftovers}')
 
-    # O staging real deve aparecer literalmente no script (foi substituido)
-    if staging.replace('/', os.sep) in ps or staging in ps:
+    # O staging real deve aparecer literalmente no script (foi substituido).
+    # Compara com o caminho LONGO: apply_update passa tudo por _get_long_path,
+    # entao em maquina com 8.3 (ex.: runner do CI, sob C:\Users\RUNNER~1\...)
+    # a string crua do mkdtemp nunca casaria e o teste dava falso-negativo.
+    import updater as _upd
+    staging_longo = _upd._get_long_path(staging)
+    candidatos = {staging, staging.replace('/', os.sep),
+                  staging_longo, staging_longo.replace('/', os.sep)}
+    if any(c in ps for c in candidatos):
         ok('Caminho real do staging presente no PS (substituicao ok)')
     else:
-        fail('Caminho do staging nao aparece no PS')
+        fail('Caminho do staging nao aparece no PS',
+             f'procurado: {sorted(candidatos)}')
 
     shutil.rmtree(staging, ignore_errors=True)
     updater.clear_update_pending()
