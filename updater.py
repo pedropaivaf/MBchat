@@ -195,7 +195,7 @@ def apply_update(staging_dir, **kwargs):
 
     ps_content = f'''
 # Auto-elevacao: se nao tem admin, relanca como admin via UAC.
-# Necessario porque C:\Program Files\MBChat precisa de permissao elevada
+# Necessario porque C:\\Program Files\\MBChat precisa de permissao elevada
 # para deletar/copiar arquivos. O installer roda como admin (Inno Setup),
 # mas o updater roda como usuario normal.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -337,8 +337,8 @@ $roamingAppData = [Environment]::GetFolderPath("ApplicationData")
 
 $oldExes = @(
     Join-Path $userDesktop "MBChat.exe",
-    Join-Path $userAppData "Programs\MBChat.exe",
-    Join-Path $roamingAppData "MBChat\MBChat.exe",
+    Join-Path $userAppData "Programs\\MBChat.exe",
+    Join-Path $roamingAppData "MBChat\\MBChat.exe",
     Join-Path $roamingAppData "MBChat_new.exe"
 )
 

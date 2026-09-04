@@ -113,6 +113,20 @@ def check_imports():
         fail('falha ao importar modulos do app',
              (r.stderr or r.stdout).strip()[-600:])
 
+    # SyntaxWarning como erro. O caso concreto: o template PowerShell do
+    # updater.py e uma f-string normal, e "C:\\Program Files" tinha \P — escape
+    # invalido que o Python HOJE mantem literal (por isso o script funcionava)
+    # mas ja avisa que vai parar de funcionar. Num arquivo cujo unico produto e
+    # um script que substitui o app inteiro, "funciona por enquanto" nao serve.
+    r2 = subprocess.run([sys.executable, '-W', 'error::SyntaxWarning',
+                         '-c', 'import ' + ', '.join(IMPORTABLE)],
+                        cwd=ROOT, capture_output=True, text=True)
+    if r2.returncode == 0:
+        ok('nenhum SyntaxWarning (escapes invalidos em string) nos modulos')
+    else:
+        fail('SyntaxWarning ao importar — escape invalido em alguma string',
+             (r2.stderr or r2.stdout).strip()[-600:])
+
 
 # ─────────────────────────────────────────────────────────────
 # 3) Suites de teste — todas, exit 0 obrigatorio
