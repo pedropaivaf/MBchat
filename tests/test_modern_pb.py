@@ -2,6 +2,11 @@
 import tkinter as tk
 import time
 import threading
+# GATE: teste VISUAL/MANUAL. Chama root.mainloop() e fica esperando clique
+# humano - nunca termina sozinho. O tools/prerelease_check.py pula arquivos
+# com esta marca; rodar sem ela travava o gate (e abria janela na tela de
+# quem so queria verificar o codigo).
+MANUAL_TEST = True
 
 def run_mock_update():
     root = tk.Tk()

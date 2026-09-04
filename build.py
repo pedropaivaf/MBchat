@@ -366,6 +366,27 @@ def _interactive():
         print('Opcao invalida.')
 
 
+# Roda tools/prerelease_check.py. Devolve True se o gate abriu.
+#
+# POR QUE ISSO BLOQUEIA O BUILD
+# A v1.8.37 saiu com uma regressao de janela que passou por tudo: o codigo
+# importava, o build gerou, a release subiu — e so apareceu depois de instalada
+# nas 30 maquinas. Nao havia nenhum ponto no caminho obrigado a dizer "nao".
+# Agora ha: sem gate aberto, nao existe release.
+def _run_gate(release_mode):
+    script = os.path.join(HERE, 'tools', 'prerelease_check.py')
+    if not os.path.isfile(script):
+        print('AVISO: tools/prerelease_check.py nao encontrado — gate PULADO.')
+        return True
+    cmd = [sys.executable, script]
+    if release_mode:
+        cmd += ['--release', '--allow-version-bump']
+    print('\n' + '=' * 62)
+    print('  Rodando gate de verificacao antes de gerar artefatos...')
+    print('=' * 62)
+    return subprocess.run(cmd, cwd=HERE).returncode == 0
+
+
 def build():
     parser = argparse.ArgumentParser(description='Build MBChat.exe')
     parser.add_argument('--version', type=str, default=None,
@@ -376,6 +397,9 @@ def build():
                         help='Cria GitHub release com zip + instalador')
     parser.add_argument('--notes', type=str, default='',
                         help='Texto das release notes (substitui o padrao)')
+    parser.add_argument('--skip-checks', action='store_true',
+                        help='NAO USE para publicar: pula o gate de verificacao. '
+                             'Existe so para build local de teste.')
     args = parser.parse_args()
 
     if args.version is None and args.deploy is None and not args.release:
@@ -387,6 +411,17 @@ def build():
 
     version = _read_version()
     print(f'Build versao: {version}')
+
+    # Gate ANTES de gerar qualquer artefato: se algo esta quebrado, nem chega a
+    # existir exe/instalador/zip pra alguem publicar por engano.
+    if args.skip_checks:
+        print('\n*** ATENCAO: --skip-checks ativo. Gate de verificacao PULADO. ***')
+        if args.release:
+            print('*** Publicar sem o gate e exatamente como a v1.8.37 quebrou. ***')
+    elif not _run_gate(args.release):
+        print('\nBuild ABORTADO: o gate de verificacao reprovou (veja as falhas acima).')
+        print('Corrija e rode de novo. Para build local de teste: --skip-checks')
+        sys.exit(1)
 
     if _do_build():
         _do_installer()

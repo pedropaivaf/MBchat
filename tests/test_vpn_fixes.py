@@ -16,6 +16,7 @@ sys.path.insert(0, root_dir)
 UDP_PORT = 50100
 PASS = []
 FAIL = []
+SKIP = []
 
 def ok(msg):
     PASS.append(msg)
@@ -24,6 +25,14 @@ def ok(msg):
 def fail(msg, detail=''):
     FAIL.append(msg)
     print(f'  FAIL  {msg}' + (f': {detail}' if detail else ''))
+
+def skip(msg, detail=''):
+    # Limitacao do AMBIENTE, nao do codigo. Ex.: Windows com reserva de porta
+    # (Hyper-V/WinNAT) devolve WinError 10013 no bind de 50100 — a maquina do
+    # dev cai nisso, os runners de CI nao. Contar isso como FAIL treinava a
+    # gente a ignorar vermelho, que e exatamente como uma regressao real passa.
+    SKIP.append(msg)
+    print(f'  SKIP  {msg}' + (f': {detail}' if detail else ''))
 
 
 # ─────────────────────────────────────────────
@@ -102,7 +111,7 @@ def test_fix2_reply_port_behavior():
         recv_sock.bind(('127.0.0.1', UDP_PORT))
         recv_sock.settimeout(2)
     except OSError as e:
-        fail(f'Nao foi possivel bind em 127.0.0.1:{UDP_PORT}', str(e))
+        skip(f'bind em 127.0.0.1:{UDP_PORT} indisponivel nesta maquina', str(e))
         return
 
     # Socket que simula _sock_send do notebook (sem bind = porta efemera)
@@ -246,6 +255,7 @@ if __name__ == '__main__':
     test_fix3_btns_order()
 
     print(f'\n{"="*50}')
-    print(f'  {len(PASS)} passou   {len(FAIL)} falhou')
+    _skip = f'   {len(SKIP)} pulou' if SKIP else ''
+    print(f'  {len(PASS)} passou   {len(FAIL)} falhou{_skip}')
     print('='*50)
     sys.exit(0 if not FAIL else 1)

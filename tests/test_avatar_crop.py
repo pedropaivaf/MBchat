@@ -17,6 +17,12 @@ import sys
 import tempfile
 import tkinter as tk
 
+# GATE: teste VISUAL/MANUAL. Chama root.mainloop() e fica esperando clique
+# humano — nunca termina sozinho. O tools/prerelease_check.py pula arquivos
+# com esta marca; rodar sem ela travava o gate (e abria janela na tela de quem
+# so queria verificar o codigo).
+MANUAL_TEST = True
+
 # Permite importar gui.py a partir da raiz do projeto
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

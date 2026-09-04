@@ -300,13 +300,31 @@ def test_iss_clean_internal():
         fail('{app}\\_internal NAO esta em [InstallDelete] — DLLs orfas podem persistir')
 
 
-def test_iss_orphan_registry():
-    print('\n[installer.iss] limpeza de registro orfao em UninstallPreviousVersion')
+def test_iss_no_uninstaller_trigger():
+    # GUARDA DE REGRESSAO INVERTIDA. O commit c18eb73 ("remove buggy uninstaller
+    # trigger") apagou de proposito GetUninstallerPath/UninstallPreviousVersion:
+    # rodar o unins000.exe da versao ANTIGA antes de instalar significa executar
+    # codigo Pascal de uma versao que ja se sabe bugada, e um travamento la
+    # abortava a atualizacao inteira. O Inno sobrescreve os arquivos sozinho.
+    #
+    # Este teste cobrava RegDeleteKeyIncludingSubkeys, que so existia DENTRO da
+    # rotina removida — ficou vermelho permanente desde c18eb73, apontando pra
+    # codigo que ninguem queria de volta. Agora guarda a decisao real: o
+    # gatilho nao pode voltar.
+    print('\n[installer.iss] gatilho do uninstaller antigo continua removido (c18eb73)')
     src = read('installer.iss')
-    if 'RegDeleteKeyIncludingSubkeys' in src:
-        ok('RegDeleteKeyIncludingSubkeys presente (limpa entrada orfa)')
+    banned = [n for n in ('UninstallPreviousVersion', 'GetUninstallerPath')
+              if re.search(r'^\s*(procedure|function)\s+' + n, src, re.M)]
+    if banned:
+        fail('rotina reintroduzida em installer.iss: ' + ', '.join(banned)
+             + ' - roda o uninstaller bugado da versao antiga (ver c18eb73)')
     else:
-        fail('RegDeleteKeyIncludingSubkeys ausente')
+        ok('nenhuma rotina de uninstall da versao anterior no installer.iss')
+
+    if re.search(r'taskkill\s+/f\s+/im\s+MBChat\.exe', src, re.I):
+        ok('taskkill de MBChat.exe presente (fecha o app antes de copiar)')
+    else:
+        fail('taskkill de MBChat.exe ausente - arquivos travados durante o install')
 
 
 def test_iss_db_preserved():
@@ -361,7 +379,7 @@ if __name__ == '__main__':
     test_iss_uninstall_harden()
     test_iss_begin_end_balance()
     test_iss_clean_internal()
-    test_iss_orphan_registry()
+    test_iss_no_uninstaller_trigger()
     test_iss_db_preserved()
     test_imports_and_syntax()
 

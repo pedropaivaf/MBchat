@@ -10,6 +10,7 @@ import socket
 import json
 import threading
 import time
+import network
 from network import UDPDiscovery, TCPClient, MT_ANNOUNCE
 from messenger import Messenger
 from database import Database
@@ -24,6 +25,35 @@ def ok(msg):
 def fail(msg, detail=''):
     FAIL.append(msg)
     print(f'  FAIL  {msg}' + (f': {detail}' if detail else ''))
+
+
+# O resultado de _handle_packet depende do IP DESTA maquina: a regra
+# "if is_vpn_subnet(local_ip) and is_private(declared): trust_declared = True"
+# em network.py trata 10.x / 100.x / 172.16-31.x como "eu sou o cliente VPN".
+#
+# Sem fixar isso, os testes 1 e 2 passavam no escritorio (192.168.x) e falhavam
+# em qualquer outra rede: hotspot de celular (172.20.x), VPN ligada (10.x) ou
+# runner de CI. Um teste que muda de resultado conforme o Wi-Fi nao testa o
+# codigo, testa onde voce esta sentado - e vermelho intermitente e exatamente
+# como uma regressao de verdade passa despercebida.
+class fixed_local_ip:
+    # Usar como: with fixed_local_ip('192.168.0.11'): ...
+    def __init__(self, ip):
+        self.ip = ip
+
+    def __enter__(self):
+        self._orig = network.get_local_ip
+        network.get_local_ip = lambda *a, **k: self.ip
+        return self
+
+    def __exit__(self, *exc):
+        network.get_local_ip = self._orig
+        return False
+
+
+# IP de LAN comum do escritorio: NAO cai na regra de subrede VPN, entao o
+# caminho exercitado e o de um PC da LAN recebendo announce de alguem via VPN.
+LAN_IP = '192.168.0.11'
 
 # Mock do Database para testes rápidos
 class MockDB:
@@ -92,7 +122,8 @@ def test_peer_ip_resolution():
     
     # Vamos rodar _handle_packet de forma segura
     try:
-        discovery._handle_packet(data, addr)
+        with fixed_local_ip(LAN_IP):
+            discovery._handle_packet(data, addr)
         peer = discovery.peers.get('remote_user')
         if peer:
             # Deve ter resolvido o IP do peer como '10.8.0.50' (addr[0]) e não '192.168.1.50'
@@ -106,6 +137,27 @@ def test_peer_ip_resolution():
         fail('Falha ao processar _handle_packet', str(e))
     finally:
         discovery.running = False
+
+    # Mesmo pacote, mas agora quem recebe e a maquina de casa (cliente VPN,
+    # IP 10.x). Ai a regra do network.py manda confiar no IP declarado - e o
+    # comportamento oposto, de proposito. Este caso existe pra deixar explicito
+    # que a diferenca e intencional: antes ela decidia o resultado do teste
+    # acima por acidente, conforme a rede de quem rodasse.
+    d2 = UDPDiscovery('test_user', 'Test User', 'online')
+    d2.running = True
+    try:
+        with fixed_local_ip('10.8.0.2'):
+            d2._handle_packet(data, addr)
+        peer2 = d2.peers.get('remote_user')
+        got2 = peer2['ip'] if peer2 else '(peer ausente)'
+        if got2 == '192.168.1.50':
+            ok('Cliente VPN (local 10.x) confia no IP declarado - regra oposta, intencional')
+        else:
+            fail('Cliente VPN deveria confiar no IP declarado 192.168.1.50, obteve ' + got2)
+    except Exception as e:
+        fail('Falha no caso do cliente VPN', str(e))
+    finally:
+        d2.running = False
 
 # -------------------------------------------------------------
 # 2. Teste de Relatório de IP no Announce Relay (Proxy)
@@ -136,7 +188,8 @@ def test_announce_relay():
     data = json.dumps(pkt).encode('utf-8')
     
     try:
-        discovery._handle_packet(data, addr)
+        with fixed_local_ip(LAN_IP):
+            discovery._handle_packet(data, addr)
         
         # O socket deve ter recebido anúncios de retransmissão
         relayed = False

@@ -1,0 +1,61 @@
+# Verificacao automatizada do MB Chat.
+#
+# POR QUE ESTE ARQUIVO EXISTE
+# A v1.8.37 saiu com uma regressao de posicionamento de janela que ninguem viu:
+# o codigo importava, o build gerou, a release subiu — e o problema so apareceu
+# depois de instalado nas 30 maquinas do escritorio. Nao havia nenhum ponto no
+# caminho obrigado a reprovar.
+#
+# Agora ha dois, e ambos rodam o MESMO script (tools/prerelease_check.py):
+#   - aqui, a cada push/PR, pra o problema aparecer em minutos; e
+#   - no build.py --release, que se recusa a publicar com o gate fechado.
+#
+# Roda em windows-latest porque o app e Windows-only: os testes de janela usam
+# tkinter de verdade e APIs Win32 (MonitorFromWindow, GetMonitorInfo, DWM).
+# Em ubuntu eles nem carregariam.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate de verificacao
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instala Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          # Mesma minor do build de producao: o _internal instalado nas maquinas
+          # carrega python314.dll, e testar noutra minor esconderia incompatibilidade.
+          python-version: '3.14'
+          cache: pip
+
+      - name: Instala dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Gate (sintaxe, imports, testes, invariantes de janela e de update)
+        run: python tools/prerelease_check.py
+
+      - name: Exigencias extras de publicacao (so em tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python tools/prerelease_check.py --release
