@@ -284,6 +284,32 @@ def _do_release(version, notes=''):
     else:
         release_notes = f'MB Chat {tag}{sha256_line}'
 
+    # O `gh release create` cria a tag no HEAD DO REMOTO. Se o bump de versao
+    # ainda nao foi commitado e enviado, a tag nasce apontando pra um commit
+    # onde version.py tem a versao ANTERIOR — foi o que aconteceu na v1.8.38 e
+    # so apareceu conferindo `git show v1.8.38:version.py` depois.
+    # Quem clonar a tag pega codigo que se identifica com a versao errada.
+    sujo = subprocess.run(['git', 'status', '--porcelain', 'version.py',
+                           'installer.iss'],
+                          capture_output=True, text=True, cwd=HERE)
+    if sujo.returncode == 0 and sujo.stdout.strip():
+        print('\nERRO: version.py/installer.iss ainda nao estao commitados.')
+        print('A tag sairia apontando pra um commit com a versao ANTERIOR.')
+        print('\nFaca antes:')
+        print(f'  git add -A && git commit -m "release: v{version}" && git push')
+        print('\nDepois rode de novo com --release (o build ja esta pronto em dist/).')
+        return False
+
+    local = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                           capture_output=True, text=True, cwd=HERE)
+    remoto = subprocess.run(['git', 'rev-parse', '@{u}'],
+                            capture_output=True, text=True, cwd=HERE)
+    if (local.returncode == 0 and remoto.returncode == 0
+            and local.stdout.strip() != remoto.stdout.strip()):
+        print('\nERRO: HEAD local difere do remoto — falta `git push`.')
+        print('A tag sairia no commit antigo do GitHub, sem as mudancas desta versao.')
+        return False
+
     check = subprocess.run(['gh', 'release', 'view', tag], capture_output=True, cwd=HERE)
     if check.returncode == 0:
         print(f'Release {tag} ja existe, atualizando assets...')

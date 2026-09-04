@@ -1320,3 +1320,43 @@ Reinjete o bug e confirme que fecha. Para a regressao da v1.8.37, trocar em
 `_center_window` o calculo por `ref.winfo_rootx() + ...` faz o gate reprovar por tres
 caminhos independentes: `test_center_window`, `test_window_reveal` e o invariante
 estatico. Reverta com `git checkout gui.py`.
+
+## ORDEM CORRETA DO RELEASE (a tag precisa conter o bump)
+
+`gh release create` cria a tag no **HEAD DO REMOTO**. Se o bump de versao ainda
+nao foi commitado e enviado, a tag nasce apontando pra um commit onde
+`version.py` tem a versao ANTERIOR — quem clonar a tag pega codigo que se
+identifica errado. Aconteceu na v1.8.38 e so apareceu conferindo
+`git show v1.8.38:version.py` depois de publicar (foi corrigido movendo a tag).
+
+O `build.py` agora **se recusa** a publicar nesses dois casos (`_do_release`):
+`version.py`/`installer.iss` sujos, ou HEAD local diferente do remoto.
+
+**Ordem certa:**
+
+```bash
+# 1. Gate + build + instalador, SEM publicar ainda
+python build.py --version X.Y.Z
+
+# 2. Commitar e enviar o bump (a tag vai nascer aqui)
+git add -A && git commit -m "release: vX.Y.Z" && git push origin main
+
+# 3. Publicar (o build ja esta pronto em dist/)
+python build.py --version X.Y.Z --release --notes "..."
+```
+
+O passo 3 refaz o build, o que e barato perto de publicar tag errada. Se quiser
+evitar o rebuild, rode o passo 1 so depois do commit — mas ai o commit sai antes
+de o gate ter rodado, entao prefira a ordem acima.
+
+### Notas do sino
+
+O sino mostra as **5 primeiras linhas** do corpo do release, cada uma com "• ",
+sem `#`, `*`, `-` iniciais, ignorando linhas de URL e a linha `SHA256:` que o
+`build.py` acrescenta sozinho (`updater.check_update_github`). Escreva 5 linhas
+curtas, em portugues, do ponto de vista de quem usa — nao mensagem de commit.
+Passe com `--notes` (no PowerShell, here-string `@'...'@` com o `'@` na coluna 0).
+
+Peer que descobre a versao nova pela rede (announce P2P, nao pela API) recebe o
+texto generico "Nova atualizacao disponivel na rede!" ate a checagem via GitHub
+rodar — as notas de verdade vem so pela API.
