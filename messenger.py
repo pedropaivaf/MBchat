@@ -2116,8 +2116,11 @@ class Messenger:
         rem = self.db.get_reminder_by_external_id(external_id)
         if not rem or rem.get('creator_uid') != self.user_id:
             return
+        # import local (padrao do arquivo): sem ele dava NameError, engolido
+        # pelo except -> lista vazia -> nenhum convidado recebia o cancelamento
+        import json as _json
         try:
-            invited = json.loads(rem.get('invited_uids', '[]'))
+            invited = _json.loads(rem.get('invited_uids', '[]'))
         except Exception:
             invited = []
         payload = {

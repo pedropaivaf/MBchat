@@ -329,3 +329,17 @@ renderizador, a excecao e por caractere: `_EMOJI_IMAGE_FALLBACK` mapeia so o U+1
 `assets/emoji/1f90c.png` (Fluent, Microsoft, MIT). Usada no Windows 10 (build < 22000) e onde a
 fonte nao desenhar o caractere; no Windows 11 a fonte continua desenhando. O usuario pediu
 explicitamente para nao mexer em nenhum outro emoji -- ampliar a lista so com pedido.
+
+## "NameError engolido por except": guarda geral por bytecode (pos-v1.8.38)
+
+Varios bugs silenciosos do projeto tiveram a mesma forma: um nome que nao existe dentro de um
+`try/except Exception` -- o `NameError` e engolido e a funcao simplesmente deixa de fazer o que
+devia, sem nada na tela. Casos reais: `MCAST_GRP` (relay VPN nunca funcionou, v1.8.12), `ep` no
+seletor de emoji do recado, `subprocess` no duplo clique das Transferencias (abria so a pasta) e
+`json` no cancelamento de lembrete compartilhado (convidados nunca eram avisados).
+
+`tests/test_undefined_names.py` pega a classe inteira sem executar nada: compila cada modulo, le
+todo `LOAD_GLOBAL` do bytecode (o compilador ja resolveu local/closure) e exige que o nome exista
+no nivel do modulo (inclusive imports opcionais dentro de try/if) ou nos builtins. Excecao aceita
+e documentada no proprio teste: `python` nos ramos Linux/Mac de `_setup_autostart`. Import que
+faltar numa funcao: seguir o padrao do arquivo (import local dentro da funcao).

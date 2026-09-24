@@ -1497,11 +1497,22 @@ linha anterior ja fazia o foco, entao so a linha solta foi removida: comportamen
 o erro. Guarda: `tests/test_note_emoji_picker.py` (todo nome global usado pela funcao precisa
 existir no modulo).
 
-**Outros nomes inexistentes achados pelo pyflakes -- NAO corrigidos, aguardando ok do usuario:**
-- `gui.py` `_open_entry_file` (Transferencias, duplo clique no arquivo): `subprocess` nao e
-  importado no gui.py -> `NameError` engolido pelo `except` -> abre so a PASTA, sem selecionar o
-  arquivo no Explorer (o `explorer /select` documentado nunca roda).
-- `messenger.py` `cancel_shared_reminder`: `json` nao e importado -> `NameError` engolido ->
-  `invited = []` -> ao cancelar um lembrete compartilhado, os convidados NAO recebem o
-  cancelamento (o lembrete deles continua disparando).
-- `gui.py` `_setup_autostart` ramos Linux/Mac: `python` indefinido (irrelevante no Windows).
+**Outros nomes inexistentes achados pelo pyflakes -- corrigidos depois (a pedido):**
+- `gui.py` `FileTransfersWindow._open_entry_file` (Transferencias, duplo clique no arquivo):
+  faltava `import subprocess` -> `NameError` engolido pelo `except` -> abria so a PASTA, sem
+  selecionar o arquivo (o `explorer /select` documentado nunca rodava). Import local, no mesmo
+  padrao das outras 2 chamadas `explorer /select` do arquivo.
+- `messenger.py` `cancel_shared_reminder`: faltava `import json` -> `NameError` engolido ->
+  `invited = []` -> ao cancelar um lembrete compartilhado, NENHUM convidado recebia o
+  `MT_REMINDER_CANCEL` e o lembrete continuava disparando para eles. Import local
+  (`import json as _json`, padrao do arquivo).
+- Mantido de proposito: `gui.py` `_setup_autostart`, ramos Linux/Mac usam `python` indefinido
+  (app e Windows-only) -- unica excecao registrada no teste abaixo.
+
+**Guarda geral:** `tests/test_undefined_names.py` le o bytecode de TODAS as funcoes de gui,
+messenger, network, database, updater, audio_recorder, meeting_gui e theme_builder e exige que
+todo nome global usado exista no modulo ou nos builtins (5698 referencias). Pega a classe inteira
+"NameError engolido por except" (MCAST_GRP da v1.8.12, `ep`, `subprocess`, `json`). Tambem testa
+os 2 fixes de ponta a ponta: explorer /select com o caminho certo, e cancelamento de lembrete
+compartilhado chegando aos 2 convidados (2 Messengers reais + receptor TCP local) e apagando o
+lembrete do lado deles. Contra o codigo anterior: 7 falhas.

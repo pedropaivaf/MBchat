@@ -17,6 +17,8 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Emoji 🤌 (mao italiana) ficava invisivel no Windows 10 (seletor, chat, campo de digitar, recado e lista de contatos): agora aparece. So esse emoji mudou; Windows 11 continua com o desenho da fonte.
 - Busca do seletor de emojis acha o 🤌 tambem por "italia", "itália" e "mão".
 - Seletor de emoji do recado gravava um erro no log a cada abertura (nome `ep` inexistente, copiado do seletor da Transmitir). Funcionava igual; o erro nao e mais gravado.
+- Transferencia de Arquivos: duplo clique num arquivo abria so a pasta; agora abre o Explorer com o arquivo selecionado.
+- Lembrete compartilhado: quando o criador cancelava, os convidados nao eram avisados e o lembrete continuava tocando para eles. Agora todos recebem o cancelamento.
 
 ## [1.8.17] - 2026-05-19
 

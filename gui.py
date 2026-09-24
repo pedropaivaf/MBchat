@@ -4218,6 +4218,9 @@ class FileTransfersWindow(tk.Toplevel):
             return
         if os.path.isfile(fp):
             try:
+                # import local (padrao do arquivo): sem ele dava NameError,
+                # engolido pelo except, e so a pasta abria (sem o arquivo marcado)
+                import subprocess
                 subprocess.Popen(f'explorer /select,"{os.path.normpath(fp)}"')
                 return
             except Exception:
