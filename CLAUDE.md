@@ -88,6 +88,9 @@ python build.py --version X.Y.Z --release
   como metodo principal (`Start-Process` so de fallback). A copia do script elevada pelo UAC (`-MBElevated`) NUNCA
   relanca o app: so troca os arquivos e grava `ok`/`fail`; quem relanca e a copia sem admin (senao o app volta como
   administrador ou na conta de quem digitou a senha). Toda saida de erro chama `Start-OldApp` (`--skip-update`).
+  A versao nova e preparada AO LADO (`_internal.new`/`MBChat.exe.new`) e a troca e so rename; mutex
+  `Local\MBChatUpdate` garante um script por vez. NUNCA voltar a apagar/renomear `_internal` antes de a copia
+  nova estar pronta (abrir o app nessa janela = "Failed to load Python DLL", reproduzido no `installer-e2e`).
   Mudou updater/instalador/build? O workflow `installer-e2e` precisa ficar verde antes do release.
 - **Versionamento**: `_set_version()` atualiza version.py + installer.iss + docs/index.html de uma vez
 - **VPN (v1.4.63+)**: tabela `manual_peers` + setting `vpn_enabled` (default OFF). Lista vazia + OFF = zero overhead no caminho LAN. `_manual_announce_loop` + `MT_PEER_LIST` peer exchange propagam a LAN a partir de 1 IP ancora. NAO alterar defaults. Toggle via **Ferramentas > Conectar fora da LAN (VPN)**.
@@ -1547,6 +1550,16 @@ Em windows-2022 (familia Windows 10, build 20348) e windows-2025 (familia Window
 - **setup-over**: setup novo por cima da versao oficial com o app ABERTO.
 - **next-update / next-update-bloqueado**: o updater NOVO (build 1.8.99 -> 1.9.0).
 - **webinstaller**: o `MBChat_WebInstaller.exe` publicado e o novo, com e sem TEMP 8.3.
+- **wizard**: o assistente do Inno CLICADO ate "Concluir" (botao por `BM_CLICK`, pagina identificada pelos
+  textos -- o "Avancar" e o mesmo botao em todas) com "Abrir MB Chat" marcado: PC sem MB Chat pelo instalador
+  web publicado, de novo por cima com o app aberto (pagina "Preparando pra Instalar") e o setup novo por cima.
+  Confere que o app aberto pelo assistente carregou Python (grava `last_version`) e nao tem janela de erro.
+- **auto-update-zip-real**: o exe oficial aplica o zip REAL da release (1085 arquivos, Tcl/Tk 8.6, numpy) --
+  o zip do build de teste e menor (123 arquivos: Python do CI usa Tcl 9 embutido e nao tem numpy).
+- **auto-update-cliques / next-update-cliques**: o app e aberto 3x DURANTE a troca de arquivos (2a entrada de
+  inicio automatico no logon, ou alguem clicando no icone) e toda janela de erro de MBChat.exe e registrada.
+- Em todo update-flow o `last_version` e apagado antes do boot: so o app novo rodando Python de verdade grava
+  de novo -- prova de que nao houve "Failed to load Python DLL".
 
 ### Resultado para quem esta na 1.8.38 (codigo congelado no exe instalado)
 
@@ -1571,6 +1584,16 @@ sozinho), tambem com TEMP 8.3.
    registro). Cosmetico.
 5. O bloco `$oldExes` do script nunca funcionou (Join-Path sem parenteses num array); inofensivo,
    o setup ja faz essa limpeza.
+6. **"Failed to load Python DLL" se o MB Chat for aberto DURANTE a troca (REPRODUZIDO)**: o script da
+   1.8.38 renomeia `_internal` e copia os arquivos novos por alguns segundos; quem abre o app nessa janela
+   pega a pasta sem `_internal` ou pela metade. E cada abertura com update pendente dispara OUTRO script
+   (no teste: 3 em paralelo, um com "ROLLBACK FALHOU"). Acontece de verdade: no logon o Windows abre o
+   MB Chat DUAS vezes -- atalho da pasta Inicializacao (instalador) + `HKCU\...\Run` (o app grava quando
+   acha o atalho, `_setup_autostart`) -- e alguem pode clicar no icone porque "nao abriu". No teste o
+   estado final ficou certo (versao nova, historico intacto), mas a janela de erro apareceu. **Para o salto
+   a partir da 1.8.38 sem esse risco: instalador web ou `tools/deploy_mbchat.ps1`** (o setup mata o app e
+   nao tem essa janela). Deixando o auto-update: alguns PCs podem mostrar o erro no logon; clicar OK, o
+   update conclui e o app abre atualizado.
 
 ### Corrigido para as proximas versoes (updater novo, testado no next-update*)
 
@@ -1586,6 +1609,14 @@ sozinho), tambem com TEMP 8.3.
   `-Verb RunAs -Wait -MBElevated`; a elevada SO troca os arquivos e grava `ok`/`fail` em
   `update_result.txt`; quem reabre o app e a copia sem admin (CreateProcess, ambiente original).
   Sem admin nenhum (UAC negado ou app em pasta do usuario), o proprio script faz tudo como antes.
+- **Sem janela de "Failed to load Python DLL" durante a troca**: a versao nova e copiada para
+  `_internal.new` + `MBChat.exe.new` e conferida (>=50 arquivos, tamanho do exe) com a versao atual
+  INTEIRA no lugar -- quem abrir o app nesse tempo abre a versao atual. Depois: `Stop-Process` de novo e
+  troca so por rename (milissegundos); rollback tambem por rename (funciona com o exe novo em uso).
+  Tentativa anterior interrompida no meio da troca (sem `_internal`, com `.bak`): devolve o `.bak` em vez
+  de apagar. Medido no `next-update-cliques`: 0 janelas de erro, 1 script, historico intacto.
+- **Um update por vez**: mutex `Local\MBChatUpdate` no inicio do script (a copia elevada nao pega: quem
+  pegou foi a que a chamou). O 2o script loga "Outro update ja esta em andamento" e sai sem mexer em nada.
 
 ### build.py (protege o instalador web e o auto-update de TODOS)
 
@@ -1593,10 +1624,22 @@ sozinho), tambem com TEMP 8.3.
   sino). Antes ficava o hash antigo e todas as maquinas recusariam o zip reenviado.
 - Setup velho nunca e publicado: `_do_installer` apaga `dist/MBChat_Setup.exe` antes do Inno e o
   `--release` aborta se o setup nao for gerado; `_do_release` exige zip + setup.
+- **Build conferido (`_verify_dist`, no fim do `_do_build`)**: barra o build sem `python3XX.dll` ou
+  `base_library.zip` no `_internal`, sem o runtime do Visual C++ que o Python usa (`vcruntime140*.dll`: PC
+  sem VC++ Redistributable so abre o app com ele dentro), `MBChat.exe` de PyInstaller < 6.10, caminho
+  relativo > 150 caracteres (staging em `%APPDATA%` + 260 do Windows) ou zip do auto-update incompleto.
+  Por que PyInstaller >= 6.10: o instalador web (tambem PyInstaller, onefile) abre o setup, que abre o
+  MBChat -- o carregador >= 6.10 descarta as variaveis `_PYI_*` herdadas de outro app (conferido no
+  bootloader); um antigo podia tentar usar a pasta temporaria do instalador web, ja apagada.
 
 **Contrato do instalador web (nao precisa mudar nunca):** baixa sempre
 `releases/latest/download/MBChat_Setup.exe`. Toda release precisa ter esse asset com esse nome
 exato e nao pode ser pre-release/rascunho. `tests/test_build_release.py` trava isso.
 
-Testes novos no gate: `test_build_release.py` (25), `test_update_api_budget.py` (16),
-`test_update_failure_reopen.py` (19 + PowerShell real no Windows).
+Testes novos no gate: `test_build_release.py` (33), `test_update_api_budget.py` (16),
+`test_update_failure_reopen.py` (19 + PowerShell real no Windows) e 2 casos novos no
+`test_update_rollback.py` (dois scripts ao mesmo tempo; troca interrompida no meio).
+
+**Pacote real conferido** (v1.8.38): 1085 arquivos, `python314.dll`, `VCRUNTIME140.dll` +
+`VCRUNTIME140_1.dll`, `ucrtbase.dll` + `api-ms-win-*` (roda em Windows 10 limpo), maior caminho 89
+caracteres, nenhum nome com `[ ] ` $` (curinga do PowerShell) nem acento.

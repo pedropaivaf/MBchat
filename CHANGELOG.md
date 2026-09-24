@@ -23,6 +23,8 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Atualizacao automatica: depois de atualizar, o app volta na conta de quem estava usando e sem permissao de administrador (antes voltava como administrador ate reiniciar; num PC sem admin, se alguem digitasse a senha de administrador, abria na conta errada).
 - Atualizacao automatica gasta metade das consultas ao GitHub (o limite e dividido pelos PCs do escritorio) e, se o download falhar, tenta de novo em ate 30 minutos em vez de esperar o app reabrir.
 - Publicacao (build.py): reenviar uma versao ja publicada atualiza o codigo de verificacao (SHA256) da release, e um instalador de versao antiga nunca e publicado por engano (o instalador web baixa sempre o da ultima release).
+- Atualizacao automatica: abrir o MB Chat durante a atualizacao (ou o Windows abrindo o app duas vezes ao ligar o PC) podia mostrar "Failed to load Python DLL". Agora a versao nova e preparada ao lado da atual e trocada num instante, e so uma atualizacao roda por vez.
+- Publicacao (build.py): o build e conferido antes de virar instalador (DLL do Python, runtime do Visual C++, versao do PyInstaller, tamanho dos caminhos e zip); build incompleto nao e publicado.
 
 ### Added
 - Teste automatico do instalador, do instalador web e da atualizacao automatica em Windows de verdade (familias Windows 10 e 11), partindo da versao oficial instalada nas maquinas: `.github/workflows/installer-e2e.yml`.

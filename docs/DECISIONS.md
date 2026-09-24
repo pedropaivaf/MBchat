@@ -371,3 +371,27 @@ Tudo isso vale a partir da versao que o traz: o salto a partir da 1.8.38 roda o 
 (app reaberto como admin ate reiniciar; falha deixa o app fechado ate clicar no icone -- nada
 quebra). Cobertura: `tests/test_update_failure_reopen.py`, `tests/test_update_api_budget.py` e os
 cenarios `next-update*` do `installer-e2e`.
+
+## Auto-update: preparar ao lado e trocar por rename; um script por vez (pos-v1.8.38)
+
+Reproduzido no `installer-e2e` com a 1.8.38 congelada: com o MB Chat sendo aberto DURANTE a troca de
+arquivos apareceu "Failed to load Python DLL 'C:\Program Files\MBChat\_internal\python314.dll'" e 3
+scripts de update rodaram juntos (um terminou em "ROLLBACK FALHOU"). O script renomeava `_internal` e so
+depois copiava centenas de arquivos: por alguns segundos a pasta ficava sem `_internal` ou pela metade.
+Aberturas nesse intervalo sao normais: no logon o Windows abre o app duas vezes (atalho da Inicializacao
++ `HKCU\...\Run`), e quem acha que "nao abriu" clica de novo.
+
+Decisoes:
+
+1. **A copia demorada vai para `_internal.new` / `MBChat.exe.new`**, conferida (>= 50 arquivos, tamanho
+   do exe) com a versao atual intacta. Falha aqui = "Nada foi alterado".
+2. **A troca e so rename** (milissegundos), depois de um `Stop-Process` que mata quem abriu o app durante a
+   preparacao. Rollback tambem por rename: renomear um exe em uso funciona, sobrescrever nao.
+3. **Mutex `Local\MBChatUpdate`**: o 2o script sai sem mexer em nada. A copia elevada nao pega o mutex (a
+   que a chamou esta segurando e esperando por ela).
+4. **Tentativa interrompida no meio da troca** (sem `_internal`, com `_internal.bak`): o `.bak` e a unica
+   copia boa -- devolve em vez de apagar.
+
+Vale a partir da versao que traz o fix; o salto a partir da 1.8.38 roda o script antigo. Medido com o
+updater novo (`next-update-cliques`, 2 Windows): 0 janelas de erro, 1 script. Cobertura:
+`tests/test_update_rollback.py` (casos 7 e 8) e o `installer-e2e`.
