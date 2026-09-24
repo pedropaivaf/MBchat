@@ -1465,3 +1465,31 @@ Teste: `tests/test_history_search.py` (69 checks, sem subir o app inteiro, roda 
 janelas com as funcoes reais, buscas (acento, maiuscula, `%`, `_`, emoji, aspas, "2026"),
 filtro De/Ate digitado, 6000 mensagens com um contato e guardas estaticas (sem LIKE, sem
 `nocase=True`, sem `limit=5000`). Contra o codigo anterior: 25 falhas.
+
+## Emoji 🤌 invisivel no Windows 10 (pos-v1.8.38, SEM release ainda)
+
+🤌 (U+1F90C, Unicode 13 / 2020) nao existe na Segoe UI Emoji do Windows 10: o PIL nao desenha
+nada, o seletor DESCARTA o emoji (`_populate_grid` so mostra quem renderiza) e no chat/campo de
+digitar ele entra como texto puro, que o Tk tambem nao desenha. Resultado: invisivel.
+
+**Fix (so esse emoji, pedido explicito):** `_EMOJI_IMAGE_FALLBACK = {'\U0001f90c': '1f90c.png'}`
+(gui.py). Nas 4 funcoes de desenho -- `_render_color_emoji`, `ChatWindow._render_emoji_image`,
+`GroupChatWindow._render_emoji_image` e o recado em `_render_contact_display` -- quando
+`_is_windows10()` (build < 22000) OU a fonte nao desenhou, usa `assets/emoji/1f90c.png`
+(desenho Fluent oficial da Microsoft, MIT, licenca em `assets/emoji/`) no mesmo tamanho/fundo.
+Windows 11 e TODOS os outros emojis seguem saindo da fonte. O texto enviado continua sendo o
+caractere 🤌 (o campo de digitar mapeia a imagem de volta via `_entry_img_map`). O build ja
+empacota `assets/` inteira. Busca do seletor: nome do 🤌 ganhou "italia itália mão" (a busca e
+`query.lower() in nome`, sem normalizar acento). **Nao ampliar a lista de excecoes sem pedido.**
+
+Validado: fonte colorida estilo Segoe gerada sem o 🤌 (simula Win10) -- 590 emojis do app x 15
+formas de desenho: 0 alteracoes nos outros emojis; 🤌 visivel em 15/15 (antes 1/15); com a fonte
+completa (simula Win11) o 🤌 fica byte a byte igual ao de antes. App real: seletor do chat e do
+recado mostram o 🤌 na busca, e a mensagem/campo de digitar o exibem como imagem.
+
+Teste: `tests/test_emoji_pinched_fingers.py` (27 checks; no CI Windows compara os outros emojis
+com a Segoe UI Emoji real, com e sem o modo Windows 10).
+
+**Bug antigo encontrado e NAO corrigido (fora do pedido):** `_show_note_emoji_picker` termina
+com `ep.focus_set()` e `ep` nao existe -- `NameError` no log a cada abertura do seletor do recado.
+O popup ja esta aberto nesse ponto (funciona); so o foco nao vai para a busca.

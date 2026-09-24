@@ -14,6 +14,8 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Busca do historico tratava `%` e `_` como curinga ("50%" achava "50 reais"; "arquivo_final" achava "arquivoXfinal").
 - Destaque amarelo da busca so marcava a 1a linha de mensagens com quebra de linha e tambem pintava a data/hora (nas duas janelas de historico).
 - Janela Historico do chat mostrava so as 5000 mensagens mais recentes com o contato: agora mostra todas.
+- Emoji 🤌 (mao italiana) ficava invisivel no Windows 10 (seletor, chat, campo de digitar, recado e lista de contatos): agora aparece. So esse emoji mudou; Windows 11 continua com o desenho da fonte.
+- Busca do seletor de emojis acha o 🤌 tambem por "italia", "itália" e "mão".
 
 ## [1.8.17] - 2026-05-19
 

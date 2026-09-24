@@ -1247,9 +1247,62 @@ def _handle_slash_keyrelease(win, entry, build_items):
         log.exception('Erro ao abrir menu de formatacao (/)')
 
 
+# 🤌 (U+1F90C, Unicode 13) nao existe na fonte Segoe UI Emoji do Windows 10:
+# desenhado pela fonte ele fica INVISIVEL (seletor, chat, campo de digitar,
+# recado, lista de contatos). So para esse caractere usa a imagem
+# assets/emoji/1f90c.png (desenho Fluent oficial da Microsoft, licenca MIT em
+# assets/emoji/) -- no Windows 10, ou em qualquer sistema cuja fonte nao
+# consiga desenha-lo. Windows 11 e TODOS os outros emojis seguem saindo da
+# fonte, sem nenhuma mudanca.
+_EMOJI_IMAGE_FALLBACK = {'\U0001f90c': '1f90c.png'}
+_EMOJI_FALLBACK_SRC = {}
+_IS_WIN10 = None
+
+
+def _is_windows10():
+    global _IS_WIN10
+    if _IS_WIN10 is None:
+        try:
+            _IS_WIN10 = (sys.platform == 'win32'
+                         and sys.getwindowsversion().build < 22000)
+        except Exception:
+            _IS_WIN10 = False
+    return _IS_WIN10
+
+
+# Imagem PIL RGBA canvas_sz x canvas_sz com o emoji em size px centralizado,
+# sobre bg (RGBA). None se o emoji nao esta em _EMOJI_IMAGE_FALLBACK ou se o
+# arquivo nao pode ser lido.
+def _emoji_fallback_image(emoji_char, size, canvas_sz, bg=(255, 255, 255, 0)):
+    key = emoji_char.replace('\ufe0f', '')
+    if key not in _EMOJI_IMAGE_FALLBACK or not HAS_PIL:
+        return None
+    src = _EMOJI_FALLBACK_SRC.get(key)
+    if src is None:
+        try:
+            base = (sys._MEIPASS if getattr(sys, 'frozen', False)
+                    else os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(base, 'assets', 'emoji', _EMOJI_IMAGE_FALLBACK[key])
+            src = Image.open(path).convert('RGBA')
+        except Exception:
+            src = False
+        _EMOJI_FALLBACK_SRC[key] = src
+    if not src:
+        return None
+    em = src.resize((size, size), Image.LANCZOS)
+    layer = Image.new('RGBA', (canvas_sz, canvas_sz), (0, 0, 0, 0))
+    off = (canvas_sz - size) // 2
+    layer.paste(em, (off, off))
+    return Image.alpha_composite(Image.new('RGBA', (canvas_sz, canvas_sz), bg), layer)
+
+
 def _render_color_emoji(emoji_char, size=28):
     if not HAS_PIL:
         return None
+    if _is_windows10():
+        fb = _emoji_fallback_image(emoji_char, size, size + 4)
+        if fb is not None:
+            return ImageTk.PhotoImage(fb)
     font_paths = _get_emoji_font_paths()
     if not font_paths:
         return None
@@ -1279,6 +1332,9 @@ def _render_color_emoji(emoji_char, size=28):
                 return ImageTk.PhotoImage(img)
     except Exception:
         pass
+    fb = _emoji_fallback_image(emoji_char, size, size + 4)  # fonte nao desenhou
+    if fb is not None:
+        return ImageTk.PhotoImage(fb)
     return None
 
 
@@ -7074,6 +7130,10 @@ class ChatWindow(tk.Toplevel):
     def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
+        if _is_windows10():
+            fb = self._emoji_fallback_photo(emoji_char, size, bg_color)
+            if fb is not None:
+                return fb
         font_paths = _get_emoji_font_paths()
         if not font_paths:
             return None
@@ -7111,7 +7171,19 @@ class ChatWindow(tk.Toplevel):
                 return ImageTk.PhotoImage(img)
         except Exception:
             log.exception('Erro ao renderizar emoji')
-        return None
+        return self._emoji_fallback_photo(emoji_char, size, bg_color)  # fonte nao desenhou
+
+    # Imagem embutida (so emojis de _EMOJI_IMAGE_FALLBACK) no mesmo tamanho e
+    # fundo que o desenho da fonte teria; None para qualquer outro emoji.
+    def _emoji_fallback_photo(self, emoji_char, size, bg_color=None):
+        if emoji_char.replace('\ufe0f', '') not in _EMOJI_IMAGE_FALLBACK:
+            return None  # qualquer outro emoji: nada muda
+        try:
+            bg = (*self._hex_to_rgb(bg_color), 255) if bg_color else (255, 255, 255, 0)
+            fb = _emoji_fallback_image(emoji_char, size, size + 4, bg)
+            return ImageTk.PhotoImage(fb) if fb is not None else None
+        except Exception:
+            return None
 
     @staticmethod
     def _hex_to_rgb(hex_color):
@@ -7270,7 +7342,7 @@ class ChatWindow(tk.Toplevel):
             '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
             '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
             '\U0001f919': 'me liga telefone hang loose',
-            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer',
+            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer italia itália mão',
             '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
             # Comida e Bebida
             '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
@@ -9592,6 +9664,10 @@ class GroupChatWindow(tk.Toplevel):
     def _render_emoji_image(self, emoji_char, size=28, bg_color=None):
         if not HAS_PIL:
             return None
+        if _is_windows10():
+            fb = self._emoji_fallback_photo(emoji_char, size, bg_color)
+            if fb is not None:
+                return fb
         font_paths = _get_emoji_font_paths()
         if not font_paths:
             return None
@@ -9629,7 +9705,19 @@ class GroupChatWindow(tk.Toplevel):
                 return ImageTk.PhotoImage(img)
         except Exception:
             pass
-        return None
+        return self._emoji_fallback_photo(emoji_char, size, bg_color)  # fonte nao desenhou
+
+    # Imagem embutida (so emojis de _EMOJI_IMAGE_FALLBACK) no mesmo tamanho e
+    # fundo que o desenho da fonte teria; None para qualquer outro emoji.
+    def _emoji_fallback_photo(self, emoji_char, size, bg_color=None):
+        if emoji_char.replace('\ufe0f', '') not in _EMOJI_IMAGE_FALLBACK:
+            return None  # qualquer outro emoji: nada muda
+        try:
+            bg = (*self._hex_to_rgb(bg_color), 255) if bg_color else (255, 255, 255, 0)
+            fb = _emoji_fallback_image(emoji_char, size, size + 4, bg)
+            return ImageTk.PhotoImage(fb) if fb is not None else None
+        except Exception:
+            return None
 
     @staticmethod
     def _hex_to_rgb(hex_color):
@@ -13726,6 +13814,11 @@ class LanMessengerApp:
                     ex = (canvas_sz - ew) // 2 - eb[0]
                     ey_off = (canvas_sz - eh) // 2 - eb[1]
                     em_draw.text((ex, ey_off), clean_seg, font=emoji_font, embedded_color=True)
+                    # 🤌 no Windows 10 (ou fonte sem o desenho): imagem embutida
+                    if _is_windows10() or ew <= 0 or eh <= 0:
+                        fb = _emoji_fallback_image(seg_text, emoji_size, canvas_sz)
+                        if fb is not None:
+                            em_img = fb
                     paste_y = (height - canvas_sz) // 2
                     img.paste(em_img, (int(x), paste_y), em_img)
                 except Exception:
@@ -14222,7 +14315,7 @@ class LanMessengerApp:
             '\U0001f933': 'selfie', '\u270c\ufe0f': 'paz vitoria',
             '\U0001f590\ufe0f': 'mao dedos abertos', '\u261d\ufe0f': 'indicador cima',
             '\U0001f919': 'me liga telefone hang loose',
-            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer',
+            '\U0001f90c': 'mao italiana beliscando coxinha o que voce quer italia itália mão',
             '\U0001f9b5': 'perna', '\U0001f9b6': 'pe',
             '\U0001f34e': 'maca vermelha', '\U0001f34f': 'maca verde',
             '\U0001f350': 'pera', '\U0001f34a': 'tangerina laranja',

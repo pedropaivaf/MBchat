@@ -320,3 +320,12 @@ conta emoji como 2 posicoes, o modificador `+Nc` conta como 1 -- igual ao Python
 
 Cobertura: `tests/test_history_search.py` (500 mensagens pelos caminhos reais de envio e
 recebimento, as duas janelas, 6000 com um contato, guardas estaticas).
+
+## Emoji ausente na fonte do Windows 10: imagem so para o 🤌 (pos-v1.8.38)
+
+A Segoe UI Emoji do Windows 10 parou no Unicode 12; 🤌 (Unicode 13) sai invisivel. Em vez de
+empacotar uma fonte de emoji inteira (mudaria o visual de TODOS os emojis) ou trocar o
+renderizador, a excecao e por caractere: `_EMOJI_IMAGE_FALLBACK` mapeia so o U+1F90C para
+`assets/emoji/1f90c.png` (Fluent, Microsoft, MIT). Usada no Windows 10 (build < 22000) e onde a
+fonte nao desenhar o caractere; no Windows 11 a fonte continua desenhando. O usuario pediu
+explicitamente para nao mexer em nenhum outro emoji -- ampliar a lista so com pedido.
