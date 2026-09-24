@@ -113,8 +113,9 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
         scenario: [auto-update, auto-update-8dot3, auto-update-uac, auto-update-bloqueado,
-                   auto-update-zip-real, auto-update-cliques, setup-over, next-update,
-                   next-update-bloqueado, next-update-cliques, webinstaller, wizard]
+                   auto-update-zip-real, auto-update-cliques, auto-update-logon, setup-over,
+                   next-update, next-update-bloqueado, next-update-cliques, next-update-logon,
+                   webinstaller, wizard]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -201,6 +202,12 @@ jobs:
         if: matrix.scenario == 'auto-update-cliques'
         run: python tools/e2e_installer.py update-impatient e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
 
+      # Logon real: o Windows abre o app 2x (registro Run + atalho de
+      # Inicializacao) com atraso de 0 a 5s, com update pendente. 1.8.38: mede.
+      - name: Logon com as 2 entradas de inicio automatico (1.8.38)
+        if: matrix.scenario == 'auto-update-logon'
+        run: python tools/e2e_installer.py update-logon "${{ runner.temp }}/MBChat_Setup_${{ env.BASE_VER }}.exe" ${{ env.BASE_VER }} e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} 0,0.5,1,2,3,5
+
       # ── assistente do instalador clicado ate o fim, "Abrir MB Chat" marcado ──
       - name: Assistente pelo instalador web publicado (PC sem MB Chat)
         if: matrix.scenario == 'wizard'
@@ -236,12 +243,16 @@ jobs:
         run: python tools/e2e_installer.py seed ${{ env.NEW_VER }} --limited
 
       - name: Primeira abertura do build novo + historico (admin)
-        if: matrix.scenario == 'next-update-bloqueado' || matrix.scenario == 'next-update-cliques'
+        if: matrix.scenario == 'next-update-bloqueado' || matrix.scenario == 'next-update-cliques' || matrix.scenario == 'next-update-logon'
         run: python tools/e2e_installer.py seed ${{ env.NEW_VER }}
 
       - name: Updater novo com a pasta travada (reabre sozinho, sem loop)
         if: matrix.scenario == 'next-update-bloqueado'
         run: python tools/e2e_installer.py update-blocked e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --expect-reopen
+
+      - name: Logon com as 2 entradas de inicio automatico (updater novo)
+        if: matrix.scenario == 'next-update-logon'
+        run: python tools/e2e_installer.py update-logon e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }} e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} 0,0.5,1,2,3,5 --strict
 
       - name: Updater novo com o app sendo aberto durante a troca
         if: matrix.scenario == 'next-update-cliques'

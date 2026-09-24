@@ -889,12 +889,15 @@ def cmd_update_impatient(zip_path, ver, strict=False):
                     subprocess.run(['taskkill', '/f', '/pid', str(pid)], capture_output=True)
         ok_ = wait_for(lambda: file_version(APP_EXE) == ver and setting('last_version') == ver
                        and len(app_processes()) == 1, 240, 2)
-        check(ok_, f'no fim: versao {ver} instalada e aberta (uma instancia so)',
+        # 1.8.38 congelada (sem --strict): so MEDE -- o codigo instalado nao muda
+        cobra = check if strict else (lambda c, m, d='': info(('OK: ' if c else 'FALHOU: ') + m
+                                                              + ('' if c else f' ({d})')))
+        cobra(ok_, f'no fim: versao {ver} instalada e aberta (uma instancia so)',
               f'exe={file_version(APP_EXE)} last={setting("last_version")} procs={app_processes()}')
         time.sleep(15)
         procs = app_processes()
         erros = _dialogs_of({p for p, _ in procs})
-        check(len(procs) == 1 and not erros, 'app continua aberto 15s depois, sem janela de erro',
+        cobra(len(procs) == 1 and not erros, 'app continua aberto 15s depois, sem janela de erro',
               f'{procs} {erros}')
         check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
               and not os.path.exists(os.path.join(APP_DIR, '_internal.bak'))
@@ -905,6 +908,87 @@ def cmd_update_impatient(zip_path, ver, strict=False):
         check_data_preserved('apos o update com cliques')
         if FAIL:
             dump_logs()
+    finally:
+        srv.shutdown()
+        _unhosts()
+
+
+def cmd_update_logon(setup, base_ver, zip_path, new_ver, delays, strict=False):
+    # Logon real do escritorio: o Windows abre o MB Chat DUAS vezes -- registro
+    # Run (exe --silent) e atalho da pasta Inicializacao -- com poucos segundos
+    # de diferenca. Com update pendente, cada tentativa: reinstala a versao
+    # base, baixa o update, abre pelas 2 entradas com atraso d e ve o resultado:
+    # atualizou? abre? apareceu janela de erro? ficou quebrado?
+    print(f'\n[update-logon] {base_ver} -> {new_ver}: 2 aberturas no logon, atrasos {delays}s')
+    srv = _start_mock_github(os.path.abspath(zip_path), new_ver)
+    pend = os.path.join(UPD_DIR, 'update_pending.txt')
+    ulog = os.path.join(UPD_DIR, 'update.log')
+    lnk = startup_lnk()
+    resultados = []
+    try:
+        for d in delays:
+            kill_app()
+            r = subprocess.run([os.path.abspath(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES',
+                                '/NORESTART', '/TASKS=desktopicon,autostart'], timeout=900)
+            if r.returncode != 0 or file_version(APP_EXE) != base_ver:
+                fail(f'atraso {d}s: nao consegui reinstalar a {base_ver}')
+                continue
+            for f in ('update.log', 'update_pending.txt', 'update_attempts.txt'):
+                try:
+                    os.remove(os.path.join(UPD_DIR, f))
+                except OSError:
+                    pass
+            _MockGitHub.served_zip = False
+            launch_app()
+            if not wait_for(lambda: os.path.isfile(pend), 240, 2):
+                fail(f'atraso {d}s: download silencioso nao aconteceu')
+                continue
+            kill_app()
+            db_exec("DELETE FROM settings WHERE key='last_version'")
+            # as 2 entradas de inicio automatico
+            launch_app()
+            time.sleep(d)
+            os.startfile(lnk)
+            dialogos, estavel, t_end = [], 0, time.time() + 90
+            while time.time() < t_end:
+                for txt in _dialogs_of(_pids('MBChat.exe')):
+                    if txt not in dialogos:
+                        dialogos.append(txt)
+                if 'App lancado' in read_text(ulog) or 'Nada foi alterado' in read_text(ulog):
+                    estavel += 1
+                    if estavel > 40:
+                        break
+                time.sleep(0.5)
+            # fecha janelas de erro (= usuario clicando OK)
+            for pid, _ in app_processes():
+                if _dialogs_of({pid}):
+                    subprocess.run(['taskkill', '/f', '/pid', str(pid)], capture_output=True)
+            time.sleep(3)
+            if not app_processes():
+                launch_app()  # usuario abre pelo icone
+            booted = wait_for(lambda: setting('last_version') in (new_ver, base_ver)
+                              and len(app_processes()) == 1
+                              and not _dialogs_of(_pids('MBChat.exe')), 90, 2)
+            updated = file_version(APP_EXE) == new_ver and setting('last_version') == new_ver
+            scripts = read_text(ulog).count('Update iniciado')
+            resultados.append((d, updated, booted, len(dialogos), scripts))
+            estado = ('ATUALIZOU' if updated and booted else
+                      'nao atualizou, mas abre' if booted else 'QUEBRADO (nao abre)')
+            info(f'atraso {d}s: {estado}; janelas de erro={len(dialogos)}; scripts={scripts}')
+            for t in dialogos:
+                info(f'    janela: {t[:160]}')
+        quebrados = [r for r in resultados if not r[2]]
+        com_erro = [r for r in resultados if r[3]]
+        print(f'\n  resumo: {len(resultados)} logons, {len([r for r in resultados if r[1] and r[2]])} '
+              f'atualizaram, {len(com_erro)} com janela de erro, {len(quebrados)} QUEBRADOS')
+        if strict:
+            check(len(resultados) == len(delays) and not quebrados and not com_erro
+                  and all(r[1] for r in resultados),
+                  'todo logon atualizou e abriu, sem janela de erro', repr(resultados))
+        else:
+            check(len(resultados) == len(delays), 'todas as tentativas rodaram', repr(resultados))
+        kill_app()
+        check_data_preserved('apos os logons')
     finally:
         srv.shutdown()
         _unhosts()
@@ -1156,6 +1240,9 @@ def main():
         cmd_setup_over(args[1], args[2])
     elif cmd == 'webinstaller':
         cmd_webinstaller(args[1], flag83)
+    elif cmd == 'update-logon':
+        cmd_update_logon(args[1], args[2], args[3], args[4],
+                         [float(x) for x in args[5].split(',')], '--strict' in args)
     elif cmd == 'update-impatient':
         cmd_update_impatient(args[1], args[2], '--strict' in args)
     elif cmd == 'wizard':
