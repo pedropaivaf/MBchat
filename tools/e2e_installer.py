@@ -24,7 +24,11 @@
 #                                  o app instalado baixa sozinho e aplica no "boot".
 #                                  --limited: app aberto SEM privilegio de admin (como
 #                                  no escritorio): o script do update pede o UAC.
-#   update-blocked ZIP VER         o update NAO consegue trocar os arquivos (mesmo efeito
+#   make-user                      cria um 2o usuario ADMIN local (com UAC ele recebe o
+#                                  token filtrado, como num PC do escritorio); os
+#                                  comandos com --limited abrem o app como esse usuario
+#   update-blocked ZIP VER [--expect-reopen]
+#                                  o update NAO consegue trocar os arquivos (mesmo efeito
 #                                  de clicar "Nao" no UAC): nada pode quebrar, e o app
 #                                  tem que voltar a abrir e atualizar depois
 #   setup-over SETUP VER           instalador novo por cima, com o app ABERTO
@@ -58,6 +62,15 @@ APPDATA = os.environ.get('APPDATA', '')
 DATA_DIR = os.path.join(APPDATA, '.mbchat')
 DB_PATH = os.path.join(DATA_DIR, 'mbchat.db')
 UPD_DIR = os.path.join(APPDATA, 'MBChat')
+
+
+def use_appdata(path):
+    # Pastas de dados do usuario que roda o app (o de teste, com --limited)
+    global APPDATA, DATA_DIR, DB_PATH, UPD_DIR
+    APPDATA = path
+    DATA_DIR = os.path.join(APPDATA, '.mbchat')
+    DB_PATH = os.path.join(DATA_DIR, 'mbchat.db')
+    UPD_DIR = os.path.join(APPDATA, 'MBChat')
 WORK = os.environ.get('RUNNER_TEMP') or tempfile.gettempdir()
 STATE_FILE = os.path.join(WORK, 'e2e_state.json')
 HOSTS = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'),
@@ -208,14 +221,11 @@ LIMITED = False
 def launch_app(args=('--silent',), env=None):
     # Como o atalho de inicializacao do Windows abre o app: exe --silent.
     if LIMITED:
-        # Tarefa agendada com /RL LIMITED: o app roda com o token FILTRADO do
-        # usuario (sem admin), igual a um duplo clique no escritorio. Assim o
-        # script do update precisa pedir elevacao (UAC) de verdade.
-        tr = f'"{APP_EXE}" ' + ' '.join(args)
-        subprocess.run(['schtasks', '/create', '/tn', 'MBChatE2E', '/tr', tr, '/sc', 'once',
-                        '/st', '00:00', '/rl', 'LIMITED', '/it', '/f'],
-                       capture_output=True, check=True)
-        subprocess.run(['schtasks', '/run', '/tn', 'MBChatE2E'], capture_output=True, check=True)
+        # Abre como o usuario de teste (admin local, UAC ligado): o Windows da
+        # a ele o token FILTRADO, sem admin -- igual a um duplo clique num PC
+        # do escritorio. Assim o script do update precisa pedir o UAC de verdade.
+        u = load_state()['as_user']
+        _logon_run(u['user'], u['password'], f'"{APP_EXE}" ' + ' '.join(args), APP_DIR)
         return None
     DETACHED = 0x00000008
     NEW_GROUP = 0x00000200
@@ -223,6 +233,62 @@ def launch_app(args=('--silent',), env=None):
                             creationflags=DETACHED | NEW_GROUP,
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, close_fds=True)
+
+
+def _logon_run(user, password, cmdline, cwd=None, wait=False):
+    # CreateProcessWithLogonW com o perfil do usuario (ambiente e %APPDATA%
+    # dele). O Windows libera a area de trabalho atual para o processo.
+    import ctypes
+    from ctypes import wintypes
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [('cb', wintypes.DWORD), ('lpReserved', wintypes.LPWSTR),
+                    ('lpDesktop', wintypes.LPWSTR), ('lpTitle', wintypes.LPWSTR),
+                    ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
+                    ('dwXSize', wintypes.DWORD), ('dwYSize', wintypes.DWORD),
+                    ('dwXCountChars', wintypes.DWORD), ('dwYCountChars', wintypes.DWORD),
+                    ('dwFillAttribute', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
+                    ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD),
+                    ('lpReserved2', ctypes.c_void_p), ('hStdInput', wintypes.HANDLE),
+                    ('hStdOutput', wintypes.HANDLE), ('hStdError', wintypes.HANDLE)]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [('hProcess', wintypes.HANDLE), ('hThread', wintypes.HANDLE),
+                    ('dwProcessId', wintypes.DWORD), ('dwThreadId', wintypes.DWORD)]
+
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    si = STARTUPINFOW()
+    si.cb = ctypes.sizeof(si)
+    pi = PROCESS_INFORMATION()
+    buf = ctypes.create_unicode_buffer(cmdline)
+    LOGON_WITH_PROFILE = 1
+    okc = advapi32.CreateProcessWithLogonW(user, '.', password, LOGON_WITH_PROFILE, None, buf,
+                                           0, None, cwd, ctypes.byref(si), ctypes.byref(pi))
+    if not okc:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if wait:
+        kernel32.WaitForSingleObject(pi.hProcess, 60000)
+    kernel32.CloseHandle(pi.hThread)
+    kernel32.CloseHandle(pi.hProcess)
+    return pi.dwProcessId
+
+
+def cmd_make_user():
+    import secrets
+    print('\n[make-user] usuario admin local de teste (UAC -> token filtrado)')
+    user = 'mbteste'
+    pwd = 'Mb#' + secrets.token_hex(10) + 'a1'
+    subprocess.run(['net', 'user', user, pwd, '/add'], capture_output=True)
+    subprocess.run(['net', 'user', user, pwd], capture_output=True)
+    subprocess.run(['net', 'localgroup', 'Administrators', user, '/add'], capture_output=True)
+    out = r'C:\Users\Public\e2e_appdata.txt'
+    if os.path.exists(out):
+        os.remove(out)
+    _logon_run(user, pwd, f'cmd.exe /c echo %APPDATA%> "{out}"', r'C:\Users\Public', wait=True)
+    appdata = read_text(out).strip() if os.path.isfile(out) else ''
+    check(appdata and os.path.isdir(appdata), f'perfil do usuario de teste criado ({appdata})')
+    save_state(as_user={'user': user, 'password': pwd, 'appdata': appdata})
 
 
 def process_elevated(pid):
@@ -608,7 +674,7 @@ def _unhosts():
         pass
 
 
-def cmd_update_blocked(zip_path, ver):
+def cmd_update_blocked(zip_path, ver, expect_reopen=False):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
     print(f'\n[update-blocked] update {old} -> {ver} com a pasta do app TRAVADA '
@@ -637,8 +703,17 @@ def cmd_update_blocked(zip_path, ver):
             done = wait_for(lambda: 'Nada foi alterado' in read_text(ulog), 120, 2)
             check(done, f'tentativa {n}: script desistiu sem mexer em nada ("Nada foi alterado")')
             time.sleep(5)
-            opened = bool(app_processes())
+            procs = app_processes()
+            opened = bool(procs)
             info(f'tentativa {n}: app {"ABRIU" if opened else "ficou FECHADO (usuario precisa clicar no icone de novo)"}')
+            if expect_reopen:
+                check(len(procs) == 1 and '--skip-update' in procs[0][1],
+                      f'tentativa {n}: script reabriu a versao atual sozinho (--skip-update)', repr(procs))
+                time.sleep(15)
+                tries = read_text(ulog).count('Update iniciado')
+                check(tries == 1 and len(app_processes()) == 1,
+                      f'tentativa {n}: app reaberto NAO tenta de novo (sem loop de UAC)',
+                      f'{tries} execucoes do script')
             check(file_version(APP_EXE) == old
                   and os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
                   and not os.path.exists(os.path.join(APP_DIR, '_internal.bak')),
@@ -763,6 +838,8 @@ def main():
     args = sys.argv[1:]
     flag83 = '--8dot3' in args
     LIMITED = '--limited' in args
+    if LIMITED:
+        use_appdata(load_state()['as_user']['appdata'])
     api_calls = None
     if '--api-calls' in args:
         i = args.index('--api-calls')
@@ -772,6 +849,8 @@ def main():
     cmd = args[0] if args else ''
     if cmd == 'install-release':
         cmd_install_release(args[1])
+    elif cmd == 'make-user':
+        cmd_make_user()
     elif cmd == 'install-setup':
         cmd_install_setup(args[1], args[2])
     elif cmd == 'seed':
@@ -779,7 +858,7 @@ def main():
     elif cmd == 'update-flow':
         cmd_update_flow(args[1], args[2], flag83, api_calls)
     elif cmd == 'update-blocked':
-        cmd_update_blocked(args[1], args[2])
+        cmd_update_blocked(args[1], args[2], '--expect-reopen' in args)
     elif cmd == 'setup-over':
         cmd_setup_over(args[1], args[2])
     elif cmd == 'webinstaller':

@@ -194,9 +194,11 @@ def _download_from_github(dst, progress_cb=None):
         return None, None
 
 
-def apply_update(staging_dir, **kwargs):
+def apply_update(staging_dir, relaunch_on_fail=True, **kwargs):
     # staging_dir contem os arquivos extraidos do zip (MBChat.exe + _internal/).
     # Script PowerShell mata o processo, substitui a pasta inteira e relanca.
+    # relaunch_on_fail: se o update falhar (ex. UAC negado), reabre a versao
+    # atual, que ficou intacta. False so quando o usuario pediu para SAIR.
     # kwargs aceita show_ui para compat com chamadas antigas (ignorado).
     if not staging_dir or not os.path.isdir(staging_dir):
         log.error(f'apply_update: staging_dir invalido: {staging_dir!r}')
@@ -241,6 +243,27 @@ $internalDir = Join-Path "{target_dir}" "_internal"
 $bakInternal = Join-Path "{target_dir}" "_internal.bak"
 $targetExe = "{target_exe}"
 $bakExe = "{target_exe}.bak"
+$RelaunchOnFail = {'$true' if relaunch_on_fail else '$false'}
+
+# Update falhou e a versao atual esta inteira (nada alterado ou rollback feito):
+# reabre o app. Sem isso o usuario ficava sem o MB Chat ate clicar no icone de
+# novo -- ate 3 vezes, quando o contador de tentativas desiste. --skip-update
+# faz essa abertura NAO tentar de novo (UAC negado viraria loop de prompts);
+# o update fica para a proxima abertura.
+function Start-OldApp {{
+    if (-not $RelaunchOnFail) {{ return }}
+    try {{
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $targetExe
+        $psi.Arguments = "--show --skip-update"
+        $psi.WorkingDirectory = "{target_dir}"
+        $psi.UseShellExecute = $false
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+        Log "Versao atual reaberta (--skip-update)"
+    }} catch {{
+        Log "ERRO ao reabrir a versao atual: $_"
+    }}
+}}
 
 # Restos de uma tentativa anterior interrompida
 if (Test-Path $bakInternal) {{ Remove-Item -Path $bakInternal -Recurse -Force -ErrorAction SilentlyContinue }}
@@ -287,6 +310,7 @@ for ($i = 0; $i -lt 10; $i++) {{
 
 if (-not $ok) {{
     Log "ERRO: nao conseguiu mover _internal (app ainda rodando?). Nada foi alterado."
+    Start-OldApp
     exit 1
 }}
 
@@ -306,6 +330,7 @@ try {{
 }} catch {{
     Log "ERRO ao copiar: $_"
     Restore-Backup
+    Start-OldApp
     exit 1
 }}
 
@@ -316,6 +341,7 @@ $fileCount = (Get-ChildItem -Path $internalDir -Recurse -File -ErrorAction Silen
 if ($fileCount -lt 50) {{
     Log "ERRO: _internal incompleto ($fileCount arquivos)"
     Restore-Backup
+    Start-OldApp
     exit 1
 }}
 Log "Sanity _internal OK: $fileCount arquivos"
@@ -332,6 +358,7 @@ if (Test-Path $stagingExe) {{
     if ($srcLen -ne $dstLen) {{
         Log "ERRO: MBChat.exe nao foi substituido (staging=$srcLen destino=$dstLen)"
         Restore-Backup
+        Start-OldApp
         exit 1
     }}
     Log "Sanity exe OK: $dstLen bytes"

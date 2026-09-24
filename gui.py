@@ -19740,6 +19740,7 @@ class LanMessengerApp:
             lbl_warn.config(text='Aguarde alguns segundos.\nO MB Chat vai reabrir.',
                             fg='#64748b')
             # Da 400ms pra UI atualizar antes de fechar
+            self._restart_requested = True
             self.root.after(400, self._quit)
 
         btn_ok = tk.Button(win, text='  OK  ',
@@ -21376,7 +21377,10 @@ class LanMessengerApp:
             pending = updater.is_update_pending()
             if pending:
                 log.info("Aplicando update via PowerShell no encerramento...")
-                if not updater.apply_update(pending):
+                # So reabre o app se o update falhar quando o usuario pediu
+                # "Reiniciar para Atualizar"; no "Sair" da bandeja, fica fechado.
+                if not updater.apply_update(
+                        pending, relaunch_on_fail=getattr(self, '_restart_requested', False)):
                     updater.clear_update_pending()
                     log.warning("Update pendente invalido no encerramento — limpo")
         except Exception as e:
@@ -21887,7 +21891,13 @@ def main():
     try:
         import updater
         pending_update_dir = updater.is_update_pending()
-        if pending_update_dir:
+        if pending_update_dir and '--skip-update' in sys.argv[1:]:
+            # O script de update acabou de falhar (ex. UAC negado) e reabriu
+            # esta versao: nao tenta de novo agora (viraria loop de prompts do
+            # UAC). O pedido fica para a proxima abertura; o contador de
+            # tentativas NAO e zerado, entao continua valendo o limite de 3.
+            log.info("Update pendente adiado nesta abertura (--skip-update)")
+        elif pending_update_dir:
             # apply_update() retorna True assim que o PowerShell e LANCADO —
             # ela nao espera nem confere o resultado. Se o script falhar (UAC
             # negado, antivirus, arquivo travado), o app fecha, o marcador
