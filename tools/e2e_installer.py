@@ -568,7 +568,12 @@ def _start_mock_github(zip_path, version):
     return srv
 
 
-def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None):
+def process_owner(pid):
+    return ps(f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
+              "Invoke-CimMethod -MethodName GetOwner).User")
+
+
+def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unelevated=False):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
     print(f'\n[update-flow] app {old} instalado recebe a {ver} pelo proprio auto-update'
@@ -646,7 +651,14 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None):
         check(len(procs) == 1 and '--show' in procs[0][1],
               'um unico MBChat aberto, relancado com --show', repr(procs))
         if procs:
-            info(f'app relancado roda como admin: {process_elevated(procs[0][0])}')
+            elev = process_elevated(procs[0][0])
+            owner = process_owner(procs[0][0])
+            info(f'app relancado roda como admin: {elev} (usuario {owner})')
+            if expect_unelevated:
+                u = load_state().get('as_user', {}).get('user', '')
+                check(elev is False and owner.lower() == u.lower(),
+                      f'app reaberto SEM admin e como o usuario original ({u})',
+                      f'admin={elev} usuario={owner}')
         if LIMITED:
             check('admin=True' in ulog_txt, 'script pediu o UAC e rodou elevado (admin=True)')
         time.sleep(20)
@@ -853,6 +865,8 @@ def main():
         api_calls = int(args[i + 1])
         del args[i:i + 2]
     args = [a for a in args if a not in ('--8dot3', '--limited')]
+    if '--expect-unelevated' in args:
+        args = [a for a in args if a != '--expect-unelevated'] + ['--expect-unelevated']
     cmd = args[0] if args else ''
     if cmd == 'install-release':
         cmd_install_release(args[1])
@@ -863,7 +877,7 @@ def main():
     elif cmd == 'seed':
         cmd_seed(args[1])
     elif cmd == 'update-flow':
-        cmd_update_flow(args[1], args[2], flag83, api_calls)
+        cmd_update_flow(args[1], args[2], flag83, api_calls, '--expect-unelevated' in args)
     elif cmd == 'update-blocked':
         cmd_update_blocked(args[1], args[2], '--expect-reopen' in args)
     elif cmd == 'setup-over':

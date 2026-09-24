@@ -204,9 +204,9 @@ jobs:
         if: matrix.scenario == 'next-update-bloqueado'
         run: python tools/e2e_installer.py update-blocked e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --expect-reopen
 
-      - name: Build novo se atualiza sozinho (SEM admin, 1 chamada de API)
+      - name: Build novo se atualiza sozinho (SEM admin, 1 chamada de API, reabre sem admin)
         if: matrix.scenario == 'next-update'
-        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --limited --api-calls 1
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --limited --api-calls 1 --expect-unelevated
 
       # ── instalador web: o publicado (o que os usuarios tem) e o novo ──
       - name: Baixa o instalador web publicado

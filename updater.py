@@ -210,26 +210,86 @@ def apply_update(staging_dir, relaunch_on_fail=True, **kwargs):
     target_dir = _get_long_path(os.path.dirname(target_exe))
     staging_dir = _get_long_path(staging_dir)
     log_path = os.path.join(_UPDATE_DIR, 'update.log')
+    result_path = os.path.join(_UPDATE_DIR, 'update_result.txt')
 
     ps_path = os.path.join(_UPDATE_DIR, 'update.ps1')
 
     ps_content = f'''
-# Auto-elevacao: se nao tem admin, relanca como admin via UAC.
-# Necessario porque C:\\Program Files\\MBChat precisa de permissao elevada
-# para deletar/copiar arquivos. O installer roda como admin (Inno Setup),
+# Auto-elevacao: se nao tem admin, roda uma copia deste script como admin via
+# UAC. Necessario porque C:\\Program Files\\MBChat precisa de permissao
+# elevada para trocar os arquivos. O installer roda como admin (Inno Setup),
 # mas o updater roda como usuario normal.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {{
-    try {{
-        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-        exit 0
-    }} catch {{
-        # Se UAC for negado, tenta sem admin mesmo (funciona se app esta em pasta de usuario)
-    }}
-}}
 
 $LogFile = "{log_path}"
 function Log($msg) {{ "{{0:yyyy-MM-dd HH:mm:ss}}" -f (Get-Date) + " $msg" | Out-File -Append -FilePath $LogFile }}
+
+$ResultFile = "{result_path}"
+$RelaunchOnFail = {'$true' if relaunch_on_fail else '$false'}
+# Copia elevada (UAC): so troca os arquivos e grava o resultado; quem reabre o
+# app e a copia SEM admin que a chamou (ver abaixo).
+$Elevated = $args -contains '-MBElevated'
+
+# Abre o MB Chat via CreateProcess (UseShellExecute=$false herda env vars do pai).
+# CRITICO: NUNCA usar Start-Process / start "" / explorer.exe como metodo
+# principal -- usam ShellExecute, que ignora env vars do pai e causa "Failed to
+# load Python DLL" em maquinas com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI).
+# Start-Process fica so como fallback. Veja CLAUDE.md.
+function Start-App($appArgs) {{
+    $launched = $false
+    try {{
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "{target_exe}"
+        $psi.Arguments = $appArgs
+        $psi.WorkingDirectory = "{target_dir}"
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $false
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+        $launched = $true
+        Log "App lancado via CreateProcess OK ($appArgs)"
+    }} catch {{
+        Log "ERRO no CreateProcess: $_"
+    }}
+    if (-not $launched) {{
+        try {{
+            Start-Process -FilePath "{target_exe}" -ArgumentList $appArgs -ErrorAction Stop
+            $launched = $true
+            Log "App lancado via Start-Process (fallback, $appArgs)"
+        }} catch {{
+            Log "ERRO no fallback Start-Process: $_"
+        }}
+    }}
+    return $launched
+}}
+
+$elevatedRan = $false
+if (-not $isAdmin) {{
+    try {{
+        Remove-Item -Path $ResultFile -Force -ErrorAction SilentlyContinue
+        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -MBElevated"
+        $elevatedRan = $true
+    }} catch {{
+        # UAC negado: segue sem admin (funciona se o app estiver em pasta do usuario)
+        Log "Elevacao (UAC) negada ou falhou: $_ -- seguindo sem admin"
+    }}
+}}
+if ($elevatedRan) {{
+    # A copia ELEVADA ja trocou (ou nao) os arquivos. Quem reabre o app e ESTA
+    # copia: sem admin e como o usuario que estava usando o MB Chat. Reabrir
+    # pela copia elevada deixava o app rodando como administrador ate reiniciar
+    # e, se um funcionario sem admin digitasse a senha de um administrador no
+    # UAC, o app reabria na conta do administrador (outro perfil e historico).
+    $result = ''
+    if (Test-Path $ResultFile) {{ $result = (Get-Content -Path $ResultFile -Raw).Trim() }}
+    Remove-Item -Path $ResultFile -Force -ErrorAction SilentlyContinue
+    Log "Copia elevada terminou (resultado=$result); reabrindo como o usuario original"
+    if ($result -eq 'ok') {{
+        Start-App "--show" | Out-Null
+    }} elseif ($RelaunchOnFail) {{
+        if (Start-App "--show --skip-update") {{ Log "Versao atual reaberta (--skip-update)" }}
+    }}
+    exit 0
+}}
 
 Log "Update iniciado (admin=$isAdmin)"
 Log "Target dir: {target_dir}"
@@ -243,7 +303,6 @@ $internalDir = Join-Path "{target_dir}" "_internal"
 $bakInternal = Join-Path "{target_dir}" "_internal.bak"
 $targetExe = "{target_exe}"
 $bakExe = "{target_exe}.bak"
-$RelaunchOnFail = {'$true' if relaunch_on_fail else '$false'}
 
 # Update falhou e a versao atual esta inteira (nada alterado ou rollback feito):
 # reabre o app. Sem isso o usuario ficava sem o MB Chat ate clicar no icone de
@@ -251,18 +310,13 @@ $RelaunchOnFail = {'$true' if relaunch_on_fail else '$false'}
 # faz essa abertura NAO tentar de novo (UAC negado viraria loop de prompts);
 # o update fica para a proxima abertura.
 function Start-OldApp {{
-    if (-not $RelaunchOnFail) {{ return }}
-    try {{
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $targetExe
-        $psi.Arguments = "--show --skip-update"
-        $psi.WorkingDirectory = "{target_dir}"
-        $psi.UseShellExecute = $false
-        [System.Diagnostics.Process]::Start($psi) | Out-Null
-        Log "Versao atual reaberta (--skip-update)"
-    }} catch {{
-        Log "ERRO ao reabrir a versao atual: $_"
+    if ($Elevated) {{
+        # quem reabre e a copia sem admin; aqui so avisa que falhou
+        Set-Content -Path $ResultFile -Value 'fail' -ErrorAction SilentlyContinue
+        return
     }}
+    if (-not $RelaunchOnFail) {{ return }}
+    if (Start-App "--show --skip-update") {{ Log "Versao atual reaberta (--skip-update)" }}
 }}
 
 # Restos de uma tentativa anterior interrompida
@@ -398,37 +452,16 @@ foreach ($oldExe in $oldExes) {{
     }}
 }}
 
-# Lanca o app via CreateProcess (UseShellExecute=$false herda env vars do pai).
-# CRITICO: NUNCA usar Start-Process / start "" / explorer.exe — usam ShellExecute
-# que ignora env vars do pai e causa "Failed to load Python DLL" em maquinas
-# com caminho 8.3 no %TEMP% (ex: PEDRO~1.PAI). Veja CLAUDE.md.
-# Passa --show pro novo MBChat abrir a janela principal direto (em vez de iniciar
-# em tray). Sem isso o usuario clica OK no dialog mas o app fica "escondido" na
-# bandeja e ele pensa que nao reabriu.
-Log "Lancando app via CreateProcess..."
-$launched = $false
-try {{
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "{target_exe}"
-    $psi.Arguments = "--show"
-    $psi.WorkingDirectory = "{target_dir}"
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $false
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
-    $launched = $true
-    Log "App lancado via CreateProcess OK (--show)"
-}} catch {{
-    Log "ERRO no CreateProcess: $_"
-}}
-
-# Fallback: se CreateProcess falhou por algum motivo, tenta Start-Process
-if (-not $launched) {{
-    try {{
-        Start-Process -FilePath "{target_exe}" -ArgumentList "--show" -ErrorAction Stop
-        Log "App lancado via Start-Process (fallback, --show)"
-    }} catch {{
-        Log "ERRO no fallback Start-Process: $_"
-    }}
+# Lanca o app via CreateProcess (Start-App). Passa --show pro novo MBChat abrir
+# a janela principal direto (em vez de iniciar em tray). Sem isso o usuario
+# clica OK no dialog mas o app fica "escondido" na bandeja e ele pensa que nao
+# reabriu. A copia elevada nao abre nada: so avisa a copia sem admin.
+if ($Elevated) {{
+    Set-Content -Path $ResultFile -Value 'ok' -ErrorAction SilentlyContinue
+    Log "Arquivos trocados; a copia sem admin reabre o app"
+}} else {{
+    Log "Lancando app via CreateProcess..."
+    Start-App "--show" | Out-Null
 }}
 
 # Remove este script

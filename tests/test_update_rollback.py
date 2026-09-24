@@ -94,7 +94,8 @@ def gen_script(base, inst, stg):
     updater.sys.executable = os.path.join(inst, 'MBChat.exe')
     updater.subprocess.Popen = lambda *a, **kw: None
     try:
-        updater.apply_update(stg)
+        # sem reabrir o app nas falhas: o exe do sandbox e falso (fora do escopo)
+        updater.apply_update(stg, relaunch_on_fail=False)
     finally:
         updater.sys.executable = real_exe
         updater.subprocess.Popen = real_popen

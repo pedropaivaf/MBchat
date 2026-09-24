@@ -93,10 +93,28 @@ def test_script_text():
     check(call_lines and def_line < min(call_lines), 'Start-OldApp definida antes do primeiro uso')
     fdef = txt.index('function Start-OldApp')
     body = txt[fdef:txt.index('\n}\n', fdef)]
-    check('"--show --skip-update"' in body and 'UseShellExecute = $false' in body,
+    sa = txt.index('function Start-App')
+    start_app = txt[sa:txt.index('\n}\n', sa)]
+    check('"--show --skip-update"' in body and 'UseShellExecute = $false' in start_app,
           'reabre com --show --skip-update via CreateProcess (8.3 ok)')
     ok_path = txt[txt.index('# Sucesso confirmado'):]
     check('Start-OldApp' not in ok_path, 'caminho de sucesso nao usa Start-OldApp')
+
+    print('\n[1b] copia elevada (UAC) nao abre o app: a copia sem admin reabre')
+    check("$Elevated = $args -contains '-MBElevated'" in txt, 'copia elevada identificada por -MBElevated')
+    runas = txt[txt.index('if (-not $isAdmin)'):txt.index('Log "Update iniciado')]
+    check('-Verb RunAs' in runas and '-Wait' in runas and '-MBElevated' in runas,
+          'copia sem admin chama a elevada e ESPERA ela terminar')
+    check(re.search(r"if \(\$result -eq 'ok'\) \{\s*Start-App \"--show\"", runas) is not None,
+          'deu certo: copia sem admin reabre a versao nova (--show)')
+    check('Start-App "--show --skip-update"' in runas and '$RelaunchOnFail' in runas,
+          'falhou: copia sem admin reabre a versao atual (--skip-update)')
+    check(runas.index('Start-App') > runas.index('$result ='), 'so reabre depois de ler o resultado')
+    tail = txt[txt.index('# Lanca o app via CreateProcess'):]
+    check(re.search(r"if \(\$Elevated\) \{\s*Set-Content -Path \$ResultFile -Value 'ok'", tail) is not None,
+          'copia elevada so grava "ok" (nao abre o app como administrador)')
+    check(re.search(r"if \(\$Elevated\) \{[^}]*Set-Content -Path \$ResultFile -Value 'fail'", body) is not None,
+          'copia elevada que falha so grava "fail"')
     check(updater.apply_update(os.path.join(base, 'nao_existe')) is False,
           'staging invalido continua devolvendo False (boot segue normal)')
 
@@ -127,7 +145,7 @@ def test_real_powershell():
         ok('SKIP  teste especifico de Windows/PowerShell')
         return
     import win32file
-    for relaunch in (True, False):
+    for relaunch, elevated in ((True, False), (False, False), (True, True)):
         base, inst, stg = sandbox()
         # exe de verdade (qualquer um serve: so precisa iniciar)
         shutil.copy(os.path.join(os.environ['SystemRoot'], 'System32', 'where.exe'),
@@ -147,18 +165,24 @@ def test_real_powershell():
                                     None, win32file.OPEN_EXISTING, 0, None)
         try:
             r = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                                '-File', ps], capture_output=True, timeout=120)
+                                '-File', ps] + (['-MBElevated'] if elevated else []),
+                               capture_output=True, timeout=120)
         finally:
             win32file.CloseHandle(lock)
         with open(os.path.join(base, 'update.log'), 'rb') as f:
             raw = f.read()
         log = raw.decode('utf-16', errors='replace') if raw[:2] == b'\xff\xfe' else raw.decode('utf-8', 'replace')
-        label = 'boot/Reiniciar' if relaunch else '"Sair"'
+        label = 'copia elevada' if elevated else ('boot/Reiniciar' if relaunch else '"Sair"')
         check(r.returncode == 1 and 'Nada foi alterado' in log, f'{label}: script desiste sem mexer em nada')
         check(os.path.isdir(os.path.join(inst, '_internal'))
               and not os.path.exists(os.path.join(inst, '_internal.bak')),
               f'{label}: versao atual intacta')
-        if relaunch:
+        if elevated:
+            res = os.path.join(base, 'update_result.txt')
+            got = open(res, encoding='utf-8', errors='replace').read().strip() if os.path.isfile(res) else ''
+            check(got == 'fail' and 'reaberta' not in log,
+                  'copia elevada: grava "fail" e NAO abre o app', repr(got))
+        elif relaunch:
             check('Versao atual reaberta (--skip-update)' in log, 'boot/Reiniciar: app reaberto', log[-300:])
         else:
             check('reaberta' not in log, '"Sair": app continua fechado')
