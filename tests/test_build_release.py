@@ -245,6 +245,70 @@ def test_web_installer_url_contract():
           'release nunca sai como pre-release/rascunho (o /latest/ ignoraria)')
 
 
+def _fake_dist(tmp, **kw):
+    # dist/MBChat de mentira, completo por padrao
+    d = os.path.join(tmp, 'dist', 'MBChat')
+    internal = os.path.join(d, '_internal')
+    os.makedirs(internal)
+    with open(os.path.join(d, 'MBChat.exe'), 'wb') as f:
+        f.write(b'MZ...' + (b'' if kw.get('old_pyi') else b'_PYI_ARCHIVE_FILE') + b'...')
+    dll = f'python{sys.version_info[0]}{sys.version_info[1]}.dll'
+    arquivos = ['base_library.zip', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', dll]
+    for n in arquivos:
+        if n not in kw.get('sem', ()):
+            open(os.path.join(internal, n), 'wb').close()
+    if kw.get('longo'):
+        fundo = os.path.join(internal, *(['pasta_com_nome_comprido'] * 7))
+        os.makedirs(fundo)
+        open(os.path.join(fundo, 'arquivo.txt'), 'wb').close()
+    return d, dll
+
+
+def test_verify_dist():
+    print('\n[8] build conferido antes de virar setup/zip ("Failed to load Python DLL")')
+    pydir = tempfile.mkdtemp(prefix='mbchat_py_')
+    for n in ('vcruntime140.dll', 'vcruntime140_1.dll', 'python.exe'):
+        open(os.path.join(pydir, n), 'wb').close()
+    real_pydir = build.PYTHON_DIR
+    build.PYTHON_DIR = pydir
+    try:
+        def run(**kw):
+            tmp = tempfile.mkdtemp(prefix='mbchat_dist_')
+            build.HERE = tmp
+            d, dll = _fake_dist(tmp, **kw)
+            if not kw.get('sem_zip'):
+                build._create_update_zip(d)
+            return build._verify_dist(d), dll
+
+        probs, dll = run()
+        check(probs == [], 'build completo passa', repr(probs))
+        probs, dll = run(sem=(dll,))
+        check(any(dll in p for p in probs), f'sem {dll}: barrado', repr(probs))
+        probs, _ = run(sem=('VCRUNTIME140_1.dll',))
+        check(any('vcruntime140_1' in p.lower() for p in probs),
+              'sem o runtime do Visual C++ (PC sem VC++ Redistributable): barrado', repr(probs))
+        probs, _ = run(old_pyi=True)
+        check(any('PyInstaller antigo' in p for p in probs),
+              'MBChat.exe de PyInstaller < 6.10: barrado', repr(probs))
+        probs, _ = run(longo=True)
+        check(any('caminho longo' in p for p in probs), 'caminho perto do limite de 260: barrado', repr(probs))
+        probs, _ = run(sem_zip=True)
+        check(any('zip' in p for p in probs), 'sem zip do auto-update: barrado', repr(probs))
+        tmp = tempfile.mkdtemp(prefix='mbchat_dist_')
+        d = os.path.join(tmp, 'dist', 'MBChat')
+        os.makedirs(d)
+        open(os.path.join(d, 'MBChat.exe'), 'wb').close()
+        check(any('_internal' in p for p in build._verify_dist(d)),
+              'build --onefile / sem _internal: barrado')
+    finally:
+        build.PYTHON_DIR = real_pydir
+    with open(os.path.join(root_dir, 'build.py'), encoding='utf-8') as f:
+        bsrc = f.read()
+    corpo = bsrc[bsrc.index('def _do_build'):bsrc.index('def _create_update_zip')]
+    check('_verify_dist(' in corpo and 'return False' in corpo.split('_verify_dist(')[1],
+          '_do_build confere o build e falha se houver problema')
+
+
 if __name__ == '__main__':
     real_run = build.subprocess.run
     try:
@@ -255,6 +319,7 @@ if __name__ == '__main__':
         test_missing_required_assets()
         test_stale_setup_never_published()
         test_web_installer_url_contract()
+        test_verify_dist()
     finally:
         build.subprocess.run = real_run
     print(f'\n{len(PASS)} PASS, {len(FAIL)} FAIL')

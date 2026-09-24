@@ -33,6 +33,9 @@
 #                                  tem que voltar a abrir e atualizar depois
 #   setup-over SETUP VER           instalador novo por cima, com o app ABERTO
 #   webinstaller EXE [--8dot3]     instalador web baixa o setup da ultima release e o abre
+#   wizard EXE VER [--fresh]       roda o instalador web (ou o setup) e CLICA o assistente ate
+#                                  "Concluir" com "Abrir MB Chat" marcado; confere que o app
+#                                  abriu de verdade (sem "Failed to load Python DLL")
 
 import os
 import re
@@ -364,6 +367,15 @@ def db_get(sql, args=()):
         con.close()
 
 
+def db_exec(sql, args=()):
+    con = sqlite3.connect(DB_PATH, timeout=15)
+    try:
+        con.execute(sql, args)
+        con.commit()
+    finally:
+        con.close()
+
+
 def setting(key):
     try:
         r = db_get('SELECT value FROM settings WHERE key=?', (key,))
@@ -490,6 +502,11 @@ class _MockGitHub(BaseHTTPRequestHandler):
     version = ''
     sha = ''
     hits = []
+    # depois de servir o zip, passa a anunciar uma versao velha: o app ja
+    # atualizado nao baixa de novo (usado quando o conteudo do zip e de uma
+    # versao menor que a anunciada, ex. o zip REAL da release)
+    stop_after_zip = False
+    served_zip = False
 
     def log_message(self, fmt, *args):
         pass
@@ -498,9 +515,10 @@ class _MockGitHub(BaseHTTPRequestHandler):
         _MockGitHub.hits.append(self.path)
         if self.path.startswith(f'/repos/{REPO}/releases/latest'):
             base = 'https://api.github.com/e2e-assets'
+            ver = '0.0.1' if (_MockGitHub.stop_after_zip and _MockGitHub.served_zip) else self.version
             body = json.dumps({
-                'tag_name': f'v{self.version}',
-                'name': f'MB Chat v{self.version}',
+                'tag_name': f'v{ver}',
+                'name': f'MB Chat v{ver}',
                 'body': ('Teste ponta a ponta do auto-update\n'
                          'Segunda linha das notas\n\n'
                          f'SHA256: {self.sha}'),
@@ -523,6 +541,7 @@ class _MockGitHub(BaseHTTPRequestHandler):
             self.end_headers()
             with open(self.zip_path, 'rb') as f:
                 shutil.copyfileobj(f, self.wfile, 1 << 20)
+            _MockGitHub.served_zip = True
             return
         self.send_response(404)
         self.end_headers()
@@ -556,6 +575,7 @@ def _start_mock_github(zip_path, version):
                                   serialization.NoEncryption()))
     _MockGitHub.zip_path = zip_path
     _MockGitHub.version = version
+    _MockGitHub.served_zip = False
     _MockGitHub.sha = sha256_file(zip_path)
     srv = ThreadingHTTPServer(('127.0.0.1', 443), _MockGitHub)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -606,7 +626,12 @@ def process_owner(pid):
 
 
 def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unelevated=False,
-                    via_startup=False):
+                    via_startup=False, content_ver=None):
+    # ver = versao anunciada pelo GitHub falso; content_ver = versao que o zip
+    # realmente contem (difere so no teste com o zip REAL da release)
+    announced = ver
+    ver = content_ver or ver
+    _MockGitHub.stop_after_zip = bool(content_ver)
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
     print(f'\n[update-flow] app {old} instalado recebe a {ver} pelo proprio auto-update'
@@ -622,7 +647,7 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unele
             env['TEMP'] = env['TMP'] = sp
         else:
             skip('runner sem nomes 8.3: cenario TEMP 8.3 NAO testado nesta rodada')
-    srv = _start_mock_github(zip_path, ver)
+    srv = _start_mock_github(zip_path, announced)
     try:
         # ── 1. download silencioso (o que acontece com o app aberto) ──
         print('\n  -- 1. download silencioso em segundo plano --')
@@ -665,6 +690,9 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unele
         # ── 2. "reinicia o PC": o app abre pelo atalho de inicializacao ──
         print('\n  -- 2. proxima abertura aplica o update (boot do Windows) --')
         kill_app()
+        # apaga o last_version: so o app novo, rodando Python de verdade (sem
+        # "Failed to load Python DLL"), grava de novo
+        db_exec("DELETE FROM settings WHERE key='last_version'")
         ulog = os.path.join(UPD_DIR, 'update.log')
         if os.path.isfile(ulog):
             os.remove(ulog)
@@ -892,6 +920,116 @@ def cmd_webinstaller(stub, use_8dot3=False):
     wait_for(lambda: not processes('MBChat_Setup.tmp') and not processes('MBChat_Setup.exe'), 30)
 
 
+# ───────────────────────── assistente (wizard) do Inno Setup ─────────────────────────
+
+def _pids(name):
+    return {pid for pid, _ in processes(name)}
+
+
+def _dialogs_of(pids):
+    # textos de caixas de mensagem (#32770) abertas por esses processos
+    from pywinauto import Desktop
+    out = []
+    for d in Desktop(backend='win32').windows(class_name='#32770'):
+        try:
+            if d.process_id() in pids and d.is_visible():
+                txt = ' | '.join(t for t in [d.window_text()] + [c.window_text() for c in d.descendants()] if t)
+                out.append(txt)
+        except Exception:
+            pass
+    return out
+
+
+def drive_wizard(timeout=600):
+    # Clica o botao principal (Avancar / Instalar / Concluir) de cada pagina,
+    # como o funcionario faria, e devolve (paginas, erro). BM_CLICK por
+    # PostMessage: nao depende de foco nem de mouse.
+    import win32api
+    from pywinauto import Desktop
+    pages, started, last = [], False, None
+    end = time.time() + timeout
+    while time.time() < end:
+        setup_pids = _pids('MBChat_Setup.tmp') | _pids('MBChat_Setup.exe')
+        erros = _dialogs_of(setup_pids)
+        if erros:
+            return pages, 'caixa de dialogo do instalador: ' + ' || '.join(erros)
+        wiz = [w for w in Desktop(backend='win32').windows(class_name='TWizardForm') if w.is_visible()]
+        if not wiz:
+            if started and not setup_pids:
+                return pages, None
+            time.sleep(1)
+            continue
+        started = True
+        w = wiz[0]
+        alvo, rotulo = None, ''
+        for c in w.descendants(class_name='TNewButton'):
+            try:
+                t = c.window_text().replace('&', '').strip()
+                if c.is_visible() and c.is_enabled() and t.startswith(
+                        ('Avan', 'Instalar', 'Concluir', 'Next', 'Install', 'Finish')):
+                    alvo, rotulo = c, t
+                    break
+            except Exception:
+                pass
+        if alvo is None:
+            time.sleep(1)
+            continue
+        if (alvo.handle, rotulo) != last:
+            pages.append(rotulo)
+            last = (alvo.handle, rotulo)
+            win32api.PostMessage(alvo.handle, 0x00F5, 0, 0)  # BM_CLICK
+        time.sleep(2)
+    return pages, 'o assistente nao terminou em %ds' % timeout
+
+
+def check_app_booted(ver, label):
+    # O app aberto pelo "Abrir MB Chat" do assistente rodou Python de verdade?
+    # Grava last_version no banco (o teste apagou antes) e nao tem caixa de
+    # erro do carregador ("Failed to load Python DLL").
+    up = wait_for(lambda: setting('last_version') == ver and len(app_processes()) == 1, 120, 2)
+    procs = app_processes()
+    erros = _dialogs_of({p for p, _ in procs})
+    check(up and not erros, f'{label}: MB Chat {ver} abriu de verdade (Python carregou, sem erro de DLL)',
+          f'last_version={setting("last_version")} procs={procs} dialogos={erros}')
+    time.sleep(15)
+    procs = app_processes()
+    erros = _dialogs_of({p for p, _ in procs})
+    check(len(procs) == 1 and not erros, f'{label}: app continua aberto 15s depois, sem janela de erro',
+          f'procs={procs} dialogos={erros}')
+    if procs:
+        info(f'{label}: app aberto pelo assistente roda como admin: {process_elevated(procs[0][0])}')
+
+
+def cmd_wizard(exe, ver, fresh=False):
+    # exe = instalador web (baixa o setup da ultima release) ou o proprio setup
+    nome = os.path.basename(exe)
+    print(f'\n[wizard] {nome}: assistente clicado ate "Concluir" com "Abrir MB Chat" marcado'
+          + (' (PC sem MB Chat)' if fresh else ' (por cima, com o app ABERTO)'))
+    if fresh:
+        check(not os.path.exists(APP_EXE), 'ponto de partida: MB Chat nao instalado')
+    else:
+        launch_app()
+        check(wait_for(lambda: len(app_processes()) == 1, 60), 'app aberto antes de instalar')
+        time.sleep(8)
+        db_exec("DELETE FROM settings WHERE key='last_version'")
+    t0 = time.time()
+    subprocess.Popen([os.path.abspath(exe)], stdin=subprocess.DEVNULL)
+    pages, erro = drive_wizard()
+    info(f'paginas clicadas: {" > ".join(pages)} ({time.time() - t0:.0f}s)')
+    check(erro is None, 'assistente foi do inicio ao fim sem erro', str(erro))
+    check(any(p.startswith(('Concluir', 'Finish')) for p in pages), 'chegou na pagina final (Concluir)')
+    check(file_version(APP_EXE) == ver, f'MBChat.exe instalado e {ver}', file_version(APP_EXE))
+    check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll')), '_internal com python314.dll')
+    for rule in ('MBChat TCP In', 'MBChat TCP In Dynamic', 'MBChat UDP In'):
+        check(firewall_rule(rule), f'regra de firewall "{rule}"')
+    check_app_booted(ver, 'apos o assistente')
+    if not fresh:
+        check_data_preserved('apos reinstalar pelo assistente')
+    if FAIL:
+        dump_logs()
+    save_state(installed_tag=f'v{ver}')
+
+
 def main():
     if os.environ.get('MBCHAT_E2E') != '1':
         print('Recusado: este teste instala em Program Files e mexe no arquivo hosts.')
@@ -908,8 +1046,13 @@ def main():
         i = args.index('--api-calls')
         api_calls = int(args[i + 1])
         del args[i:i + 2]
+    content_ver = None
+    if '--content-ver' in args:
+        i = args.index('--content-ver')
+        content_ver = args[i + 1]
+        del args[i:i + 2]
     args = [a for a in args if a not in ('--8dot3', '--limited')]
-    for flag in ('--expect-unelevated', '--via-startup'):
+    for flag in ('--expect-unelevated', '--via-startup', '--fresh'):
         if flag in args:
             args = [a for a in args if a != flag] + [flag]
     cmd = args[0] if args else ''
@@ -923,13 +1066,15 @@ def main():
         cmd_seed(args[1])
     elif cmd == 'update-flow':
         cmd_update_flow(args[1], args[2], flag83, api_calls, '--expect-unelevated' in args,
-                        '--via-startup' in args)
+                        '--via-startup' in args, content_ver)
     elif cmd == 'update-blocked':
         cmd_update_blocked(args[1], args[2], '--expect-reopen' in args)
     elif cmd == 'setup-over':
         cmd_setup_over(args[1], args[2])
     elif cmd == 'webinstaller':
         cmd_webinstaller(args[1], flag83)
+    elif cmd == 'wizard':
+        cmd_wizard(args[1], args[2], '--fresh' in args)
     else:
         print(__doc__ or 'uso: ver cabecalho do arquivo')
         sys.exit(2)

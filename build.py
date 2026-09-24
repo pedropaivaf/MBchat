@@ -174,7 +174,77 @@ def _do_build():
     # Gera zip para auto-update
     _create_update_zip(out_dir)
 
+    problemas = _verify_dist(out_dir)
+    if problemas:
+        print('\nERRO: o build saiu incompleto -- nas maquinas isso vira '
+              '"Failed to load Python DLL":')
+        for p in problemas:
+            print(f'  - {p}')
+        return False
+    print('Build conferido: DLL do Python, runtime do Visual C++, PyInstaller e zip OK.')
     return True
+
+
+# Confere o build antes de gerar instalador/release. A pasta dist/MBChat vai
+# inteira para o setup e para o zip do auto-update: o que faltar aqui aparece
+# nas maquinas como "Failed to load Python DLL" ao abrir o app.
+def _verify_dist(dist_dir, zip_path=None):
+    problemas = []
+    internal = os.path.join(dist_dir, '_internal')
+    exe = os.path.join(dist_dir, 'MBChat.exe')
+    dll = f'python{sys.version_info[0]}{sys.version_info[1]}.dll'
+    if not os.path.isfile(exe):
+        problemas.append('MBChat.exe ausente')
+    if not os.path.isdir(internal):
+        problemas.append('pasta _internal ausente (PyInstaller < 6 ou build --onefile)')
+        return problemas
+    presentes = {n.lower() for n in os.listdir(internal)}
+    for obrigatorio in (dll, 'base_library.zip'):
+        if obrigatorio.lower() not in presentes:
+            problemas.append(f'_internal sem {obrigatorio}')
+    # Runtime do Visual C++ usado pelo Python: num Windows 10 sem o VC++
+    # Redistributable o app so abre se ele estiver dentro do _internal.
+    try:
+        for nome in os.listdir(PYTHON_DIR):
+            n = nome.lower()
+            if n.startswith('vcruntime') and n.endswith('.dll') and n not in presentes:
+                problemas.append(f'_internal sem {nome} (runtime do Visual C++)')
+    except OSError:
+        pass
+    # PyInstaller >= 6.10: o carregador descarta as variaveis _PYI_* herdadas
+    # de outro app PyInstaller (o instalador web abre o setup, que abre o
+    # MBChat). Carregador antigo podia tentar usar a pasta temporaria do
+    # instalador web, ja apagada.
+    if os.path.isfile(exe):
+        with open(exe, 'rb') as f:
+            if b'_PYI_ARCHIVE_FILE' not in f.read():
+                problemas.append('MBChat.exe gerado por PyInstaller antigo (< 6.10)')
+    # Caminhos: o zip e extraido em %APPDATA%\MBChat\update_staging (ate ~90
+    # caracteres com nome.sobrenome); o total precisa ficar abaixo de 260.
+    maior = ''
+    for raiz, _dirs, arquivos in os.walk(dist_dir):
+        for a in arquivos:
+            rel = os.path.relpath(os.path.join(raiz, a), dist_dir)
+            if len(rel) > len(maior):
+                maior = rel
+    if len(maior) > 150:
+        problemas.append(f'caminho longo demais ({len(maior)} caracteres): {maior}')
+    zip_path = zip_path or os.path.join(os.path.dirname(dist_dir), 'MBChat_update.zip')
+    if os.path.isfile(zip_path):
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                ruim = zf.testzip()
+                nomes = {n.lower() for n in zf.namelist()}
+            if ruim:
+                problemas.append(f'zip do auto-update corrompido ({ruim})')
+            for obrigatorio in ('MBChat.exe', f'_internal/{dll}'):
+                if obrigatorio.lower() not in nomes:
+                    problemas.append(f'zip do auto-update sem {obrigatorio}')
+        except zipfile.BadZipFile as e:
+            problemas.append(f'zip do auto-update invalido: {e}')
+    else:
+        problemas.append('zip do auto-update nao gerado')
+    return problemas
 
 
 def _create_update_zip(src_dir):

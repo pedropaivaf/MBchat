@@ -113,7 +113,8 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
         scenario: [auto-update, auto-update-8dot3, auto-update-uac, auto-update-bloqueado,
-                   setup-over, next-update, next-update-bloqueado, webinstaller]
+                   auto-update-zip-real, setup-over, next-update, next-update-bloqueado,
+                   webinstaller, wizard]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -127,7 +128,7 @@ jobs:
           python-version: '3.14'
 
       - name: Dependencias do teste
-        run: pip install pywin32 cryptography
+        run: pip install pywin32 cryptography pywinauto
 
       - uses: actions/download-artifact@v4
         with:
@@ -148,11 +149,11 @@ jobs:
 
       # ── auto-update: o exe oficial se atualiza sozinho ──
       - name: Instala a release oficial
-        if: matrix.scenario != 'webinstaller' && !startsWith(matrix.scenario, 'next-update')
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-update')
         run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
 
       - name: Primeira abertura + historico de teste
-        if: matrix.scenario != 'webinstaller' && !startsWith(matrix.scenario, 'next-update') && matrix.scenario != 'auto-update-uac'
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-update') && matrix.scenario != 'auto-update-uac'
         run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
 
       # UAC como no escritorio: 2o usuario ADMIN local. Com o UAC ligado ele
@@ -183,6 +184,36 @@ jobs:
       - name: Auto-update com a pasta travada (UAC negado)
         if: matrix.scenario == 'auto-update-bloqueado'
         run: python tools/e2e_installer.py update-blocked e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
+
+      # O zip REAL da release (1085 arquivos, Tcl/Tk 8.6, numpy...) -- o do
+      # build de teste e menor. Anunciado como versao nova para o exe oficial
+      # aplicar; conteudo continua sendo a versao da release.
+      - name: Auto-update com o pacote REAL da release
+        if: matrix.scenario == 'auto-update-zip-real'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/pedropaivaf/MBchat/releases/download/$env:BASE_TAG/MBChat_update.zip" -OutFile zip_real.zip
+          python tools/e2e_installer.py update-flow zip_real.zip ${{ env.NEW_VER }} --content-ver ${{ env.BASE_VER }}
+
+      # ── assistente do instalador clicado ate o fim, "Abrir MB Chat" marcado ──
+      - name: Assistente pelo instalador web publicado (PC sem MB Chat)
+        if: matrix.scenario == 'wizard'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/pedropaivaf/MBchat/releases/download/$env:BASE_TAG/MBChat_WebInstaller.exe" -OutFile web_publicado.exe
+          python tools/e2e_installer.py wizard web_publicado.exe ${{ env.BASE_VER }} --fresh
+
+      - name: Historico de teste
+        if: matrix.scenario == 'wizard'
+        run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
+
+      - name: Assistente pelo instalador web de novo, com o app aberto
+        if: matrix.scenario == 'wizard'
+        run: python tools/e2e_installer.py wizard web_publicado.exe ${{ env.BASE_VER }}
+
+      - name: Assistente do setup novo por cima, com o app aberto
+        if: matrix.scenario == 'wizard'
+        run: python tools/e2e_installer.py wizard e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }}
 
       # ── setup novo por cima da versao oficial ──
       - name: Setup novo por cima (app aberto)
