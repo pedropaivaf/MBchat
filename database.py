@@ -94,6 +94,25 @@ def get_db_path():
     return os.path.join(db_dir, db_name)
 
 
+# lower() do Python (Unicode completo) exposto ao SQLite como mb_lower(). O
+# LIKE/lower() nativos do SQLite so convertem A-Z: buscar "atenção" no
+# Historico nao achava "ATENÇÃO" (Ç/Ã maiusculos ficavam de fora).
+def _mb_lower(value):
+    return value.lower() if isinstance(value, str) else value
+
+
+# Condicao SQL de busca por trecho na coluna content, sem diferenciar
+# maiusculas/minusculas (inclusive acentuadas) -- mesmo criterio da janela
+# Historico do chat (query.lower() in content.lower()). Usa instr() em vez de
+# LIKE: com LIKE, "%" e "_" digitados na busca viravam curinga ("50%" achava
+# "50 reais", "arquivo_final" achava "arquivoXfinal"). Busca so ASCII usa o
+# lower() nativo (rapido); com acento usa mb_lower().
+def _content_contains(search_text):
+    q = search_text.lower()
+    fn = 'lower' if q.isascii() else 'mb_lower'
+    return f" AND instr({fn}(content), ?) > 0", q
+
+
 # Gerenciador do banco SQLite local
 # Cada thread recebe sua própria conexão (threading.local) para evitar conflitos
 # WAL mode permite leituras simultâneas com escritas
@@ -115,6 +134,11 @@ class Database:
             self._local.conn.execute("PRAGMA cache_size=-2000")  # Limita cache de memória em 2MB por conexão
             self._local.conn.execute("PRAGMA busy_timeout=30000")  # 30s busy wait SQLite
             self._local.conn.execute("PRAGMA foreign_keys=ON")  # Ativa chaves estrangeiras
+            try:
+                self._local.conn.create_function('mb_lower', 1, _mb_lower,
+                                                 deterministic=True)
+            except sqlite3.NotSupportedError:
+                self._local.conn.create_function('mb_lower', 1, _mb_lower)
         return self._local.conn
 
     def _init_db(self):
@@ -892,13 +916,12 @@ class Database:
         """, (from_user_id, local_user_id))
         self.conn.commit()
 
-    # Busca mensagens por texto (LIKE %query%), até 500 resultados
+    # Busca mensagens por trecho (sem diferenciar maiusculas/minusculas), até 500 resultados
     def search_messages(self, query, limit=500):
-        rows = self.conn.execute("""
-            SELECT * FROM messages
-            WHERE content LIKE ?
-            ORDER BY timestamp DESC LIMIT ?
-        """, (f'%{query}%', limit)).fetchall()
+        cond, q = _content_contains(query)
+        rows = self.conn.execute(
+            "SELECT * FROM messages WHERE 1=1" + cond +
+            " ORDER BY timestamp DESC LIMIT ?", (q, limit)).fetchall()
         return [dict(r) for r in rows]
 
     # Retorna peers com quem houve conversa + data da última mensagem (para tela Histórico)
@@ -943,8 +966,9 @@ class Database:
             sql += " AND timestamp <= ?"
             params.append(date_to)
         if search_text:
-            sql += " AND content LIKE ?"
-            params.append(f'%{search_text}%')
+            cond, q = _content_contains(search_text)
+            sql += cond
+            params.append(q)
         sql += " ORDER BY timestamp ASC"
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
@@ -955,8 +979,9 @@ class Database:
         sql = "SELECT * FROM messages WHERE 1=1"
         params = []
         if search_text:
-            sql += " AND content LIKE ?"
-            params.append(f'%{search_text}%')
+            cond, q = _content_contains(search_text)
+            sql += cond
+            params.append(q)
         if date_from:
             sql += " AND timestamp >= ?"
             params.append(date_from)
@@ -983,8 +1008,9 @@ class Database:
         """
         params = []
         if search_text:
-            sql += " AND content LIKE ?"
-            params.append(f'%{search_text}%')
+            cond, q = _content_contains(search_text)
+            sql += cond
+            params.append(q)
         if date_from:
             sql += " AND timestamp >= ?"
             params.append(date_from)
@@ -999,8 +1025,9 @@ class Database:
         sql = "SELECT COUNT(*) FROM messages WHERE 1=1"
         params = []
         if search_text:
-            sql += " AND content LIKE ?"
-            params.append(f'%{search_text}%')
+            cond, q = _content_contains(search_text)
+            sql += cond
+            params.append(q)
         if date_from:
             sql += " AND timestamp >= ?"
             params.append(date_from)

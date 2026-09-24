@@ -1416,3 +1416,46 @@ na main thread, FIFO, kwargs, excecao reportada, RAM estavel), guarda estatica d
 (identico nao grava; nota/offline/exclusao/last_seen velho gravam; setor vazio nao
 apaga) e cache do IP. Reinjetar o `root.after` no `_safe` reprova por dois caminhos
 (+83MB e guarda estatica). Suites existentes identicas ao baseline.
+
+## Historico: gravacao e busca validadas com 500 mensagens (pos-v1.8.38, SEM release ainda)
+
+Teste ponta a ponta com o app REAL (Xvfb): 250 mensagens recebidas por TCP de verdade
+(socket -> `TCPServer` -> `_on_tcp_message` -> banco -> GUI) + 250 enviadas digitando na
+caixa do chat e clicando Enviar, mais 2o contato e grupo. **Gravacao: 100% correta** --
+500/500 no banco, sem perda nem duplicata, conteudo byte a byte identico (multi-linha,
+emoji, aspas, `%`, `_`, texto de 1500 chars), direcao e data/hora originais preservadas,
+visivel por outra conexao ao arquivo (commit real no WAL). Os bugs estavam na BUSCA/EXIBICAO:
+
+1. **Ferramentas > Historico nao achava palavra acentuada com maiuscula diferente**
+   ("atenção" nao achava "ATENÇÃO"): `LIKE` do SQLite so ignora caixa em A-Z. Fix
+   (database.py): `_content_contains()` -- `instr(lower(content), ?)` para busca so ASCII
+   (rapido, C) e `instr(mb_lower(content), ?)` com acento; `mb_lower` = `str.lower` do
+   Python registrado em cada conexao (`create_function`). Mesmo criterio da janela
+   Historico do chat. Aplicado em `get_messages_with_peer`, `search_all_messages`,
+   `get_peers_with_match`, `count_matching_messages`, `search_messages`.
+2. **`%` e `_` viravam curinga** ("50%" achava "50 reais"; "arquivo_final" achava
+   "arquivoXfinal"): resolvido pelo `instr()` (busca literal). **Nao voltar a usar LIKE.**
+3. **Destaque amarelo so na 1a linha** de mensagem com quebra de linha, e pintando a
+   data/hora (buscar "2026" pintava a data de toda mensagem e inflava o contador de
+   ocorrencias). Fix (gui.py `_highlight_all`): destaca em todas as linhas, so no texto
+   da mensagem (no Historico do chat tambem no nome, porque o filtro de la casa pelo nome).
+   **NUNCA usar `text.search(nocase=True)` do Tk**: com emoji no texto o Tk 8.6 da
+   SEGFAULT (reproduzido). A comparacao e feita no Python e aplicada com `+Nc` (o Tk
+   conta emoji como 1 char nesse modificador, igual ao Python; o `search` conta 2).
+4. **Historico do chat escondia as mensagens mais antigas**: `_show_history` usava
+   `limit=5000` -- com 6000 mensagens com um contato, as 1000 mais antigas sumiam da
+   janela (continuavam no banco) e o contador dizia "5000 mensagens". Agora `limit=None`
+   (20000 mensagens abrem em ~0,6s).
+
+Custo medido em banco de 100 mil mensagens (refresh completo da janela global, 3 queries):
+busca sem acento 152ms, com acento 430ms (antes ~100ms, mas com resultado ERRADO: 64.994
+em vez de 88.971 mensagens). A janela global ja espera 250ms apos a digitacao.
+
+**Comportamento atual mantido (nao e bug corrigido aqui):** no modo "Contatos" da janela
+global as conversas de GRUPO tambem aparecem na lista (o modo "Grupos" lista so grupos).
+
+Teste: `tests/test_history_search.py` (69 checks, sem subir o app inteiro, roda no gate/CI):
+500 mensagens pelos caminhos reais de envio/recebimento + receptor TCP local, as duas
+janelas com as funcoes reais, buscas (acento, maiuscula, `%`, `_`, emoji, aspas, "2026"),
+filtro De/Ate digitado, 6000 mensagens com um contato e guardas estaticas (sem LIKE, sem
+`nocase=True`, sem `limit=5000`). Contra o codigo anterior: 25 falhas.

@@ -1100,6 +1100,37 @@ def _count_wrapped_lines(line, avail_px, font):
     return lines
 
 
+# Pinta com a tag 'highlight' todas as ocorrencias de query (sem diferenciar
+# maiusculas/minusculas, inclusive acentuadas) entre start e end de um Text,
+# em todas as linhas. Retorna quantas pintou. A comparacao e feita no Python
+# e aplicada com '+Nc' a partir de start (o Tk conta emoji como 1 char, igual
+# ao Python). NAO trocar por text.search(nocase=True): no Tk 8.6 ele derruba
+# o processo (segfault) quando o texto tem emoji -- reproduzido.
+def _highlight_all(text_widget, query, start, end):
+    if not query:
+        return 0
+    region = _lower_same_len(text_widget.get(start, end))
+    q = _lower_same_len(query)
+    n = 0
+    p = region.find(q)
+    while p >= 0:
+        text_widget.tag_add('highlight', f'{start}+{p}c',
+                            f'{start}+{p + len(q)}c')
+        n += 1
+        p = region.find(q, p + len(q))
+    return n
+
+
+# lower() que preserva o tamanho do texto (posicao i continua valendo para o
+# texto original). Raros chars mudam de tamanho no lower ('İ' -> 2 chars):
+# esses ficam como estao.
+def _lower_same_len(s):
+    low = s.lower()
+    if len(low) == len(s):
+        return low
+    return ''.join(c.lower() if len(c.lower()) == 1 else c for c in s)
+
+
 def _should_open_slash_menu(text_before_slash_on_line):
     # So abre o menu "/" (estilo Notion) se a barra for o PRIMEIRO
     # caractere da linha atual -- protege contra disparo em texto normal
@@ -6622,7 +6653,10 @@ class ChatWindow(tk.Toplevel):
     # Exibe em formato texto puro: [YYYY-MM-DD HH:MM:SS] Nome: mensagem.
     # Somente leitura (state='disabled'). Fecha com Escape.
     def _show_history(self):
-        all_history = self.messenger.get_chat_history(self.peer_id, limit=5000)
+        # limit=None: TODAS as mensagens com o contato. Com limit=5000 as mais
+        # antigas sumiam desta janela (continuavam no banco) e o contador
+        # mostrava "5000 mensagens".
+        all_history = self.messenger.get_chat_history(self.peer_id, limit=None)
         t = THEMES.get(self.app._current_theme, THEMES.get('MB Contabilidade', {}))
         header_bg = t.get('chat_header_bg', t.get('bg_header', '#0f2a5c'))
         header_fg = t.get('chat_header_fg', '#ffffff')
@@ -6787,9 +6821,11 @@ class ChatWindow(tk.Toplevel):
                 is_image = m.get('msg_type') == 'image'
                 display_content = '[Imagem]' if is_image else content
                 line = f'[{ts_str}] {who}: {display_content}\n'
-                start_idx = txt.index('end-1c')
                 txt.insert('end', f'[{ts_str}] ', 'ts')
                 who_tag = 'me' if m['is_sent'] else 'peer'
+                # Destaque procura do nome ao fim do texto (o filtro tambem
+                # casa pelo nome), nunca na data/hora.
+                start_idx = txt.index('end-1c')
                 txt.insert('end', f'{who}: ', who_tag)
                 if is_image:
                     tag_img = f'hist_img_{total}'
@@ -6804,21 +6840,11 @@ class ChatWindow(tk.Toplevel):
                 else:
                     _insert_links(content)
 
-                # Highlight matches
+                # Highlight matches -- em TODAS as linhas da mensagem (antes so
+                # a 1a linha de mensagem com quebra de linha era destacada).
                 if query:
-                    line_start = txt.index(f'{start_idx} linestart')
-                    line_end = txt.index(f'{start_idx} lineend +1c')
-                    full_line = txt.get(line_start, line_end).lower()
-                    search_start = 0
-                    while True:
-                        pos = full_line.find(query, search_start)
-                        if pos < 0:
-                            break
-                        h_start = f'{line_start}+{pos}c'
-                        h_end = f'{line_start}+{pos + len(query)}c'
-                        txt.tag_add('highlight', h_start, h_end)
-                        match_count += 1
-                        search_start = pos + 1
+                    match_count += _highlight_all(txt, query, start_idx,
+                                                  txt.index('end-1c'))
 
             txt.configure(state='disabled')
 
@@ -15775,6 +15801,8 @@ class LanMessengerApp:
                     id_to_pos[_mid] = start_idx
                 msg_text.insert('end', f'[{ts}] ', 'ts')
                 msg_text.insert('end', f'{who}: ', 'me' if is_mine else 'peer_tag')
+                content_idx = msg_text.index('end-1c')
+                _content_end = [None]
                 if m.get('msg_type') == 'image':
                     gtag = f'himg_{id(m)}'
                     msg_text.insert('end', '[Imagem]', gtag)
@@ -15844,6 +15872,7 @@ class LanMessengerApp:
                     if query_lower and scroll_to_id is None and query_lower in content.lower():
                         ctx_tag = f'ctx_{id(m)}'
                         _insert_hist_links(content, newline=False)
+                        _content_end[0] = msg_text.index('end-1c')
                         msg_text.insert('end', '  ↗', ctx_tag)
                         msg_text.tag_config(ctx_tag,
                             foreground='#1565c0', font=('Segoe UI', 8, 'bold'),
@@ -15859,21 +15888,16 @@ class LanMessengerApp:
                         msg_text.insert('end', '\n')
                     else:
                         _insert_hist_links(content)
+                # Destaque so no TEXTO da mensagem (a busca e por conteudo), em
+                # todas as linhas dela -- antes pegava so a 1a linha e tambem a
+                # data/hora e o nome (buscar "2026" pintava a data).
                 if query_lower:
-                    line_end = msg_text.index(f'{start_idx} lineend +1c')
-                    full_line = msg_text.get(start_idx, line_end).lower()
-                    s = 0
-                    while True:
-                        pos = full_line.find(query_lower, s)
-                        if pos < 0:
-                            break
-                        h_start = f'{start_idx}+{pos}c'
-                        h_end = f'{start_idx}+{pos + len(query_lower)}c'
-                        msg_text.tag_add('highlight', h_start, h_end)
-                        if first_match_idx is None:
-                            first_match_idx = h_start
-                        match_count += 1
-                        s = pos + len(query_lower)
+                    c_end = _content_end[0] or msg_text.index('end-1c')
+                    n_hl = _highlight_all(msg_text, query_lower, content_idx, c_end)
+                    if n_hl and first_match_idx is None:
+                        first_match_idx = msg_text.tag_nextrange(
+                            'highlight', content_idx)[0]
+                    match_count += n_hl
             msg_text.configure(state='disabled')
             if scroll_to_id and scroll_to_id in id_to_pos:
                 target = id_to_pos[scroll_to_id]
