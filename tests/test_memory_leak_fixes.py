@@ -33,6 +33,15 @@ database.get_db_path = lambda *a, **k: _TMP_DB
 
 import tkinter as tk
 
+# Rotulos com emoji/acento: no console do Windows (cp1252, usado pelo gate
+# e pelo CI) o print quebrava com UnicodeEncodeError. backslashreplace
+# mantem o encoding e so escapa o que nao cabe (emoji vira \U0001f600).
+try:
+    sys.stdout.reconfigure(errors='backslashreplace')
+except Exception:
+    pass
+
+
 PASS, FAIL = [], []
 
 
@@ -367,4 +376,5 @@ if __name__ == '__main__':
     test_announce_persistence()
     test_local_ip_cache()
     print(f'\n{len(PASS)} PASS, {len(FAIL)} FAIL')
+    print(f'{len(PASS)} passou {len(FAIL)} falhou')  # resumo lido pelo gate
     sys.exit(0 if not FAIL else 1)
