@@ -19,7 +19,7 @@
 #   install-release TAG            baixa o setup oficial da release e instala silencioso
 #   seed VER                       1a abertura do app (cria o banco) + 300 mensagens de teste
 #   install-setup SETUP VER        instala um setup local (build de teste) silencioso
-#   update-flow ZIP VER [--8dot3] [--limited] [--api-calls N]
+#   update-flow ZIP VER [--8dot3] [--limited] [--api-calls N] [--expect-unelevated] [--via-startup]
 #                                  api.github.com falso servindo ZIP como versao VER;
 #                                  o app instalado baixa sozinho e aplica no "boot".
 #                                  --limited: app aberto SEM privilegio de admin (como
@@ -568,12 +568,45 @@ def _start_mock_github(zip_path, version):
     return srv
 
 
+def startup_lnk():
+    # Atalho "Iniciar com o Windows" criado pelo instalador ({userstartup}) --
+    # do usuario que INSTALOU (o do runner), nao o de teste.
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu',
+                        'Programs', 'Startup', 'MB Chat.lnk')
+
+
+def launch_boot():
+    # Como o Windows abre o app no logon: pelo atalho de Inicializacao
+    # (ShellExecute, igual ao Explorer), sem clique de ninguem.
+    lnk = startup_lnk()
+    if LIMITED:
+        pub = r'C:\Users\Public\MBChat_boot.lnk'
+        shutil.copy(lnk, pub)
+        u = load_state()['as_user']
+        _logon_run(u['user'], u['password'], f'cmd.exe /c start "" "{pub}"', r'C:\Users\Public')
+    else:
+        os.startfile(lnk)
+
+
+def check_startup_shortcut():
+    lnk = startup_lnk()
+    if not check(os.path.isfile(lnk), 'atalho "Iniciar com o Windows" existe', lnk):
+        return False
+    out = ps("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + lnk.replace("'", "''")
+             + "'); $s.TargetPath + '|' + $s.Arguments")
+    target, _, argl = out.partition('|')
+    check(target.lower() == APP_EXE.lower() and argl.strip() == '--silent',
+          'atalho abre o MBChat.exe instalado com --silent (inicia na bandeja)', out)
+    return True
+
+
 def process_owner(pid):
     return ps(f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
               "Invoke-CimMethod -MethodName GetOwner).User")
 
 
-def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unelevated=False):
+def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unelevated=False,
+                    via_startup=False):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
     print(f'\n[update-flow] app {old} instalado recebe a {ver} pelo proprio auto-update'
@@ -594,7 +627,13 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unele
         # ── 1. download silencioso (o que acontece com o app aberto) ──
         print('\n  -- 1. download silencioso em segundo plano --')
         kill_app()
-        launch_app(env=env)
+        if via_startup:
+            print('  (app aberto pelo atalho de Inicializacao do Windows, sem nenhum clique)')
+            if not check_startup_shortcut():
+                return
+            launch_boot()
+        else:
+            launch_app(env=env)
         pend = os.path.join(UPD_DIR, 'update_pending.txt')
         got = wait_for(lambda: os.path.isfile(pend), 300, 2)
         check(got, 'app baixou e marcou o update sozinho (update_pending.txt)')
@@ -630,7 +669,10 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unele
         if os.path.isfile(ulog):
             os.remove(ulog)
         t0 = time.time()
-        launch_app(env=env)
+        if via_startup:
+            launch_boot()
+        else:
+            launch_app(env=env)
         launched = wait_for(lambda: 'App lancado' in read_text(ulog), 240, 2)
         check(launched, 'script de update terminou e relancou o app')
         new_up = wait_for(lambda: file_version(APP_EXE) == ver and setting('last_version') == ver
@@ -639,6 +681,8 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None, expect_unele
               f'exe={file_version(APP_EXE)} last_version={setting("last_version")} '
               f'procs={app_processes()}')
         info(f'update aplicado em {time.time() - t0:.0f}s')
+        check('Aplicando update pendente no boot' in read_text(os.path.join(UPD_DIR, 'mbchat.log')),
+              'instalado sozinho na abertura do app (sem clicar em "Reiniciar para Atualizar")')
         ulog_txt = read_text(ulog)
         for step in ('Backup _internal OK', 'Copy OK', 'Sanity _internal OK',
                      'Sanity exe OK', 'Cleanup OK', 'App lancado via CreateProcess OK (--show)'):
@@ -865,8 +909,9 @@ def main():
         api_calls = int(args[i + 1])
         del args[i:i + 2]
     args = [a for a in args if a not in ('--8dot3', '--limited')]
-    if '--expect-unelevated' in args:
-        args = [a for a in args if a != '--expect-unelevated'] + ['--expect-unelevated']
+    for flag in ('--expect-unelevated', '--via-startup'):
+        if flag in args:
+            args = [a for a in args if a != flag] + [flag]
     cmd = args[0] if args else ''
     if cmd == 'install-release':
         cmd_install_release(args[1])
@@ -877,7 +922,8 @@ def main():
     elif cmd == 'seed':
         cmd_seed(args[1])
     elif cmd == 'update-flow':
-        cmd_update_flow(args[1], args[2], flag83, api_calls, '--expect-unelevated' in args)
+        cmd_update_flow(args[1], args[2], flag83, api_calls, '--expect-unelevated' in args,
+                        '--via-startup' in args)
     elif cmd == 'update-blocked':
         cmd_update_blocked(args[1], args[2], '--expect-reopen' in args)
     elif cmd == 'setup-over':

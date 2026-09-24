@@ -166,9 +166,11 @@ jobs:
         if: matrix.scenario == 'auto-update-uac'
         run: python tools/e2e_installer.py seed ${{ env.BASE_VER }} --limited
 
-      - name: Auto-update (download silencioso + aplicacao no boot)
+      # Sem nenhum clique: o app abre pelo atalho de Inicializacao do Windows
+      # (como no logon), baixa sozinho e instala na proxima abertura.
+      - name: Auto-update silencioso (atalho de Inicializacao, sem clique)
         if: matrix.scenario == 'auto-update'
-        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} --via-startup
 
       - name: Auto-update com TEMP em caminho 8.3
         if: matrix.scenario == 'auto-update-8dot3'
@@ -206,7 +208,7 @@ jobs:
 
       - name: Build novo se atualiza sozinho (SEM admin, 1 chamada de API, reabre sem admin)
         if: matrix.scenario == 'next-update'
-        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --limited --api-calls 1 --expect-unelevated
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --limited --api-calls 1 --expect-unelevated --via-startup
 
       # ── instalador web: o publicado (o que os usuarios tem) e o novo ──
       - name: Baixa o instalador web publicado
