@@ -1490,6 +1490,18 @@ recado mostram o 🤌 na busca, e a mensagem/campo de digitar o exibem como imag
 Teste: `tests/test_emoji_pinched_fingers.py` (27 checks; no CI Windows compara os outros emojis
 com a Segoe UI Emoji real, com e sem o modo Windows 10).
 
-**Bug antigo encontrado e NAO corrigido (fora do pedido):** `_show_note_emoji_picker` termina
-com `ep.focus_set()` e `ep` nao existe -- `NameError` no log a cada abertura do seletor do recado.
-O popup ja esta aberto nesse ponto (funciona); so o foco nao vai para a busca.
+**Corrigido depois (a pedido):** `_show_note_emoji_picker` terminava com `ep.focus_set()` --
+linha copiada do seletor da Transmitir (`open_bcast_emoji`), onde `ep` e o popup; aqui `ep` nao
+existia e dava `NameError` no log a cada abertura do seletor do recado. O `popup.focus_set()` da
+linha anterior ja fazia o foco, entao so a linha solta foi removida: comportamento identico, sem
+o erro. Guarda: `tests/test_note_emoji_picker.py` (todo nome global usado pela funcao precisa
+existir no modulo).
+
+**Outros nomes inexistentes achados pelo pyflakes -- NAO corrigidos, aguardando ok do usuario:**
+- `gui.py` `_open_entry_file` (Transferencias, duplo clique no arquivo): `subprocess` nao e
+  importado no gui.py -> `NameError` engolido pelo `except` -> abre so a PASTA, sem selecionar o
+  arquivo no Explorer (o `explorer /select` documentado nunca roda).
+- `messenger.py` `cancel_shared_reminder`: `json` nao e importado -> `NameError` engolido ->
+  `invited = []` -> ao cancelar um lembrete compartilhado, os convidados NAO recebem o
+  cancelamento (o lembrete deles continua disparando).
+- `gui.py` `_setup_autostart` ramos Linux/Mac: `python` indefinido (irrelevante no Windows).

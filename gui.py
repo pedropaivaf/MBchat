@@ -14738,15 +14738,15 @@ class LanMessengerApp:
             self.root.after(150, self._hide_note_emoji_btn)
         ) if e.widget is popup else None)
 
-        # Mostra ja posicionado (sem flash no canto superior esquerdo)
+        # Mostra ja posicionado (sem flash no canto superior esquerdo).
+        # (Havia um ep.focus_set() copiado do seletor da Transmitir, onde ep e
+        # o popup: aqui ep nao existe e dava NameError no log a cada abertura.)
         try:
             popup.update_idletasks()
             popup.deiconify()
             popup.focus_set()
-            ep.focus_set()
         except Exception:
             popup.focus_set()
-            ep.focus_set()
 
     # Callback do combobox de status: traduz label para codigo e propaga via UDP.
     #
