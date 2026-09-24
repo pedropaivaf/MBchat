@@ -278,10 +278,17 @@ def cmd_make_user():
     import secrets
     print('\n[make-user] usuario admin local de teste (UAC -> token filtrado)')
     user = 'mbteste'
-    pwd = 'Mb#' + secrets.token_hex(10) + 'a1'
-    subprocess.run(['net', 'user', user, pwd, '/add'], capture_output=True)
-    subprocess.run(['net', 'user', user, pwd], capture_output=True)
-    subprocess.run(['net', 'localgroup', 'Administrators', user, '/add'], capture_output=True)
+    # ate 14 caracteres: acima disso o "net user" para e pergunta S/N
+    pwd = 'Mb#' + secrets.token_hex(4) + 'x9'
+    r = subprocess.run(['net', 'user', user, pwd, '/add'], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+    if r.returncode != 0:
+        r = subprocess.run(['net', 'user', user, pwd], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+    check(r.returncode == 0, 'usuario de teste criado', (r.stdout + r.stderr).strip())
+    r = subprocess.run(['net', 'localgroup', 'Administrators', user, '/add'],
+                       capture_output=True, text=True)
+    info(f'grupo Administrators: rc={r.returncode} {(r.stdout + r.stderr).strip()[:80]}')
     out = r'C:\Users\Public\e2e_appdata.txt'
     if os.path.exists(out):
         os.remove(out)

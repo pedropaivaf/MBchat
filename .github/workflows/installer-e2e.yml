@@ -148,11 +148,11 @@ jobs:
 
       # ── auto-update: o exe oficial se atualiza sozinho ──
       - name: Instala a release oficial
-        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'next-update'
+        if: matrix.scenario != 'webinstaller' && !startsWith(matrix.scenario, 'next-update')
         run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
 
       - name: Primeira abertura + historico de teste
-        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'next-update' && matrix.scenario != 'auto-update-uac'
+        if: matrix.scenario != 'webinstaller' && !startsWith(matrix.scenario, 'next-update') && matrix.scenario != 'auto-update-uac'
         run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
 
       # UAC como no escritorio: 2o usuario ADMIN local. Com o UAC ligado ele

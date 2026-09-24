@@ -224,7 +224,9 @@ def test_gui_quit_honest():
         fail('Bloco de quit do update nao encontrado em gui.py')
         return
     q = quit_blk.group(0)
-    if 'if not updater.apply_update(pending)' in q and 'clear_update_pending()' in q:
+    # apply_update(pending, relaunch_on_fail=...) tambem vale: o que importa e
+    # conferir o retorno e limpar o pending se falhar.
+    if re.search(r'if not updater\.apply_update\(\s*pending\b', q) and 'clear_update_pending()' in q:
         ok('Quit: trata retorno de apply_update e limpa pending se falhar')
     else:
         fail('Quit: nao trata retorno/limpeza de apply_update')
