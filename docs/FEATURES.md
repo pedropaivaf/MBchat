@@ -49,6 +49,9 @@
 - Chat individual: carrega TODAS as mensagens ao abrir (sem limite de 40), busca dentro da conversa
 - Global (menu Ferramentas): **janela estilo LAN Messenger** (v1.5.3) — 2-pane 900x600, Treeview de contatos a esquerda + conversa cronologica a direita ao clicar. Busca por palavra refiltra a lista de contatos + destaca matches em amarelo. Filtros De/Ate com validacao (fundo vermelho + label "data invalida" / "periodo invalido" se De > Ate).
 - **Busca sem limite** (v1.5.3): `get_peers_with_match` (DISTINCT no SQL) + `count_matching_messages` (COUNT no SQL) em database.py — nao carrega tudo na memoria, funciona em DBs com 100k+ msgs sem perder mensagens antigas
+- **Busca por trecho literal, sem diferenciar maiusculas/minusculas inclusive acentuadas** (pos-v1.8.38): "atenção" acha "ATENÇÃO"/"Atenção"; `%` e `_` sao procurados como texto (nao curinga). Mesmo criterio nas duas janelas
+- **Destaque em todas as linhas** da mensagem (antes so a 1a linha) e nunca na data/hora
+- **Historico do chat sem limite**: mostra todas as mensagens com o contato (antes as 5000 mais recentes). Validado com 500 mensagens reais e com 6000/20000 (`tests/test_history_search.py`)
 
 ## Lembretes
 - Tres tipos: Simples (sem data), Programado (calendario + HH:MM), Recorrente pattern-based (diario/semanal/mensal/anual)

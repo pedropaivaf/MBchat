@@ -189,8 +189,15 @@ elif msg_type == MT_MEETING_SYNC_RES:
 **`_on_peer_found()` — append:**
 ```python
 # Peer reconectou → sincroniza reuniões pendentes
-threading.Thread(target=lambda: self.sync_meetings_with_peer(peer_ip), daemon=True).start()
+if peer_ip and self._should_sync_meetings(uid, peer_ip):
+    threading.Thread(target=lambda: self.sync_meetings_with_peer(peer_ip), daemon=True).start()
 ```
+
+`_should_sync_meetings` (pos-v1.8.38): sincroniza no primeiro announce do peer, quando o IP dele
+muda e logo apos `_on_peer_lost` (reconexao); enquanto ele segue online, no maximo a cada
+`MEETING_SYNC_INTERVAL_S` (300s). Antes rodava a CADA announce (15s por peer) -- com 30 PCs eram
+~2-6 syncs/s por maquina, e cada `MT_MEETING_SYNC_RES` chamava a GUI de uma thread nova (vazamento
+de RAM). Convite/cancelamento/edicao continuam indo na hora; o sync e a rede de seguranca.
 
 **Startup deferred (4s após init, em thread):**
 - Para cada peer online em `self.discovery.get_peers()`: envia `MT_MEETING_SYNC_REQ`

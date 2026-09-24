@@ -5,6 +5,16 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **RAM subindo de ~130MB para 600MB-1GB com o app aberto**: cada evento de rede (mensagem, digitando, sync de reunioes) chamava o Tk de dentro de uma thread nova, e cada uma deixava ~16KB presos para sempre. Agora as threads so enfileiram e a janela principal processa a fila. Medido: 20 mil eventos de rede = +321MB antes, +0MB depois.
+- Sync de reunioes rodava a cada anuncio de rede de cada colega (15s): agora ao conectar/reconectar e no maximo a cada 5 minutos por colega. A aba Reunioes continua funcionando igual.
+- Anuncio de rede regravava o contato no banco (3 gravacoes em disco) mesmo sem mudanca: agora grava so quando algo muda, numa gravacao so.
+- Deteccao do IP local abria o banco a cada pacote de rede recebido: agora fica em cache por 5s.
+- Ferramentas > Historico: busca nao achava palavra acentuada com maiuscula diferente ("atenção" nao achava "ATENÇÃO").
+- Busca do historico tratava `%` e `_` como curinga ("50%" achava "50 reais"; "arquivo_final" achava "arquivoXfinal").
+- Destaque amarelo da busca so marcava a 1a linha de mensagens com quebra de linha e tambem pintava a data/hora (nas duas janelas de historico).
+- Janela Historico do chat mostrava so as 5000 mensagens mais recentes com o contato: agora mostra todas.
+
 ## [1.8.17] - 2026-05-19
 
 ### Added

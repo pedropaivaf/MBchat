@@ -66,7 +66,7 @@ Mecanismos importantes:
 - **Instancia unica**: TCP socket lock por usuario (loopback, porta derivada de MD5(getpass.getuser) mod 1000 + 50200). Cada login Windows tem sua propria porta — evita que MBChat de outro usuario na mesma maquina bloqueie a abertura.
 - **Notificacoes**: winotify com protocolo mbchat:// para click-to-open
 - **System tray**: pystray com minimize-on-close
-- **Thread safety**: _safe() wrapper com root.after(0, callback)
+- **Thread safety**: `_safe()`/`_post()` enfileiram numa `queue.Queue`; `_drain_ui_queue` (main thread, a cada 50ms) executa na ordem. Threads nunca chamam o Tk (nem `root.after`) -- vazava ~16KB por thread
 - **Emojis coloridos**: PIL renderiza com embedded_color=True (seguiemj.ttf). Strip `\ufe0f` antes de medir/renderizar (variation selector dobra bbox no PIL). Detecção em tempo real via evento <<Modified>> para capturar inserções de teclado, clipboard e Windows Emoji Picker (Win+.).
 - **Canvas scrollavel**: Pattern com create_window + Configure bind para largura total
 - **Frame-in-Frame borders**: Outer frame com bg=border_color, inner com padx/pady=1
@@ -76,7 +76,7 @@ Mecanismos importantes:
 - **Nota pessoal**: Text (height=1) no header navy, permite emojis coloridos (PIL render as image), salva no DB local, sincroniza via UDP announce em tempo real
 - **Popups dismissaveis**: Todas as janelas popup fecham com Escape chamando _on_close() (limpeza de estado), e emoji pickers fecham ao clicar fora
 - **Filtro de contatos thread-safe**: _add_contact() (chamado pelo UDP announce a cada 5s) verifica se há busca ativa e re-detacha contatos que não batem com o filtro
-- **Histórico com busca em tempo real**: _show_history() (chat individual) e _show_all_history() (busca global em todos os chats, agrupado por contato) filtram e destacam matches ao digitar, com filtro De/Até e contagem de ocorrências. search_all_messages() no database.py faz a query global
+- **Histórico com busca em tempo real**: _show_history() (chat individual) e _show_all_history() (busca global em todos os chats, agrupado por contato) filtram e destacam matches ao digitar, com filtro De/Até e contagem de ocorrências. search_all_messages() no database.py faz a query global. Busca sem diferenciar maiusculas/minusculas inclusive acentuadas e sem curinga (`_content_contains`: `instr` + `lower`/`mb_lower`, nunca `LIKE`); destaque em todas as linhas da mensagem e fora da data/hora (`_highlight_all`); historico do chat sem limite de mensagens
 
 ### messenger.py (~360 linhas) - Controller
 
@@ -243,7 +243,7 @@ conseguia abrir (o check detectava a instancia de A e saia silencioso).
 3. **SQLite local, sem servidor central**: cada maquina e independente
 4. **tkinter nativo**: zero dependencias de GUI externas
 5. **Dependencias opcionais com graceful degradation**: PIL, pystray, winotify
-6. **Thread-safe by design**: root.after(), conexao SQL por thread, I/O em threads daemon
+6. **Thread-safe by design**: fila `_ui_queue` drenada pela main thread (threads nunca chamam o Tk), conexao SQL por thread, I/O em threads daemon
 7. **Chat limpo ao abrir**: historico acessivel via botao History, chat inicia vazio
 8. **Contatos offline persistidos**: PCs ja vistos aparecem como offline no treeview
 9. **Firewall auto-config**: netsh na importacao de network.py
@@ -256,3 +256,14 @@ conseguia abrir (o check detectava a instancia de A e saia silencioso).
 16. **VPN/home-office (v1.4.63+)**: `UDPDiscovery._unicast_targets` + `_manual_announce_loop` (thread 4 daemon) anunciam unicast a IPs de `manual_peers` (DB persisted) quando `vpn_enabled=True`. Peer exchange via `MT_PEER_LIST` propaga a LAN automaticamente a partir de 1 IP ancora. Default OFF + lista vazia = zero overhead, caminho LAN multicast/broadcast intocado.
 17. **Single-instance por usuario (v1.4.64+)**: porta do lock loopback derivada de hash do `getpass.getuser()` em faixa `[50200, 51200)`. Multi-user na mesma maquina nao conflita.
 16. **Assets centralizados**: todos os recursos visuais em assets/ (icone, toolbar icons)
+
+## Carga de fundo por announce (pos-v1.8.38)
+
+Cada peer anuncia a cada 15s (as vezes em dobro: multicast + broadcast). O que roda por announce:
+
+- `get_local_ip()`: cache de 5s (antes abria uma conexao SQLite + 2 sockets a cada pacote).
+- `Messenger._persist_announced_contact`: compara com a linha do banco e so grava se algo mudou
+  ou se `last_seen` passou de 60s, numa transacao so (antes: 3 commits por announce).
+- `Messenger._should_sync_meetings`: sync de reunioes so na (re)conexao do peer ou a cada 5 min
+  (antes: a cada announce, com thread + 2 conexoes TCP + callback na GUI).
+- GUI: `_add_contact` ja tinha early-exit quando nada muda (cache de render por peer).

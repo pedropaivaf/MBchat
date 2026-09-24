@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.37.
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.38 (ha correcoes commitadas SEM release -- ver secoes marcadas "SEM release ainda").
 
 ## Arquitetura (4 camadas)
 
@@ -73,7 +73,13 @@ python build.py --version X.Y.Z --release
 
 ## Convencoes criticas
 
-- **Threading**: NUNCA modificar widgets tkinter fora da main thread. Usar _safe() wrapper
+- **Threading**: NUNCA modificar widgets tkinter fora da main thread. Usar `_safe()` (callbacks de rede) ou
+  `app._post(func, *args)` (threads de envio) -- ambos so enfileiram; a main thread drena a fila a cada 50ms.
+  NUNCA chamar `root.after`/`self.after`/widget de dentro de thread de rede ou thread criada por mensagem:
+  cada thread que toca o Tk vaza ~16KB (causa da RAM em 600MB-1GB, ver secao "RAM subindo").
+- **Busca de mensagens**: condicao SQL via `_content_contains()` (database.py: `instr` + `lower`/`mb_lower`),
+  NUNCA `LIKE` (acento/maiuscula e curinga `%`/`_`). Destaque via `_highlight_all` (gui.py), NUNCA
+  `text.search(nocase=True)` (segfault do Tk 8.6 com emoji).
 - **Dependencias opcionais**: sempre try/except com HAS_* flag (PIL, pystray, winotify, windnd)
 - **Banco**: threading.local() para conexao por thread, parametros ? em SQL
 - **Comentarios**: usar apenas `#`, NUNCA `"""docstrings"""`

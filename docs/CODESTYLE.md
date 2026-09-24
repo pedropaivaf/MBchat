@@ -84,7 +84,7 @@ class SomeWindow(tk.Toplevel):
 Padrao para dialogos de progresso:
 - Sempre recebe file_id para tracking
 - on_cancel callback para cleanup
-- update_progress() thread-safe via root.after()
+- update_progress() roda na main thread (o progresso chega pelo `_safe`)
 - finish() para auto-destruir
 
 ### Funcoes Utilitarias Module-Level
@@ -116,14 +116,30 @@ Padroes visuais:
 
 ## Threading
 
-**REGRA DE OURO**: Nunca modificar widgets tkinter fora da main thread.
+**REGRA DE OURO**: Nunca modificar widgets tkinter fora da main thread -- e nem CHAMAR o Tk
+de dentro de outra thread, nem para um simples `root.after(0, ...)`: cada thread de vida curta
+que toca o Tk vaza ~16KB que nunca voltam (medido: 30 mil threads = +500MB). Cada mensagem TCP
+recebida roda numa thread nova, entao isso fazia a RAM subir sem parar.
 
-Callbacks de rede usam wrapper `_safe`:
+Callbacks de rede usam `_safe`, que so enfileira; a main thread drena a fila a cada
+`UI_QUEUE_POLL_MS` (50ms), na ordem de chegada:
 ```python
 def _safe(self, func):
     def wrapper(*args, **kwargs):
-        self.root.after(0, func, *args, **kwargs)
+        self._post(func, *args, **kwargs)
     return wrapper
+
+def _post(self, func, *args, **kwargs):
+    self._ui_queue.put((func, args, kwargs))   # nunca toca o Tk
+```
+
+Thread de envio que precisa atualizar a tela depois usa `self.app._post(...)`, nunca
+`self.after(0, ...)`:
+```python
+def _do_send():
+    ok, _ = self.messenger.send_message(self.peer_id, cnt)
+    self.app._post(self._update_msg_status, lid, ok)
+threading.Thread(target=_do_send, daemon=True).start()
 ```
 
 Operacoes de I/O sempre em threads daemon separadas:

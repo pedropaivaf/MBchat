@@ -282,3 +282,41 @@ caminho seguro e o `MBChat_WebInstaller.exe` (URL fixa `releases/latest/download
 resolvida pelo GitHub na hora — o mesmo arquivo serve para sempre) ou o `tools/deploy_mbchat.ps1`.
 
 Cobertura: `tests/test_update_rollback.py`.
+
+## Threads de rede nunca chamam o Tk (pos-v1.8.38)
+
+Chamar o Tk de dentro de uma thread de vida curta -- ate um `root.after(0, ...)` -- vaza ~16KB
+por thread que nunca voltam ao SO (dados por thread do Tcl criados na chamada cross-thread do
+tkinter). Medido isolado: 30 mil threads = +500MB; com fila = +0MB. Medido no app real: 20 mil
+eventos de rede = +321MB antes, +0MB depois. Era a causa do MBChat sair de ~130MB e chegar a
+600MB-1GB ao longo do dia (cada mensagem TCP recebida roda numa thread nova).
+
+Decisao: `_safe`/`_post` so fazem `queue.Queue.put`; `_drain_ui_queue` roda na main thread a cada
+`UI_QUEUE_POLL_MS` (50ms), executa na ordem de chegada e manda excecao pro
+`report_callback_exception` (mesma semantica do `root.after`). Latencia maxima de 50ms, invisivel.
+Nao usar `event_generate` nem `after` a partir da thread para "acordar" a fila: tambem sao
+chamadas ao Tk. Threads longas e unicas (tray, listener de instancia unica, download de update)
+vazam uma vez so e foram deixadas como estao.
+
+Cobertura: `tests/test_memory_leak_fixes.py` (reinjetar o `root.after` no `_safe` reprova por
+dois caminhos: +83MB e guarda estatica).
+
+## Busca de mensagens: `instr` + lower Unicode, nunca `LIKE` (pos-v1.8.38)
+
+`LIKE` do SQLite so ignora maiuscula/minuscula em A-Z: "atenção" nao achava "ATENÇÃO". E `%`/`_`
+digitados viravam curinga. A condicao agora vem de `_content_contains()` (database.py):
+`instr(lower(content), ?)` quando a busca e so ASCII (C, rapido) e `instr(mb_lower(content), ?)`
+com acento -- `mb_lower` e o `str.lower` do Python registrado em cada conexao. E o mesmo criterio
+da janela Historico do chat (`query.lower() in content.lower()`).
+
+Custo em 100 mil mensagens (refresh completo da janela global, 3 queries): 152ms sem acento,
+430ms com acento. Antes ~100ms, mas com resultado errado (64.994 em vez de 88.971). A janela
+global ja espera 250ms apos a digitacao, entao nao pesa.
+
+Destaque amarelo: `_highlight_all` (gui.py) compara no Python e aplica com `+Nc` a partir do
+inicio do texto da mensagem, em todas as linhas. **Nao usar `text.search(nocase=True)`**: no
+Tk 8.6 ele da SEGFAULT quando o texto tem emoji (reproduzido). Detalhe medido: o `search` do Tk
+conta emoji como 2 posicoes, o modificador `+Nc` conta como 1 -- igual ao Python.
+
+Cobertura: `tests/test_history_search.py` (500 mensagens pelos caminhos reais de envio e
+recebimento, as duas janelas, 6000 com um contato, guardas estaticas).
