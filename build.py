@@ -197,6 +197,13 @@ def _do_installer():
         print('       Instale com: winget install JRSoftware.InnoSetup')
         return False
 
+    # Apaga o setup do build anterior ANTES de compilar: se o Inno falhar, nao
+    # pode sobrar um MBChat_Setup.exe velho em dist/ para o --release publicar
+    # como se fosse o novo (o instalador web baixa sempre o da ultima release).
+    setup = os.path.join(HERE, 'dist', 'MBChat_Setup.exe')
+    if os.path.isfile(setup):
+        os.remove(setup)
+
     print('Compilando instalador (Inno Setup)...')
     result = subprocess.run([iscc, ISS_FILE], cwd=HERE, capture_output=True, text=True)
 
@@ -208,7 +215,9 @@ def _do_installer():
             print(result.stdout[-500:])
         return False
 
-    setup = os.path.join(HERE, 'dist', 'MBChat_Setup.exe')
+    if not os.path.isfile(setup):
+        print('Erro: Inno Setup terminou sem gerar dist/MBChat_Setup.exe')
+        return False
     print(f'Instalador gerado! -> {setup}')
     return True
 
@@ -223,6 +232,9 @@ def _do_web_installer():
         return False
 
     print('Gerando MBChat_WebInstaller (stub que baixa versao mais recente)...')
+    out = os.path.join(HERE, 'dist', 'MBChat_WebInstaller.exe')
+    if os.path.isfile(out):
+        os.remove(out)
     cmd = [
         sys.executable, '-m', 'PyInstaller',
         '--noconfirm', '--onefile', '--console',
@@ -240,7 +252,6 @@ def _do_web_installer():
         if result.stderr:
             print(result.stderr[-500:])
         return False
-    out = os.path.join(HERE, 'dist', 'MBChat_WebInstaller.exe')
     if os.path.isfile(out):
         print(f'Web installer gerado! -> {out}')
         return True
@@ -259,17 +270,17 @@ def _do_release(version, notes=''):
     web_inst = os.path.join(HERE, 'dist', 'MBChat_WebInstaller.exe')
     tag = f'v{version}'
 
-    assets = []
-    if os.path.isfile(update_zip):
-        assets.append(update_zip)
-    if os.path.isfile(setup):
-        assets.append(setup)
+    # zip e setup sao obrigatorios: sem o zip o auto-update nao acha o que
+    # baixar; sem o MBChat_Setup.exe o instalador web (que sempre baixa
+    # releases/latest/download/MBChat_Setup.exe) quebra com 404 para todos.
+    faltando = [os.path.basename(p) for p in (update_zip, setup) if not os.path.isfile(p)]
+    if faltando:
+        print(f'ERRO: faltam artefatos obrigatorios em dist/: {", ".join(faltando)}')
+        print('Release NAO criada.')
+        return False
+    assets = [update_zip, setup]
     if os.path.isfile(web_inst):
         assets.append(web_inst)
-
-    if not assets:
-        print('AVISO: nenhum asset encontrado para upload.')
-        return False
 
     sha256_line = ''
     if os.path.isfile(update_zip):
@@ -325,8 +336,42 @@ def _do_release(version, notes=''):
         print(f'Erro ao criar/atualizar release (codigo {result.returncode})')
         return False
 
+    # Release que ja existia: o zip reenviado e outro build, com OUTRO hash.
+    # O corpo continuaria com o SHA256 antigo e o updater das maquinas
+    # recusaria o zip ("update corrompido") -- ninguem atualizaria. Troca so a
+    # linha SHA256 do corpo, preservando as notas que aparecem no sino.
+    if check.returncode == 0 and sha256_line:
+        if not _update_release_sha(tag, sha256_line.strip(), notes):
+            print('ERRO: assets reenviados mas o SHA256 do corpo da release NAO foi '
+                  'atualizado.')
+            print(f'As maquinas vao recusar o zip. Corrija com: gh release edit {tag} '
+                  '--notes "..."')
+            return False
+
     print(f'Release {tag} publicada no GitHub!')
     return True
+
+
+# Troca a linha "SHA256: ..." do corpo de uma release existente (ou acrescenta,
+# se nao houver). Com --notes, o corpo vira notes + SHA256, igual a criacao.
+def _update_release_sha(tag, sha_line, notes=''):
+    if notes:
+        body = f'{notes}\n\n{sha_line}'
+    else:
+        cur = subprocess.run(['gh', 'release', 'view', tag, '--json', 'body',
+                              '-q', '.body'], capture_output=True, text=True, cwd=HERE)
+        if cur.returncode != 0:
+            return False
+        body = _replace_sha_line(cur.stdout.rstrip('\n'), sha_line)
+    edit = subprocess.run(['gh', 'release', 'edit', tag, '--notes', body], cwd=HERE)
+    return edit.returncode == 0
+
+
+def _replace_sha_line(body, sha_line):
+    if re.search(r'^\s*SHA256:.*$', body, re.IGNORECASE | re.MULTILINE):
+        return re.sub(r'^\s*SHA256:.*$', sha_line, body, count=1,
+                      flags=re.IGNORECASE | re.MULTILINE)
+    return f'{body}\n\n{sha_line}' if body.strip() else sha_line
 
 
 def _interactive():
@@ -449,15 +494,22 @@ def build():
         print('Corrija e rode de novo. Para build local de teste: --skip-checks')
         sys.exit(1)
 
-    if _do_build():
-        _do_installer()
-        if args.release:
-            _do_web_installer()
-        print(f'Versao: {version}')
-        if args.deploy:
-            _deploy(args.deploy, version)
-        if args.release:
-            _do_release(version, notes=getattr(args, 'notes', ''))
+    if not _do_build():
+        sys.exit(1)
+    installer_ok = _do_installer()
+    if args.release and not installer_ok:
+        # Sem setup novo nao ha release: o instalador web baixaria o setup da
+        # ultima release, e ele precisa ser DESTA versao.
+        print('\nRelease ABORTADA: o instalador (Inno Setup) nao foi gerado.')
+        sys.exit(1)
+    if args.release:
+        _do_web_installer()
+    print(f'Versao: {version}')
+    if args.deploy:
+        _deploy(args.deploy, version)
+    if args.release:
+        if not _do_release(version, notes=getattr(args, 'notes', '')):
+            sys.exit(1)
 
 
 if __name__ == '__main__':

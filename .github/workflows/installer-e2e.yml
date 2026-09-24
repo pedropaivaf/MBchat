@@ -1,0 +1,201 @@
+# Teste ponta a ponta do INSTALADOR e do AUTO-UPDATE em Windows de verdade.
+#
+# POR QUE ESTE ARQUIVO EXISTE
+# O auto-update que roda nas 30 maquinas e o codigo CONGELADO dentro do
+# MBChat.exe ja instalado (ex. v1.8.38). Um erro nele so aparece na hora de
+# atualizar -- e ai o app pode nao reabrir. Aqui cada rodada:
+#   1. gera um build do codigo atual como versao nova (NAO publica nada);
+#   2. instala a release OFICIAL (setup publicado no GitHub) num Windows limpo;
+#   3. deixa o proprio exe oficial baixar, conferir o SHA256, extrair e aplicar
+#      o build novo (api.github.com falso local), como no escritorio;
+#   4. roda o setup novo por cima da versao oficial com o app aberto;
+#   5. roda o instalador web publicado e confere que ele baixa e abre o setup.
+# Tudo em windows-2022 (familia do Windows 10, build 20348) e windows-2025
+# (familia do Windows 11, build 26100), com e sem %TEMP% em caminho 8.3
+# (contas "nome.sobrenome" do escritorio).
+#
+# Nunca cria release, tag nem push: permissions: contents: read.
+
+name: installer-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: 'Release oficial instalada nas maquinas (ponto de partida)'
+        default: 'v1.8.38'
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - updater.py
+      - installer.iss
+      - build.py
+      - version.py
+      - gui.py
+      - messenger.py
+      - network.py
+      - database.py
+      - requirements.txt
+      - tools/installer_stub.py
+      - tools/e2e_installer.py
+      - .github/workflows/installer-e2e.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE_TAG: ${{ inputs.base_tag || 'v1.8.38' }}
+  # Versao "de mentira" so do build de teste (o version.py do repo nao muda).
+  NEW_VER: '1.8.99'
+
+jobs:
+  build:
+    name: Build de teste (sem publicar)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instala Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          # Mesma minor da producao: o _internal instalado carrega python314.dll.
+          python-version: '3.14'
+          cache: pip
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { choco install innosetup -y --no-progress }
+
+      - name: Build do app + setup + instalador web (versao de teste)
+        shell: pwsh
+        run: |
+          python build.py --version $env:NEW_VER --skip-checks
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -c "import build, sys; sys.exit(0 if build._do_web_installer() else 1)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist -File | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-build
+          retention-days: 3
+          path: |
+            dist/MBChat_update.zip
+            dist/MBChat_Setup.exe
+            dist/MBChat_WebInstaller.exe
+
+  e2e:
+    name: ${{ matrix.scenario }} (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        scenario: [auto-update, auto-update-8dot3, setup-over, webinstaller]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      MBCHAT_E2E: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instala Python 3.14 (so para o script de teste)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Dependencias do teste
+        run: pip install pywin32 cryptography
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-build
+          path: e2e-build
+
+      - name: Ambiente do runner
+        shell: pwsh
+        run: |
+          "BASE_VER=$($env:BASE_TAG.TrimStart('v'))" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+          python -c "import platform, sys; print(platform.platform()); print(sys.getwindowsversion())"
+          $pol = Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+          "UAC EnableLUA=$($pol.EnableLUA) ConsentPromptBehaviorAdmin=$($pol.ConsentPromptBehaviorAdmin)"
+          "PowerShell do update: $((Get-Command powershell.exe).Source) $($PSVersionTable.PSVersion)"
+          & powershell.exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          fsutil 8dot3name query C:
+          Get-ChildItem e2e-build | Format-Table Name, Length
+
+      # ── auto-update: o exe oficial se atualiza sozinho ──
+      - name: Instala a release oficial
+        if: matrix.scenario != 'webinstaller'
+        run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
+
+      - name: Primeira abertura + historico de teste
+        if: matrix.scenario != 'webinstaller'
+        run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
+
+      - name: Auto-update (download silencioso + aplicacao no boot)
+        if: matrix.scenario == 'auto-update'
+        run: python tools/e2e_installer.py update-flow e2e-build/MBChat_update.zip ${{ env.NEW_VER }}
+
+      - name: Auto-update com TEMP em caminho 8.3
+        if: matrix.scenario == 'auto-update-8dot3'
+        run: python tools/e2e_installer.py update-flow e2e-build/MBChat_update.zip ${{ env.NEW_VER }} --8dot3
+
+      # ── setup novo por cima da versao oficial ──
+      - name: Setup novo por cima (app aberto)
+        if: matrix.scenario == 'setup-over'
+        run: python tools/e2e_installer.py setup-over e2e-build/MBChat_Setup.exe ${{ env.NEW_VER }}
+
+      # ── instalador web: o publicado (o que os usuarios tem) e o novo ──
+      - name: Baixa o instalador web publicado
+        if: matrix.scenario == 'webinstaller'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/pedropaivaf/MBchat/releases/download/$env:BASE_TAG/MBChat_WebInstaller.exe" -OutFile web_publicado.exe
+          (Get-Item web_publicado.exe).Length
+
+      - name: Instalador web publicado
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller web_publicado.exe
+
+      - name: Instalador web publicado com TEMP 8.3
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller web_publicado.exe --8dot3
+
+      - name: Instalador web novo
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller e2e-build/MBChat_WebInstaller.exe
+
+      - name: Instalador web novo com TEMP 8.3
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller e2e-build/MBChat_WebInstaller.exe --8dot3
+
+      - name: Coleta logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory e2e-logs -Force | Out-Null
+          foreach ($p in @("$env:APPDATA\MBChat\*.log", "$env:APPDATA\.mbchat\*.log", "$env:RUNNER_TEMP\*.log")) {
+            Copy-Item $p e2e-logs -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem e2e-logs | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs-${{ matrix.scenario }}-${{ matrix.os }}
+          retention-days: 7
+          path: e2e-logs
