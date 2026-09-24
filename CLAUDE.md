@@ -85,6 +85,10 @@ python build.py --version X.Y.Z --release
 - **Comentarios**: usar apenas `#`, NUNCA `"""docstrings"""`
 - **Commits**: NUNCA "Co-Authored-By" ou referencia a Claude/AI. Autoria exclusiva de Pedro Paiva
 - **Auto-update**: PowerShell usa `[Diagnostics.Process]::Start` com `UseShellExecute=$false`. NUNCA `Start-Process` ou `explorer.exe`
+  como metodo principal (`Start-Process` so de fallback). A copia do script elevada pelo UAC (`-MBElevated`) NUNCA
+  relanca o app: so troca os arquivos e grava `ok`/`fail`; quem relanca e a copia sem admin (senao o app volta como
+  administrador ou na conta de quem digitou a senha). Toda saida de erro chama `Start-OldApp` (`--skip-update`).
+  Mudou updater/instalador/build? O workflow `installer-e2e` precisa ficar verde antes do release.
 - **Versionamento**: `_set_version()` atualiza version.py + installer.iss + docs/index.html de uma vez
 - **VPN (v1.4.63+)**: tabela `manual_peers` + setting `vpn_enabled` (default OFF). Lista vazia + OFF = zero overhead no caminho LAN. `_manual_announce_loop` + `MT_PEER_LIST` peer exchange propagam a LAN a partir de 1 IP ancora. NAO alterar defaults. Toggle via **Ferramentas > Conectar fora da LAN (VPN)**.
 

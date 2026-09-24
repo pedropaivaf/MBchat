@@ -72,7 +72,7 @@
 
 ## Sistema
 - Instancia unica via TCP socket loopback **por usuario** (v1.4.64+): porta deterministica por login Windows em [50200, 51200). Multi-user na mesma maquina nao colide.
-- Auto-update via GitHub Releases (barra amarela + download + PowerShell restart)
+- Auto-update via GitHub Releases: aviso no sino (pela API ou por um colega ja atualizado na rede), download silencioso com SHA256, aplicacao em "Reiniciar para Atualizar" ou no proximo boot (PowerShell com backup/rollback, pede UAC em Program Files). Se falhar, a versao atual reabre sozinha (`--skip-update`); depois de atualizar o app volta sem admin, na conta de quem usa. Validado em Windows real pelo workflow `installer-e2e`
 - Auto-start, popups fecham com Escape
 - Taskbar LAN Messenger-style com AppUserModelID
 
@@ -102,7 +102,7 @@
 5. Grupos: temp/fixo, entrada/saida, mencoes, enquete, criar com 2+ participantes (regressao do bug de "grupo sem participantes")
 11. Gravar/enviar/ouvir audio (individual e grupo), seek na barra
 6. Reply/Quote em chat e grupo
-7. Auto-update: barra amarela, atualizar, restart
+7. Auto-update: sino, download silencioso, "Reiniciar para Atualizar" / proximo boot (coberto automaticamente pelo workflow `installer-e2e`)
 8. Lembretes: simples, programado, recorrente
 9. Drag and Drop de arquivos
 10. Departamentos e Ramal
