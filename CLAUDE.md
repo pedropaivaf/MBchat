@@ -1516,3 +1516,83 @@ todo nome global usado exista no modulo ou nos builtins (5698 referencias). Pega
 os 2 fixes de ponta a ponta: explorer /select com o caminho certo, e cancelamento de lembrete
 compartilhado chegando aos 2 convidados (2 Messengers reais + receptor TCP local) e apagando o
 lembrete do lado deles. Contra o codigo anterior: 7 falhas.
+
+## Instalador, instalador web e auto-update testados em Windows real (pos-v1.8.38, SEM release ainda)
+
+### O teste (`installer-e2e`)
+
+`.github/workflows/installer-e2e.yml` + `tools/e2e_installer.py`. Roda a cada push que mexe em
+updater/instalador/build/app (main e `claude/**`) e manual em Actions > installer-e2e > Run
+workflow (input `base_tag` = release que esta nas maquinas). **Nunca publica nada**
+(`permissions: contents: read`). Builds de teste com versoes falsas 1.8.99 e 1.9.0 (o
+`version.py` do repo nao muda). **NAO rodar `tools/e2e_installer.py` no PC de trabalho**: instala
+em Program Files, mexe no arquivo hosts e mata o MBChat (so roda com `MBCHAT_E2E=1`).
+
+Em windows-2022 (familia Windows 10, build 20348) e windows-2025 (familia Windows 11, build
+26100), cada cenario:
+- **auto-update**: instala o `MBChat_Setup.exe` OFICIAL da release, grava 320 mensagens, e deixa o
+  proprio exe oficial se atualizar: `api.github.com` falso (hosts + certificado autoassinado, que
+  o updater aceita pelo fallback SSL), download silencioso, SHA256, aplicacao no proximo boot.
+- **auto-update-8dot3**: idem com `%TEMP%` em caminho curto 8.3 (`C:\e2e83\PEDRO~1.PAI\...`).
+- **auto-update-uac**: app aberto por um 2o usuario ADMIN com UAC ligado (token filtrado de verdade,
+  como num PC do escritorio) -- o script precisa pedir o UAC. O runner aprova sozinho
+  (`ConsentPromptBehaviorAdmin=0`); o usuario do runner roda sempre elevado e NAO serve pra isso
+  (tarefa agendada `/RL LIMITED` tambem sai elevada la).
+- **auto-update-bloqueado**: arquivo aberto dentro de `_internal` -- o script nao consegue trocar
+  a pasta, o mesmo efeito de clicar "Nao" no UAC.
+- **setup-over**: setup novo por cima da versao oficial com o app ABERTO.
+- **next-update / next-update-bloqueado**: o updater NOVO (build 1.8.99 -> 1.9.0).
+- **webinstaller**: o `MBChat_WebInstaller.exe` publicado e o novo, com e sem TEMP 8.3.
+
+### Resultado para quem esta na 1.8.38 (codigo congelado no exe instalado)
+
+Tudo verde nos dois Windows: update aplicado em 10-13s, app reabre com `--show`, as 320 mensagens
+byte a byte, configuracoes e `.mbchat` preservados, backups/staging/pending limpos, tambem com
+TEMP 8.3 e com UAC de verdade. Setup por cima com o app aberto: fecha o app, apaga orfao de
+`_internal`, mantem autostart e firewall, banco intacto. Instalador web publicado: baixa exatamente
+o `MBChat_Setup.exe` da ultima release e abre o setup (manifesto `asInvoker`; o Inno pede o UAC
+sozinho), tambem com TEMP 8.3.
+
+**Limitacoes CONGELADAS na 1.8.38 (valem so para esse salto; corrigidas da proxima em diante):**
+1. Se o script nao conseguir trocar os arquivos (UAC "Nao", pasta travada) a 1.8.38 fica inteira,
+   mas o app **nao reabre**: a pessoa clica no icone de novo; na 4a vez o app desiste e abre normal
+   (testado). Nada quebra.
+2. Depois do update o app roda **como administrador** ate reiniciar (medido). Arrastar arquivo
+   continua funcionando (`_allow_uipi_drop`). Se um funcionario **sem** admin digitar a senha de um
+   administrador no UAC, o app reabre na conta do ADMINISTRADOR (outro perfil/historico) ate o
+   proximo logon -- nesses PCs prefira o instalador web ou `tools/deploy_mbchat.ps1` para o salto.
+3. O download silencioso gasta 2 chamadas da API do GitHub (limite de 60/h por IP, dividido pelos
+   30 PCs) e, se falhar, so tenta de novo quando o app reabre. Atrasa, nao quebra.
+4. "Programas e Recursos" continua mostrando a versao antiga apos auto-update (so o setup grava o
+   registro). Cosmetico.
+5. O bloco `$oldExes` do script nunca funcionou (Join-Path sem parenteses num array); inofensivo,
+   o setup ja faz essa limpeza.
+
+### Corrigido para as proximas versoes (updater novo, testado no next-update*)
+
+- **1 chamada de API por update** (`updater._LAST_FOUND`, 15 min): o download reaproveita a
+  resposta que achou o update.
+- **Download silencioso que falha libera nova tentativa**: `_on_failed` zera `_pending_update`
+  (a checagem de 30 min tenta de novo).
+- **Falha reabre a versao atual**: toda saida de erro do script chama `Start-OldApp`, que abre com
+  `--show --skip-update`; o `main()` com `--skip-update` NAO reaplica (sem loop de UAC) e NAO zera o
+  contador. `apply_update(..., relaunch_on_fail=True)`; o `_quit` passa `True` so quando o usuario
+  clicou "Reiniciar para Atualizar" (`_restart_requested`) -- no "Sair" da bandeja fica fechado.
+- **App reabre sem admin, na conta de quem usa**: a copia do script sem admin chama a elevada com
+  `-Verb RunAs -Wait -MBElevated`; a elevada SO troca os arquivos e grava `ok`/`fail` em
+  `update_result.txt`; quem reabre o app e a copia sem admin (CreateProcess, ambiente original).
+  Sem admin nenhum (UAC negado ou app em pasta do usuario), o proprio script faz tudo como antes.
+
+### build.py (protege o instalador web e o auto-update de TODOS)
+
+- `--release` numa release que ja existe troca a linha `SHA256:` do corpo (preservando as notas do
+  sino). Antes ficava o hash antigo e todas as maquinas recusariam o zip reenviado.
+- Setup velho nunca e publicado: `_do_installer` apaga `dist/MBChat_Setup.exe` antes do Inno e o
+  `--release` aborta se o setup nao for gerado; `_do_release` exige zip + setup.
+
+**Contrato do instalador web (nao precisa mudar nunca):** baixa sempre
+`releases/latest/download/MBChat_Setup.exe`. Toda release precisa ter esse asset com esse nome
+exato e nao pode ser pre-release/rascunho. `tests/test_build_release.py` trava isso.
+
+Testes novos no gate: `test_build_release.py` (25), `test_update_api_budget.py` (16),
+`test_update_failure_reopen.py` (19 + PowerShell real no Windows).

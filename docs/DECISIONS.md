@@ -343,3 +343,31 @@ todo `LOAD_GLOBAL` do bytecode (o compilador ja resolveu local/closure) e exige 
 no nivel do modulo (inclusive imports opcionais dentro de try/if) ou nos builtins. Excecao aceita
 e documentada no proprio teste: `python` nos ramos Linux/Mac de `_setup_autostart`. Import que
 faltar numa funcao: seguir o padrao do arquivo (import local dentro da funcao).
+
+## Auto-update: quem reabre o app e a copia SEM admin; falha reabre a versao atual (pos-v1.8.38)
+
+Medido no `installer-e2e` (Windows real, 2o usuario admin com UAC = token filtrado como no
+escritorio): a copia do script elevada pelo UAC relancava o app, que ficava rodando como
+administrador ate reiniciar. Pior: num PC sem admin, se alguem digitasse a senha de um
+administrador no UAC, a copia elevada roda NA CONTA DO ADMINISTRADOR e o app reabria com o perfil,
+o `%APPDATA%` e o historico dele.
+
+Decisoes:
+
+1. **A copia sem admin espera a elevada e reabre o app.** `Start-Process powershell -Verb RunAs
+   -Wait ... -MBElevated`; a elevada so troca os arquivos e grava `ok`/`fail` em
+   `update_result.txt`. Resultado por arquivo e nao por `ExitCode`: com `-Verb` o `ExitCode` do
+   `Start-Process -PassThru` do PowerShell 5.1 pode vir vazio. A copia sem admin herda o ambiente
+   do MBChat (Popen), entao o relancamento continua via CreateProcess com o ambiente original
+   (a regra do caminho 8.3 segue valendo).
+2. **Toda saida de erro reabre a versao atual** (`Start-OldApp` antes de cada `exit 1`), com
+   `--show --skip-update`. O `--skip-update` evita loop de prompts do UAC (a abertura nao reaplica)
+   e nao zera o contador de tentativas. No "Sair" da bandeja (`relaunch_on_fail=False`) o app fica
+   fechado, como o usuario pediu; no boot e no "Reiniciar para Atualizar", reabre.
+3. **1 chamada de API por update**: os PCs saem pelo mesmo IP e o GitHub limita a 60/h sem login.
+   O download reaproveita a resposta que achou o update (`_LAST_FOUND`, 15 min).
+
+Tudo isso vale a partir da versao que o traz: o salto a partir da 1.8.38 roda o script antigo
+(app reaberto como admin ate reiniciar; falha deixa o app fechado ate clicar no icone -- nada
+quebra). Cobertura: `tests/test_update_failure_reopen.py`, `tests/test_update_api_budget.py` e os
+cenarios `next-update*` do `installer-e2e`.

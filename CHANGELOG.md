@@ -19,6 +19,13 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Seletor de emoji do recado gravava um erro no log a cada abertura (nome `ep` inexistente, copiado do seletor da Transmitir). Funcionava igual; o erro nao e mais gravado.
 - Transferencia de Arquivos: duplo clique num arquivo abria so a pasta; agora abre o Explorer com o arquivo selecionado.
 - Lembrete compartilhado: quando o criador cancelava, os convidados nao eram avisados e o lembrete continuava tocando para eles. Agora todos recebem o cancelamento.
+- Atualizacao automatica: se o app nao conseguir trocar os arquivos (ex.: clicou "Nao" no aviso do Windows), a versao atual reabre sozinha em vez de o MB Chat ficar fechado; tenta de novo na proxima abertura.
+- Atualizacao automatica: depois de atualizar, o app volta na conta de quem estava usando e sem permissao de administrador (antes voltava como administrador ate reiniciar; num PC sem admin, se alguem digitasse a senha de administrador, abria na conta errada).
+- Atualizacao automatica gasta metade das consultas ao GitHub (o limite e dividido pelos PCs do escritorio) e, se o download falhar, tenta de novo em ate 30 minutos em vez de esperar o app reabrir.
+- Publicacao (build.py): reenviar uma versao ja publicada atualiza o codigo de verificacao (SHA256) da release, e um instalador de versao antiga nunca e publicado por engano (o instalador web baixa sempre o da ultima release).
+
+### Added
+- Teste automatico do instalador, do instalador web e da atualizacao automatica em Windows de verdade (familias Windows 10 e 11), partindo da versao oficial instalada nas maquinas: `.github/workflows/installer-e2e.yml`.
 
 ## [1.8.17] - 2026-05-19
 
