@@ -18,7 +18,8 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # claude/**: branches de trabalho -- o gate roda antes de a mudanca ir pra main
+    branches: [main, 'claude/**']
     tags: ['v*']
   pull_request:
     branches: [main]
