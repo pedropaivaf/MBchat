@@ -230,6 +230,21 @@ $RelaunchOnFail = {'$true' if relaunch_on_fail else '$false'}
 # app e a copia SEM admin que a chamou (ver abaixo).
 $Elevated = $args -contains '-MBElevated'
 
+# Um update por vez. No logon o Windows abre o MB Chat DUAS vezes (atalho de
+# Inicializacao + registro Run) e alguem pode clicar no icone durante o update:
+# cada abertura com update pendente dispara este script. Sem o mutex, dois
+# scripts trocavam a mesma pasta ao mesmo tempo. A copia elevada nao pega o
+# mutex: quem pegou foi a copia que a chamou e que esta esperando por ela.
+if (-not $Elevated) {{
+    $UpdateMutex = New-Object System.Threading.Mutex($false, 'Local\\MBChatUpdate')
+    $gotMutex = $false
+    try {{ $gotMutex = $UpdateMutex.WaitOne(0) }} catch [System.Threading.AbandonedMutexException] {{ $gotMutex = $true }}
+    if (-not $gotMutex) {{
+        Log "Outro update ja esta em andamento; este sai sem mexer em nada"
+        exit 0
+    }}
+}}
+
 # Abre o MB Chat via CreateProcess (UseShellExecute=$false herda env vars do pai).
 # CRITICO: NUNCA usar Start-Process / start "" / explorer.exe como metodo
 # principal -- usam ShellExecute, que ignora env vars do pai e causa "Failed to
@@ -301,8 +316,13 @@ Start-Sleep -Seconds 5
 
 $internalDir = Join-Path "{target_dir}" "_internal"
 $bakInternal = Join-Path "{target_dir}" "_internal.bak"
+$newInternal = Join-Path "{target_dir}" "_internal.new"
 $targetExe = "{target_exe}"
 $bakExe = "{target_exe}.bak"
+$newExe = "{target_exe}.new"
+$failedExe = "{target_exe}.failed"
+$stagingExe = Join-Path "{staging_dir}" "MBChat.exe"
+$stagingInternal = Join-Path "{staging_dir}" "_internal"
 
 # Update falhou e a versao atual esta inteira (nada alterado ou rollback feito):
 # reabre o app. Sem isso o usuario ficava sem o MB Chat ate clicar no icone de
@@ -319,36 +339,99 @@ function Start-OldApp {{
     if (Start-App "--show --skip-update") {{ Log "Versao atual reaberta (--skip-update)" }}
 }}
 
-# Restos de uma tentativa anterior interrompida
+function Remove-Prepared {{
+    Remove-Item -Path $newInternal -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
+}}
+
+# Restos de uma tentativa anterior interrompida. Se ela parou no meio da troca
+# (sem _internal, com _internal.bak), o .bak e a unica copia boa: devolve em
+# vez de apagar.
+if ((Test-Path $bakInternal) -and -not (Test-Path $internalDir)) {{
+    Rename-Item -Path $bakInternal -NewName "_internal" -ErrorAction SilentlyContinue
+    Log "Recuperado _internal de uma tentativa interrompida"
+}}
+if ((Test-Path $bakExe) -and -not (Test-Path $targetExe)) {{
+    Rename-Item -Path $bakExe -NewName (Split-Path $targetExe -Leaf) -ErrorAction SilentlyContinue
+    Log "Recuperado MBChat.exe de uma tentativa interrompida"
+}}
 if (Test-Path $bakInternal) {{ Remove-Item -Path $bakInternal -Recurse -Force -ErrorAction SilentlyContinue }}
 if (Test-Path $bakExe) {{ Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue }}
+Remove-Item -Path $failedExe -Force -ErrorAction SilentlyContinue
+Remove-Prepared
 
 # Volta ao estado anterior. Chamado em QUALQUER falha depois do backup.
 # Sem isso a pasta ficava com _internal novo + exe velho (ou sem _internal
 # nenhum), que e o que produz "Failed to load Python DLL" e deixa o app
 # quebrado em toda abertura seguinte, mesmo sem estar atualizando.
+# Tudo por RENAME: funciona mesmo se alguem abriu o exe novo nesse meio tempo.
 function Restore-Backup {{
     Log "ROLLBACK: restaurando versao anterior"
     try {{
-        if (Test-Path $internalDir) {{
-            Remove-Item -Path $internalDir -Recurse -Force -ErrorAction SilentlyContinue
-        }}
         if (Test-Path $bakInternal) {{
+            if (Test-Path $internalDir) {{
+                Remove-Item -Path $internalDir -Recurse -Force -ErrorAction SilentlyContinue
+            }}
             Rename-Item -Path $bakInternal -NewName "_internal" -ErrorAction Stop
         }}
         if (Test-Path $bakExe) {{
-            Copy-Item -Path $bakExe -Destination $targetExe -Force -ErrorAction Stop
-            Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue
+            if (Test-Path $targetExe) {{
+                Remove-Item -Path $targetExe -Force -ErrorAction SilentlyContinue
+                if (Test-Path $targetExe) {{
+                    Rename-Item -Path $targetExe -NewName (Split-Path $failedExe -Leaf) -ErrorAction Stop
+                }}
+            }}
+            Rename-Item -Path $bakExe -NewName (Split-Path $targetExe -Leaf) -ErrorAction Stop
         }}
         Log "ROLLBACK OK - app continua na versao anterior, funcionando"
     }} catch {{
         Log "ROLLBACK FALHOU: $_"
     }}
+    Remove-Prepared
 }}
 
-# Backup do _internal por RENAME (nao delete): reversivel e nao copia bytes.
+# Staging completo? Sumiu = outro script ja aplicou este update (ou apagaram).
+if (-not (Test-Path $stagingExe) -or -not (Test-Path $stagingInternal)) {{
+    Log "ERRO: pasta de staging incompleta ou ausente. Nada foi alterado."
+    Start-OldApp
+    exit 1
+}}
+
+# 1. PREPARA a versao nova AO LADO da atual (_internal.new + MBChat.exe.new).
+# E a parte demorada (centenas de arquivos); enquanto isso a versao atual fica
+# inteira no lugar: quem abrir o MB Chat agora abre a versao atual normalmente.
+# Antes, nesta janela a pasta ficava sem _internal (ou pela metade) e abrir o
+# app dava "Failed to load Python DLL".
+try {{
+    Copy-Item -Path $stagingInternal -Destination $newInternal -Recurse -Force -ErrorAction Stop
+    Copy-Item -Path $stagingExe -Destination $newExe -Force -ErrorAction Stop
+    Get-ChildItem -Path "{staging_dir}" -File | Where-Object {{ $_.Name -ne 'MBChat.exe' }} |
+        Copy-Item -Destination "{target_dir}" -Force -ErrorAction Stop
+    Log "Copia preparada OK"
+}} catch {{
+    Log "ERRO ao preparar a copia: $_ -- Nada foi alterado."
+    Remove-Prepared
+    Start-OldApp
+    exit 1
+}}
+
+# Confere a copia preparada ANTES de mexer na versao atual
+$prepCount = (Get-ChildItem -Path $newInternal -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+$srcLen = (Get-Item $stagingExe).Length
+$prepLen = -1
+if (Test-Path $newExe) {{ $prepLen = (Get-Item $newExe).Length }}
+if ($prepCount -lt 50 -or $srcLen -ne $prepLen) {{
+    Log "ERRO: copia preparada incompleta (_internal=$prepCount arquivos, exe=$prepLen/$srcLen bytes). Nada foi alterado."
+    Remove-Prepared
+    Start-OldApp
+    exit 1
+}}
+
+# 2. TROCA rapida: so renomeia (milissegundos). Mata de novo quem abriu o app
+# durante a preparacao e guarda a versao atual como .bak (reversivel).
 $ok = $false
 for ($i = 0; $i -lt 10; $i++) {{
+    Stop-Process -Name "MBChat" -Force -ErrorAction SilentlyContinue
     try {{
         if (Test-Path $internalDir) {{
             Rename-Item -Path $internalDir -NewName "_internal.bak" -ErrorAction Stop
@@ -364,25 +447,20 @@ for ($i = 0; $i -lt 10; $i++) {{
 
 if (-not $ok) {{
     Log "ERRO: nao conseguiu mover _internal (app ainda rodando?). Nada foi alterado."
+    Remove-Prepared
     Start-OldApp
     exit 1
 }}
 
-# Backup do exe por copia: se a substituicao falhar no meio, da pra voltar.
-if (Test-Path $targetExe) {{
-    try {{
-        Copy-Item -Path $targetExe -Destination $bakExe -Force -ErrorAction Stop
-    }} catch {{
-        Log "AVISO: nao consegui copiar backup do exe: $_"
-    }}
-}}
-
-# Copia novos arquivos
 try {{
-    Copy-Item -Path "{staging_dir}\\*" -Destination "{target_dir}" -Recurse -Force -ErrorAction Stop
-    Log "Copy OK"
+    Rename-Item -Path $newInternal -NewName "_internal" -ErrorAction Stop
+    if (Test-Path $targetExe) {{
+        Rename-Item -Path $targetExe -NewName (Split-Path $bakExe -Leaf) -ErrorAction Stop
+    }}
+    Rename-Item -Path $newExe -NewName (Split-Path $targetExe -Leaf) -ErrorAction Stop
+    Log "Copy OK (versao nova no lugar)"
 }} catch {{
-    Log "ERRO ao copiar: $_"
+    Log "ERRO ao trocar pela versao nova: $_"
     Restore-Backup
     Start-OldApp
     exit 1
@@ -404,7 +482,6 @@ Log "Sanity _internal OK: $fileCount arquivos"
 # _internal ANTES do exe (ordem verificada), entao uma falha so no exe deixava
 # _internal novo + exe velho -- combinacao que quebra o load da DLL e passava
 # batido no check antigo, que so contava arquivos de _internal.
-$stagingExe = Join-Path "{staging_dir}" "MBChat.exe"
 if (Test-Path $stagingExe) {{
     $srcLen = (Get-Item $stagingExe).Length
     $dstLen = -1
@@ -421,6 +498,7 @@ if (Test-Path $stagingExe) {{
 # Sucesso confirmado: descarta os backups
 Remove-Item -Path $bakInternal -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $bakExe -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $failedExe -Force -ErrorAction SilentlyContinue
 
 # Limpa staging e marcadores
 Remove-Item -Path "{staging_dir}" -Recurse -Force -ErrorAction SilentlyContinue

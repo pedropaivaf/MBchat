@@ -839,6 +839,69 @@ def cmd_update_blocked(zip_path, ver, expect_reopen=False):
         _unhosts()
 
 
+def cmd_update_impatient(zip_path, ver, strict=False):
+    # Update aplicado no boot enquanto o app e aberto de novo 3 vezes durante a
+    # troca -- a 2a entrada de inicio automatico (HKCU Run + atalho de
+    # Inicializacao) ou alguem clicando no icone porque "nao abriu". Registra
+    # qualquer janela de erro de QUALQUER MBChat.exe (ex. "Failed to load
+    # Python DLL") e confere o estado final.
+    st = load_state()
+    old = (st.get('installed_tag') or '').lstrip('v')
+    print(f'\n[update-impatient] update {old} -> {ver} com o app sendo aberto 3x durante a troca')
+    srv = _start_mock_github(os.path.abspath(zip_path), ver)
+    pend = os.path.join(UPD_DIR, 'update_pending.txt')
+    ulog = os.path.join(UPD_DIR, 'update.log')
+    try:
+        kill_app()
+        launch_app()
+        check(wait_for(lambda: os.path.isfile(pend), 300, 2), 'download silencioso concluido')
+        kill_app()
+        db_exec("DELETE FROM settings WHERE key='last_version'")
+        if os.path.exists(ulog):
+            os.remove(ulog)
+        launch_app()
+        check(wait_for(lambda: 'Update iniciado' in read_text(ulog), 120, 0.3), 'script de update comecou')
+        dialogos, extras, t_end = [], 0, time.time() + 90
+        prox = time.time() + 1.0
+        while time.time() < t_end:
+            if extras < 3 and time.time() >= prox:
+                launch_app()
+                extras += 1
+                prox = time.time() + 2.0
+            for txt in _dialogs_of(_pids('MBChat.exe')):
+                if txt not in dialogos:
+                    dialogos.append(txt)
+            if extras >= 3 and 'App lancado' in read_text(ulog) and time.time() > prox + 10:
+                break
+            time.sleep(0.3)
+        info(f'app aberto {extras}x a mais durante o update')
+        for d in dialogos:
+            info(f'JANELA DE ERRO: {d}')
+        if strict:
+            check(not dialogos, 'nenhuma janela de erro (ex. "Failed to load Python DLL")', ' || '.join(dialogos))
+        ok_ = wait_for(lambda: file_version(APP_EXE) == ver and setting('last_version') == ver
+                       and len(app_processes()) == 1, 240, 2)
+        check(ok_, f'no fim: versao {ver} instalada e aberta (uma instancia so)',
+              f'exe={file_version(APP_EXE)} last={setting("last_version")} procs={app_processes()}')
+        time.sleep(15)
+        procs = app_processes()
+        erros = _dialogs_of({p for p, _ in procs})
+        check(len(procs) == 1 and not erros, 'app continua aberto 15s depois, sem janela de erro',
+              f'{procs} {erros}')
+        check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
+              and not os.path.exists(os.path.join(APP_DIR, '_internal.bak'))
+              and not os.path.exists(os.path.join(APP_DIR, '_internal.new')),
+              'pasta do app consistente (python314.dll, sem .bak/.new)')
+        ulog_txt = read_text(ulog)
+        info(f'scripts de update que rodaram: {ulog_txt.count("Update iniciado")}')
+        check_data_preserved('apos o update com cliques')
+        if FAIL:
+            dump_logs()
+    finally:
+        srv.shutdown()
+        _unhosts()
+
+
 def cmd_setup_over(setup, ver):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
@@ -946,7 +1009,7 @@ def drive_wizard(timeout=600):
     # PostMessage: nao depende de foco nem de mouse.
     import win32api
     from pywinauto import Desktop
-    pages, started, last = [], False, None
+    pages, started, last, ultimo_clique = [], False, None, 0.0
     end = time.time() + timeout
     while time.time() < end:
         setup_pids = _pids('MBChat_Setup.tmp') | _pids('MBChat_Setup.exe')
@@ -974,11 +1037,23 @@ def drive_wizard(timeout=600):
         if alvo is None:
             time.sleep(1)
             continue
-        if (alvo.handle, rotulo) != last:
-            pages.append(rotulo)
-            last = (alvo.handle, rotulo)
+        # O Inno usa o MESMO botao "Avancar" em todas as paginas: a pagina e
+        # identificada pelos textos dela; parada 6s sem mudar = clica de novo.
+        textos = []
+        for c in w.descendants(class_name='TNewStaticText'):
+            try:
+                if c.is_visible() and c.window_text():
+                    textos.append(c.window_text())
+            except Exception:
+                pass
+        assinatura = (rotulo, tuple(textos[:4]))
+        agora = time.time()
+        if assinatura != last or agora - ultimo_clique > 6:
+            titulo = textos[0] if textos else '?'
+            pages.append(f'{titulo} -> {rotulo}')
+            last, ultimo_clique = assinatura, agora
             win32api.PostMessage(alvo.handle, 0x00F5, 0, 0)  # BM_CLICK
-        time.sleep(2)
+        time.sleep(1.5)
     return pages, 'o assistente nao terminou em %ds' % timeout
 
 
@@ -1017,7 +1092,7 @@ def cmd_wizard(exe, ver, fresh=False):
     pages, erro = drive_wizard()
     info(f'paginas clicadas: {" > ".join(pages)} ({time.time() - t0:.0f}s)')
     check(erro is None, 'assistente foi do inicio ao fim sem erro', str(erro))
-    check(any(p.startswith(('Concluir', 'Finish')) for p in pages), 'chegou na pagina final (Concluir)')
+    check(any(p.endswith(('Concluir', 'Finish')) for p in pages), 'chegou na pagina final (Concluir)')
     check(file_version(APP_EXE) == ver, f'MBChat.exe instalado e {ver}', file_version(APP_EXE))
     check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll')), '_internal com python314.dll')
     for rule in ('MBChat TCP In', 'MBChat TCP In Dynamic', 'MBChat UDP In'):
@@ -1052,7 +1127,7 @@ def main():
         content_ver = args[i + 1]
         del args[i:i + 2]
     args = [a for a in args if a not in ('--8dot3', '--limited')]
-    for flag in ('--expect-unelevated', '--via-startup', '--fresh'):
+    for flag in ('--expect-unelevated', '--via-startup', '--fresh', '--strict'):
         if flag in args:
             args = [a for a in args if a != flag] + [flag]
     cmd = args[0] if args else ''
@@ -1073,6 +1148,8 @@ def main():
         cmd_setup_over(args[1], args[2])
     elif cmd == 'webinstaller':
         cmd_webinstaller(args[1], flag83)
+    elif cmd == 'update-impatient':
+        cmd_update_impatient(args[1], args[2], '--strict' in args)
     elif cmd == 'wizard':
         cmd_wizard(args[1], args[2], '--fresh' in args)
     else:

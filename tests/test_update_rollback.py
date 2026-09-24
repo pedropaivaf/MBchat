@@ -235,15 +235,14 @@ def caso_exe_nao_trocado():
     try:
         inst, stg = build_sandbox(base)
         ps = gen_script(base, inst, stg)
-        # Simula o exe travado: o Copy-Item copia _internal (vem antes) mas
-        # nao substitui o exe.
+        # Simula o exe que nao chega ao lugar: _internal novo entra, o exe
+        # velho vai para .bak, mas o exe novo NAO e colocado (trava/antivirus).
         with open(ps, encoding='utf-8') as f:
             c = f.read()
-        stg_ps = _long(stg)   # o PS carrega o caminho LONGO, nao o do mkdtemp
-        alvo = 'Copy-Item -Path "%s\\*"' % stg_ps
-        assert alvo in c, ('padrao do Copy-Item nao encontrado no PS gerado - '
+        alvo = 'Rename-Item -Path $newExe -NewName (Split-Path $targetExe -Leaf) -ErrorAction Stop'
+        assert alvo in c, ('troca do exe nao encontrada no PS gerado - '
                            'o teste nao estaria simulando nada')
-        c = c.replace(alvo, 'Copy-Item -Path "%s\\_internal"' % stg_ps)
+        c = c.replace(alvo, '$null = 0  # simulado: exe novo nao chegou')
         with open(ps, 'w', encoding='utf-8') as f:
             f.write(c)
         rc, _ = run_ps(ps)
@@ -280,6 +279,70 @@ def caso_bak_orfao():
             ok('orfaos removidos')
         else:
             fail('orfaos sobraram')
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _log(base):
+    p = os.path.join(base, 'update.log')
+    if not os.path.isfile(p):
+        return ''
+    raw = open(p, 'rb').read()
+    return raw.decode('utf-16', 'replace') if raw[:2] == b'\xff\xfe' else raw.decode('utf-8', 'replace')
+
+
+def caso_interrompido_na_troca():
+    print('\n[7] Tentativa anterior parou NO MEIO da troca (sem _internal, so .bak)')
+    base = tempfile.mkdtemp(prefix='mbup_mid_')
+    try:
+        inst, stg = build_sandbox(base)
+        os.rename(os.path.join(inst, '_internal'), os.path.join(inst, '_internal.bak'))
+        rc, _ = run_ps(gen_script(base, inst, stg))
+        s = state(inst)
+        if 'Recuperado _internal' in _log(base):
+            ok('_internal.bak devolvido em vez de apagado (era a unica copia boa)')
+        else:
+            fail('o .bak da tentativa interrompida nao foi recuperado', _log(base)[-300:])
+        if rc == 0 and s['exe'] == NEW_EXE and s['dll'] == NEW_DLL and coerente(s):
+            ok('update aplicado por completo depois de recuperar')
+        else:
+            fail(f'estado final ruim (rc={rc})', str(s)[:140])
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def caso_dois_scripts():
+    print('\n[8] Dois scripts de update ao mesmo tempo (2 aberturas no logon / clique)')
+    base = tempfile.mkdtemp(prefix='mbup_dup_')
+    try:
+        inst, stg = build_sandbox(base)
+        ps1 = gen_script(base, inst, stg)
+        c = open(ps1, encoding='utf-8').read()
+        # segura o 1o script trabalhando por 4s depois de pegar a vez
+        c = c.replace('Log "Update iniciado', 'Start-Sleep -Seconds 4\nLog "Update iniciado', 1)
+        open(ps1, 'w', encoding='utf-8').write(c)
+        ps2 = os.path.join(base, 'update2.ps1')
+        shutil.copy(ps1, ps2)
+        p1 = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                               '-File', ps1], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import time
+        time.sleep(2)
+        rc2, _ = run_ps(ps2)
+        rc1 = p1.wait(timeout=120)
+        s = state(inst)
+        log = _log(base)
+        if rc2 == 0 and 'Outro update ja esta em andamento' in log:
+            ok('2o script viu o 1o trabalhando e saiu sem mexer em nada')
+        else:
+            fail(f'2o script nao esperou a vez (rc={rc2})', log[-300:])
+        if log.count('Update iniciado') == 1:
+            ok('so um script trocou os arquivos')
+        else:
+            fail(f'{log.count("Update iniciado")} scripts trocaram os arquivos ao mesmo tempo')
+        if rc1 == 0 and s['exe'] == NEW_EXE and s['dll'] == NEW_DLL and coerente(s):
+            ok('update aplicado por completo, pasta coerente')
+        else:
+            fail(f'estado final ruim (rc1={rc1})', str(s)[:140])
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
@@ -332,6 +395,8 @@ if __name__ == '__main__':
     caso_internal_incompleto()
     caso_exe_nao_trocado()
     caso_bak_orfao()
+    caso_interrompido_na_troca()
+    caso_dois_scripts()
     caso_contador()
     print(f'\n{"=" * 56}')
     print(f'  {len(PASS)} passou   {len(FAIL)} falhou')
