@@ -879,6 +879,14 @@ def cmd_update_impatient(zip_path, ver, strict=False):
             info(f'JANELA DE ERRO: {d}')
         if strict:
             check(not dialogos, 'nenhuma janela de erro (ex. "Failed to load Python DLL")', ' || '.join(dialogos))
+        elif dialogos:
+            # 1.8.38 congelada: janela ja conhecida (documentada). O processo
+            # parado na janela de erro e fechado (= usuario clicando OK) e o
+            # que se cobra e que nao ficou dano permanente.
+            info('comportamento conhecido do script da 1.8.38 -- fechando as janelas de erro (OK)')
+            for pid, _ in app_processes():
+                if _dialogs_of({pid}):
+                    subprocess.run(['taskkill', '/f', '/pid', str(pid)], capture_output=True)
         ok_ = wait_for(lambda: file_version(APP_EXE) == ver and setting('last_version') == ver
                        and len(app_processes()) == 1, 240, 2)
         check(ok_, f'no fim: versao {ver} instalada e aberta (uma instancia so)',
