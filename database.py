@@ -708,9 +708,11 @@ class Database:
 
     # Insere ou atualiza contato (chamado pelo discovery quando peer é encontrado)
     # UPSERT: cria novos e atualiza existentes. Não atualiza first_seen em updates
+    # commit=False: o caller agrupa varias gravacoes numa transacao so e chama
+    # commit() no fim (usado pelo announce -- 1 fsync em vez de 3).
     def upsert_contact(self, user_id, display_name, ip_address,
                        hostname='', os_info='', status='online', note='',
-                       avatar_index=0, avatar_data='', winuser=''):
+                       avatar_index=0, avatar_data='', winuser='', commit=True):
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
@@ -730,7 +732,14 @@ class Database:
                 last_seen=excluded.last_seen
         """, (user_id, display_name, ip_address, hostname, os_info, status,
               note, avatar_index, avatar_data, winuser or '', now, now))
+        if commit:
+            self.conn.commit()
+
+    def commit(self):
         self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
 
     # Retorna nota pessoal de um contato específico
     def get_contact_note(self, user_id):
@@ -1245,17 +1254,19 @@ class Database:
     # CONTACTS — department, private_note
     # ========================================
 
-    def set_contact_department(self, user_id, department):
+    def set_contact_department(self, user_id, department, commit=True):
         self.conn.execute(
             "UPDATE contacts SET department=? WHERE user_id=?",
             (department, user_id))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
-    def set_contact_ramal(self, user_id, ramal):
+    def set_contact_ramal(self, user_id, ramal, commit=True):
         self.conn.execute(
             "UPDATE contacts SET ramal=? WHERE user_id=?",
             (ramal, user_id))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def set_contact_private_note(self, user_id, note):
         self.conn.execute(

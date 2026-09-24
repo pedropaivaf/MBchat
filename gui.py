@@ -16,6 +16,7 @@ import uuid                                     # Geração de IDs únicos
 import os                                       # Operações de arquivo/diretório e variáveis de ambiente
 import glob                                     # Busca de arquivo por prefixo (fallback de transferencias)
 import tempfile                                 # Arquivo .wav temporario para previa de gravacao de audio
+import queue                                    # Fila de callbacks das threads de rede para a main thread
 import sys                                      # Para detectar se está rodando como .exe (PyInstaller)
 import platform                                 # Para detectar Windows/Mac/Linux (sons de notificação)
 import socket                                   # Suporte de rede (usado pelo messenger)
@@ -87,6 +88,7 @@ except ImportError:
 
 APP_NAME = 'MB Chat'                        # Nome do aplicativo exibido nos títulos de janela
 APP_AUMID = 'MBContabilidade.MBChat'        # AppUserModelID para taskbar grouping e toasts clicaveis
+UI_QUEUE_POLL_MS = 50                       # Intervalo (ms) em que a main thread drena a fila de callbacks de rede
 
 # Expressão regular para detectar emojis Unicode no texto das mensagens.
 # Usada em _insert_text_with_emojis() para substituir cada emoji por uma imagem colorida
@@ -6580,7 +6582,7 @@ class ChatWindow(tk.Toplevel):
 
             def _do_send(lid=local_id, cnt=content, rid=reply_to_id):
                 ok, _ = self.messenger.send_message(self.peer_id, cnt, rid, msg_id=lid)
-                self.after(0, lambda: self._update_msg_status(lid, ok))
+                self.app._post(self._update_msg_status, lid, ok)
 
             threading.Thread(target=_do_send, daemon=True).start()
         if pending_img:
@@ -8305,7 +8307,7 @@ class ChatWindow(tk.Toplevel):
         def _do_send():
             ok, path = self.messenger.send_audio(self.peer_id, wav_bytes)
             if ok and path:
-                self.after(0, lambda: self._append_audio(
+                self.app._post(lambda: self._append_audio(
                     self.messenger.display_name, path, True))
         threading.Thread(target=_do_send, daemon=True).start()
 
@@ -8398,7 +8400,7 @@ class ChatWindow(tk.Toplevel):
         def _do_send():
             ok, path = self.messenger.send_image(self.peer_id, image_bytes)
             if ok and path:
-                self.after(0, lambda: self._append_image(
+                self.app._post(lambda: self._append_image(
                     self.messenger.display_name, path, True))
         threading.Thread(target=_do_send, daemon=True).start()
 
@@ -11043,7 +11045,7 @@ class GroupChatWindow(tk.Toplevel):
             def _do():
                 poll_id = self.app.messenger.create_poll(self.group_id, question, options)
                 if poll_id:
-                    self.after(0, lambda: self._display_poll(
+                    self.app._post(lambda: self._display_poll(
                         question, options, self.app.messenger.display_name, poll_id))
             threading.Thread(target=_do, daemon=True).start()
 
@@ -11177,7 +11179,7 @@ class GroupChatWindow(tk.Toplevel):
     def _vote_poll(self, poll_id, option_index):
         def _do():
             self.app.messenger.vote_poll(self.group_id, poll_id, option_index)
-            self.after(0, lambda: self._refresh_poll_ui(poll_id))
+            self.app._post(self._refresh_poll_ui, poll_id)
         threading.Thread(target=_do, daemon=True).start()
 
     # Atualiza a UI do poll apos voto (proprio ou de outro membro)
@@ -11800,7 +11802,7 @@ class GroupChatWindow(tk.Toplevel):
         def _do_send():
             path = self.app.messenger.send_group_audio(self.group_id, wav_bytes)
             if path:
-                self.after(0, lambda: self._append_audio(
+                self.app._post(lambda: self._append_audio(
                     self.app.messenger.display_name, path, True))
         threading.Thread(target=_do_send, daemon=True).start()
 
@@ -11887,7 +11889,7 @@ class GroupChatWindow(tk.Toplevel):
         def _do_send():
             path = self.app.messenger.send_group_image(self.group_id, image_bytes)
             if path:
-                self.after(0, lambda: self._append_image(
+                self.app._post(lambda: self._append_image(
                     self.app.messenger.display_name, path, True))
         threading.Thread(target=_do_send, daemon=True).start()
 
@@ -12144,6 +12146,14 @@ class LanMessengerApp:
         except Exception:
             pass
         self.root = tk.Tk()                  # Janela principal tkinter
+        # Fila de callbacks vindos de threads de rede/background (ver _safe).
+        # Chamar o Tk a partir de uma thread de vida curta -- ate um simples
+        # root.after(0, ...) -- vaza ~16KB por thread que nunca voltam ao SO
+        # (medido: 30 mil threads = +500MB). Cada mensagem TCP recebida roda
+        # numa thread nova, entao a RAM subia sem parar com o app aberto.
+        # As threads so enfileiram; a main thread drena a cada UI_QUEUE_POLL_MS.
+        self._ui_queue = queue.Queue()
+        self.root.after(UI_QUEUE_POLL_MS, self._drain_ui_queue)
         self.THEMES = THEMES                 # Expõe dict global pro ThemeBuilder propagar temas custom
         self.root.title(APP_NAME)            # "MB Chat" na barra de título
         self.root.minsize(260, 450)          # Tamanho mínimo
@@ -12391,11 +12401,32 @@ class LanMessengerApp:
 
     def _safe(self, func):
         def wrapper(*args, **kwargs):
-            if kwargs:
-                self.root.after(0, lambda: func(*args, **kwargs))
-            else:
-                self.root.after(0, func, *args)
+            self._post(func, *args, **kwargs)
         return wrapper
+
+    # Agenda func(*args, **kwargs) na main thread. Seguro de chamar de qualquer
+    # thread: so mexe numa queue.Queue, nunca no Tk (ver comentario no __init__).
+    def _post(self, func, *args, **kwargs):
+        self._ui_queue.put((func, args, kwargs))
+
+    # Roda na main thread: executa os callbacks enfileirados, na ordem de
+    # chegada. Processa so o que ja estava na fila ao entrar -- callback que
+    # enfileira outro fica pro proximo ciclo, sem prender a UI. Excecao vai
+    # pro report_callback_exception (log), igual acontecia com root.after.
+    def _drain_ui_queue(self):
+        for _ in range(self._ui_queue.qsize()):
+            try:
+                func, args, kwargs = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                self.root.report_callback_exception(*sys.exc_info())
+        try:
+            self.root.after(UI_QUEUE_POLL_MS, self._drain_ui_queue)
+        except tk.TclError:
+            pass  # root destruido (app fechando)
 
     # Atualiza textos da UI apos mudanca de idioma.
     def _rebuild_ui_language(self):

@@ -234,12 +234,31 @@ for i, arg in enumerate(sys.argv):
         BIND_IP = sys.argv[i + 1]
         break
 
+# Cache curto do IP local. get_local_ip() e chamada a CADA pacote UDP
+# recebido (_handle_packet) e cada chamada abria uma conexao SQLite nova +
+# 2 sockets -- com 30 PCs anunciando, varias vezes por segundo sem parar.
+# Troca de rede (Wi-Fi/cabo, VPN) continua detectada em ate _LOCAL_IP_TTL s.
+_LOCAL_IP_TTL = 5.0
+_local_ip_cache = (0.0, None)  # (time.monotonic() da consulta, ip)
+
+
+def get_local_ip():
+    global _local_ip_cache
+    now = time.monotonic()
+    ts, ip = _local_ip_cache
+    if ip is not None and now - ts < _LOCAL_IP_TTL:
+        return ip
+    ip = _get_local_ip_uncached()
+    _local_ip_cache = (now, ip)
+    return ip
+
+
 # Detecta IP local da maquina na rede.
 # Cria socket UDP e "conecta" ao DNS do Google (8.8.8.8)
 # para descobrir qual interface de rede seria usada.
 # Nao envia dados, apenas verifica o roteamento.
 # Retorna '127.0.0.1' se nao conseguir detectar.
-def get_local_ip():
+def _get_local_ip_uncached():
     if BIND_IP:
         return BIND_IP
     # 1. Tenta conectar aos manual_peers (VPN anchors) para obter o IP da interface da VPN

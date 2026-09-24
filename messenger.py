@@ -36,6 +36,14 @@ from network import (
 )
 from database import Database  # Banco de dados local
 
+# Enquanto o peer segue online, o last_seen do contato no banco e renovado no
+# maximo a cada CONTACT_LAST_SEEN_REFRESH_S (qualquer outro campo que mude --
+# status, nota, IP, avatar... -- continua gravando na hora).
+CONTACT_LAST_SEEN_REFRESH_S = 60
+# Sync de reunioes com um peer: ao (re)conectar e, enquanto ele segue online,
+# no maximo a cada MEETING_SYNC_INTERVAL_S.
+MEETING_SYNC_INTERVAL_S = 300
+
 
 # Controller principal do MB Chat
 # Conecta as 3 camadas: GUI <-> Rede <-> Banco de dados
@@ -79,6 +87,7 @@ class Messenger:
         self._lock = threading.Lock()  # Lock para operacoes thread-safe
         self._file_senders = {}  # file_id -> FileSender (envios ativos)
         self._file_receiver = None  # FileReceiver (receptor de arquivos)
+        self._meeting_sync_at = {}  # uid -> (ip, time.time()) do ultimo sync de reunioes
 
         # === Callbacks para notificar a GUI ===
         self.on_user_found = on_user_found      # Peer encontrado
@@ -286,35 +295,88 @@ class Messenger:
             self.db.merge_legacy_contact(uid, info.get('winuser', ''))
         except Exception:
             pass
-        self.db.upsert_contact(
-            uid, info['display_name'], info['ip'],
-            hostname=info.get('hostname', ''),
-            os_info=info.get('os', ''),
-            status=info.get('status', 'online'),
-            note=info.get('note', ''),
-            avatar_index=info.get('avatar_index', 0),
-            avatar_data=info.get('avatar_data', ''),
-            winuser=info.get('winuser', '')
-        )
-        dept = info.get('department', '')
-        if dept:
-            self.db.set_contact_department(uid, dept)
-        ramal = info.get('ramal', '')
-        self.db.set_contact_ramal(uid, ramal)
+        self._persist_announced_contact(uid, info)
         if self.db.is_blocked(uid):
             return  # Computador bloqueado: nao aparece na GUI nem sincroniza
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
         # Sync de reuniões ao reconectar peer
         peer_ip = info.get('ip', '')
-        if peer_ip:
+        if peer_ip and self._should_sync_meetings(uid, peer_ip):
             threading.Thread(
                 target=lambda ip=peer_ip: self.sync_meetings_with_peer(ip),
                 daemon=True).start()
 
+    # Grava no banco os dados de um announce. Cada peer anuncia a cada 15s (as
+    # vezes em dobro: multicast + broadcast) e antes cada announce fazia 2-3
+    # commits (fsync no disco) mesmo sem nada mudar. Agora compara com a linha
+    # atual do banco: so grava se algum campo mudou ou se o last_seen passou de
+    # CONTACT_LAST_SEEN_REFRESH_S -- e grava tudo numa transacao so (1 commit).
+    # A comparacao e contra o BANCO (nao um cache em memoria), entao qualquer
+    # outra escrita no contato (offline, exclusao, rename) e respeitada.
+    def _persist_announced_contact(self, uid, info):
+        dept = info.get('department', '')
+        ramal = info.get('ramal', '')
+        winuser = info.get('winuser', '')
+        row = self.db.get_contact(uid)
+        if row is not None:
+            unchanged = (
+                row.get('display_name') == info['display_name']
+                and row.get('ip_address') == info['ip']
+                and row.get('hostname') == info.get('hostname', '')
+                and row.get('os_info') == info.get('os', '')
+                and row.get('status') == info.get('status', 'online')
+                and row.get('note') == info.get('note', '')
+                and row.get('avatar_index') == info.get('avatar_index', 0)
+                and row.get('avatar_data') == info.get('avatar_data', '')
+                and row.get('winuser') == (winuser or '')
+                and (not dept or row.get('department') == dept)
+                and row.get('ramal') == ramal
+                and time.time() - (row.get('last_seen') or 0) < CONTACT_LAST_SEEN_REFRESH_S
+            )
+            if unchanged:
+                return
+        try:
+            self.db.upsert_contact(
+                uid, info['display_name'], info['ip'],
+                hostname=info.get('hostname', ''),
+                os_info=info.get('os', ''),
+                status=info.get('status', 'online'),
+                note=info.get('note', ''),
+                avatar_index=info.get('avatar_index', 0),
+                avatar_data=info.get('avatar_data', ''),
+                winuser=winuser,
+                commit=False
+            )
+            if dept:
+                self.db.set_contact_department(uid, dept, commit=False)
+            self.db.set_contact_ramal(uid, ramal, commit=False)
+            self.db.commit()
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            raise
+
+    # Sync de reunioes ao (re)conectar o peer e, enquanto ele segue online, no
+    # maximo a cada MEETING_SYNC_INTERVAL_S. Antes rodava a CADA announce (15s
+    # por peer): com 30 PCs eram ~2 syncs/s em cada maquina, cada um com thread
+    # nova + 2 conexoes TCP + consultas/gravacoes no banco + callback na GUI.
+    # IP novo (troca de rede) sincroniza na hora; _on_peer_lost zera o registro
+    # para o proximo announce (reconexao) sincronizar de imediato.
+    def _should_sync_meetings(self, uid, peer_ip):
+        now = time.time()
+        last = self._meeting_sync_at.get(uid)
+        if last and last[0] == peer_ip and now - last[1] < MEETING_SYNC_INTERVAL_S:
+            return False
+        self._meeting_sync_at[uid] = (peer_ip, now)
+        return True
+
     # Callback chamado quando um peer e perdido (timeout ou depart)
     # Marca como offline no banco e notifica a GUI
     def _on_peer_lost(self, uid, info):
+        self._meeting_sync_at.pop(uid, None)
         self.db.set_contact_offline(uid)
         if self.on_user_lost:
             self.on_user_lost(uid, info)  # Notifica GUI

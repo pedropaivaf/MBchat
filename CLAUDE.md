@@ -1360,3 +1360,59 @@ Passe com `--notes` (no PowerShell, here-string `@'...'@` com o `'@` na coluna 0
 Peer que descobre a versao nova pela rede (announce P2P, nao pela API) recebe o
 texto generico "Nova atualizacao disponivel na rede!" ate a checagem via GitHub
 rodar — as notas de verdade vem so pela API.
+
+## RAM subindo para 600MB-1GB com o app aberto (pos-v1.8.38, SEM release ainda)
+
+### Causa raiz (medida)
+
+Chamar o Tk a partir de uma thread de vida curta -- ate um simples `root.after(0, ...)`
+-- vaza ~16KB por thread que nunca voltam ao SO (alocador por thread do Tcl + dados
+por thread criados na chamada cross-thread do tkinter). O `LanMessengerApp._safe`
+fazia exatamente isso para TODO callback de rede, e cada mensagem TCP recebida roda
+numa thread nova (`TCPServer._handle_client`). Medido no app real (boot completo,
+Xvfb): 20 mil eventos de rede = **+321MB antes, +0MB depois** (e 3x mais rapido).
+
+O maior gerador desses eventos era o sync de reunioes: `_on_peer_found` disparava
+`sync_meetings_with_peer` a **cada announce** (15s por peer, as vezes em dobro via
+multicast + broadcast). Com 30 PCs: ~2-6 syncs/s em cada maquina, cada um com thread
+nova + 2 conexoes TCP + consultas no banco + um `MT_MEETING_SYNC_RES` voltando e
+chamando `on_meeting_sync` via `_safe` -> +16KB por vez, o dia inteiro, mesmo com a
+aba Reunioes sem uso. Por isso o app "subia do nada" e voltava a ~130MB ao reiniciar.
+
+### O fix
+
+1. **`_safe` / `_post` / `_drain_ui_queue` (gui.py)**: threads so enfileiram numa
+   `queue.Queue`; a main thread drena a cada `UI_QUEUE_POLL_MS` (50ms). Mesma
+   semantica de antes (roda na main thread, ordem FIFO, excecao vai pro
+   `report_callback_exception`). As threads de envio de mensagem/audio/imagem/enquete
+   (`_do_send`/`_do`) usam `self.app._post(...)` em vez de `self.after(0, ...)`.
+   **NUNCA** chamar `root.after`/qualquer widget de dentro de thread de rede ou de
+   thread criada por mensagem -- use `app._post`. (Threads longas unicas -- tray,
+   listener de instancia unica, download de update -- vazam uma vez so, deixadas.)
+2. **Sync de reunioes limitado (messenger.py `_should_sync_meetings`)**: na
+   (re)conexao do peer (primeiro announce, IP novo, ou depois de `_on_peer_lost`) e,
+   enquanto ele segue online, no maximo a cada `MEETING_SYNC_INTERVAL_S` (300s). A
+   aba Reunioes continua funcionando igual (convite/cancelamento/edicao sao enviados
+   direto; o sync periodico e so a rede de seguranca).
+3. **Announce so grava contato se algo mudou (messenger.py `_persist_announced_contact`)**:
+   compara com a linha do BANCO (nao cache em memoria -- respeita offline, exclusao,
+   rename feitos por outros caminhos); grava se qualquer campo mudou ou se `last_seen`
+   passou de `CONTACT_LAST_SEEN_REFRESH_S` (60s), numa transacao so (1 commit/fsync em
+   vez de 3). `upsert_contact`/`set_contact_department`/`set_contact_ramal` ganharam
+   `commit=True` (default inalterado) + `Database.commit()/rollback()`.
+4. **`get_local_ip()` com cache de 5s (network.py)**: era chamada a cada pacote UDP
+   recebido e cada chamada abria uma conexao SQLite nova + 2 sockets. A deteccao real
+   virou `_get_local_ip_uncached()`; testes que substituem `network.get_local_ip`
+   continuam funcionando.
+
+Janelas de chat NAO eram a causa: 40 ciclos de abrir/fechar chat com 150 mensagens
+(links, codigo, emojis) ficaram estaveis (medido).
+
+### Testes
+
+`tests/test_memory_leak_fixes.py` (30 checks): 5000 threads curtas via `_safe` (todos
+na main thread, FIFO, kwargs, excecao reportada, RAM estavel), guarda estatica do
+`_safe` e das threads de envio, throttle do sync de reunioes, gravacao do announce
+(identico nao grava; nota/offline/exclusao/last_seen velho gravam; setor vazio nao
+apaga) e cache do IP. Reinjetar o `root.after` no `_safe` reprova por dois caminhos
+(+83MB e guarda estatica). Suites existentes identicas ao baseline.
