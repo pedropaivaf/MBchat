@@ -18,8 +18,15 @@
 # Subcomandos:
 #   install-release TAG            baixa o setup oficial da release e instala silencioso
 #   seed VER                       1a abertura do app (cria o banco) + 300 mensagens de teste
-#   update-flow ZIP VER [--8dot3]  api.github.com falso servindo ZIP como versao VER;
-#                                  o app instalado baixa sozinho e aplica no "boot"
+#   install-setup SETUP VER        instala um setup local (build de teste) silencioso
+#   update-flow ZIP VER [--8dot3] [--limited] [--api-calls N]
+#                                  api.github.com falso servindo ZIP como versao VER;
+#                                  o app instalado baixa sozinho e aplica no "boot".
+#                                  --limited: app aberto SEM privilegio de admin (como
+#                                  no escritorio): o script do update pede o UAC.
+#   update-blocked ZIP VER         o update NAO consegue trocar os arquivos (mesmo efeito
+#                                  de clicar "Nao" no UAC): nada pode quebrar, e o app
+#                                  tem que voltar a abrir e atualizar depois
 #   setup-over SETUP VER           instalador novo por cima, com o app ABERTO
 #   webinstaller EXE [--8dot3]     instalador web baixa o setup da ultima release e o abre
 
@@ -195,14 +202,39 @@ def kill_app():
     wait_for(lambda: not app_processes(), 30)
 
 
+LIMITED = False
+
+
 def launch_app(args=('--silent',), env=None):
     # Como o atalho de inicializacao do Windows abre o app: exe --silent.
+    if LIMITED:
+        # Tarefa agendada com /RL LIMITED: o app roda com o token FILTRADO do
+        # usuario (sem admin), igual a um duplo clique no escritorio. Assim o
+        # script do update precisa pedir elevacao (UAC) de verdade.
+        tr = f'"{APP_EXE}" ' + ' '.join(args)
+        subprocess.run(['schtasks', '/create', '/tn', 'MBChatE2E', '/tr', tr, '/sc', 'once',
+                        '/st', '00:00', '/rl', 'LIMITED', '/it', '/f'],
+                       capture_output=True, check=True)
+        subprocess.run(['schtasks', '/run', '/tn', 'MBChatE2E'], capture_output=True, check=True)
+        return None
     DETACHED = 0x00000008
     NEW_GROUP = 0x00000200
     return subprocess.Popen([APP_EXE, *args], cwd=APP_DIR, env=env,
                             creationflags=DETACHED | NEW_GROUP,
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, close_fds=True)
+
+
+def process_elevated(pid):
+    # True se o processo roda como administrador (token elevado)
+    import win32api
+    import win32security
+    try:
+        h = win32api.OpenProcess(0x1000, False, int(pid))  # QUERY_LIMITED_INFORMATION
+        tok = win32security.OpenProcessToken(h, 0x0008)    # TOKEN_QUERY
+        return bool(win32security.GetTokenInformation(tok, win32security.TokenElevation))
+    except Exception as e:
+        return f'? ({e})'
 
 
 def firewall_rule(name):
@@ -301,6 +333,16 @@ def cmd_install_release(tag):
     setup = os.path.join(WORK, f'MBChat_Setup_{ver}.exe')
     download(f'https://github.com/{REPO}/releases/download/{tag}/MBChat_Setup.exe', setup)
     info(f'baixado {os.path.getsize(setup)} bytes, sha256 {sha256_file(setup)[:16]}')
+    _install(setup, ver)
+
+
+def cmd_install_setup(setup, ver):
+    print(f'\n[install-setup] instala o build de teste {ver} (silencioso)')
+    _install(os.path.abspath(setup), ver)
+
+
+def _install(setup, ver):
+    tag = f'v{ver}'
     log = os.path.join(WORK, f'setup_{ver}.log')
     r = subprocess.run([setup, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
                         '/TASKS=desktopicon,autostart', f'/LOG={log}'], timeout=900)
@@ -453,11 +495,12 @@ def _start_mock_github(zip_path, version):
     return srv
 
 
-def cmd_update_flow(zip_path, ver, use_8dot3=False):
+def cmd_update_flow(zip_path, ver, use_8dot3=False, api_calls=None):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
     print(f'\n[update-flow] app {old} instalado recebe a {ver} pelo proprio auto-update'
-          + (' (TEMP em caminho 8.3)' if use_8dot3 else ''))
+          + (' (TEMP em caminho 8.3)' if use_8dot3 else '')
+          + (' (app SEM admin: script pede UAC)' if LIMITED else ''))
     check(file_version(APP_EXE) == old, f'ponto de partida: {old} instalado', file_version(APP_EXE))
     zip_path = os.path.abspath(zip_path)
     env = dict(os.environ)
@@ -481,6 +524,16 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False):
         zip_hits = [h for h in _MockGitHub.hits if h.endswith('.zip')]
         check(api_hits and len(zip_hits) == 1,
               'consultou a API (via fallback SSL) e baixou o zip 1 vez', repr(_MockGitHub.hits))
+        info(f'chamadas a API do GitHub ate o download: {len(api_hits)}')
+        if api_calls is not None:
+            check(len(api_hits) == api_calls,
+                  f'gastou {api_calls} chamada(s) da API (limite de 60/h do IP do escritorio)',
+                  str(len(api_hits)))
+        procs = app_processes()
+        if LIMITED and procs:
+            check(process_elevated(procs[0][0]) is False,
+                  'app aberto SEM admin (token filtrado, como no escritorio)',
+                  str(process_elevated(procs[0][0])))
         staging = os.path.join(UPD_DIR, 'update_staging')
         if got:
             check(read_text(pend).strip().lower() == staging.lower(),
@@ -519,6 +572,10 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False):
         procs = app_processes()
         check(len(procs) == 1 and '--show' in procs[0][1],
               'um unico MBChat aberto, relancado com --show', repr(procs))
+        if procs:
+            info(f'app relancado roda como admin: {process_elevated(procs[0][0])}')
+        if LIMITED:
+            check('admin=True' in ulog_txt, 'script pediu o UAC e rodou elevado (admin=True)')
         time.sleep(20)
         check(len(app_processes()) == 1, 'app novo continua aberto 20s depois (sem crash de DLL)')
         check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll')),
@@ -537,14 +594,83 @@ def cmd_update_flow(zip_path, ver, use_8dot3=False):
             dump_logs()
     finally:
         srv.shutdown()
-        try:
-            with open(HOSTS, encoding='ascii', errors='replace') as f:
-                lines = [l for l in f.read().splitlines() if 'mbchat-e2e' not in l]
-            with open(HOSTS, 'w', encoding='ascii') as f:
-                f.write('\n'.join(lines) + '\n')
-            subprocess.run(['ipconfig', '/flushdns'], capture_output=True)
-        except Exception:
-            pass
+        _unhosts()
+
+
+def _unhosts():
+    try:
+        with open(HOSTS, encoding='ascii', errors='replace') as f:
+            lines = [l for l in f.read().splitlines() if 'mbchat-e2e' not in l]
+        with open(HOSTS, 'w', encoding='ascii') as f:
+            f.write('\n'.join(lines) + '\n')
+        subprocess.run(['ipconfig', '/flushdns'], capture_output=True)
+    except Exception:
+        pass
+
+
+def cmd_update_blocked(zip_path, ver):
+    st = load_state()
+    old = (st.get('installed_tag') or '').lstrip('v')
+    print(f'\n[update-blocked] update {old} -> {ver} com a pasta do app TRAVADA '
+          '(mesmo efeito de clicar "Nao" no UAC)')
+    import win32file
+    srv = _start_mock_github(os.path.abspath(zip_path), ver)
+    pend = os.path.join(UPD_DIR, 'update_pending.txt')
+    ulog = os.path.join(UPD_DIR, 'update.log')
+    lock = None
+    try:
+        kill_app()
+        launch_app()
+        check(wait_for(lambda: os.path.isfile(pend), 300, 2), 'download silencioso concluido')
+        kill_app()
+        # Arquivo aberto dentro de _internal: o Rename-Item da pasta falha,
+        # exatamente como quando o script roda sem permissao em Program Files.
+        target = os.path.join(APP_DIR, '_internal', 'base_library.zip')
+        if not os.path.isfile(target):
+            target = os.path.join(APP_DIR, '_internal', 'python314.dll')
+        lock = win32file.CreateFile(target, win32file.GENERIC_READ, win32file.FILE_SHARE_READ,
+                                    None, win32file.OPEN_EXISTING, 0, None)
+        for n in (1, 2, 3):
+            if os.path.exists(ulog):
+                os.remove(ulog)
+            launch_app()
+            done = wait_for(lambda: 'Nada foi alterado' in read_text(ulog), 120, 2)
+            check(done, f'tentativa {n}: script desistiu sem mexer em nada ("Nada foi alterado")')
+            time.sleep(5)
+            opened = bool(app_processes())
+            info(f'tentativa {n}: app {"ABRIU" if opened else "ficou FECHADO (usuario precisa clicar no icone de novo)"}')
+            check(file_version(APP_EXE) == old
+                  and os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
+                  and not os.path.exists(os.path.join(APP_DIR, '_internal.bak')),
+                  f'tentativa {n}: versao {old} continua inteira (sem "Failed to load Python DLL")')
+            kill_app()
+        launch_app()
+        applog = os.path.join(UPD_DIR, 'mbchat.log')
+        up = wait_for(lambda: len(app_processes()) == 1 and 'desistindo' in read_text(applog), 60)
+        check(up, 'tentativa 4: app desiste do update e ABRE normal (sem loop)')
+        check(setting('last_version') == old, f'continua na {old} funcionando')
+        check_data_preserved('apos 3 falhas')
+        # destrava: o proprio app baixa de novo e o proximo boot aplica
+        win32file.CloseHandle(lock)
+        lock = None
+        check(wait_for(lambda: os.path.isfile(pend), 300, 2),
+              'com o app aberto, o update e baixado de novo sozinho')
+        kill_app()
+        if os.path.exists(ulog):
+            os.remove(ulog)
+        launch_app()
+        ok_ = wait_for(lambda: file_version(APP_EXE) == ver and setting('last_version') == ver
+                       and len(app_processes()) == 1, 240, 2)
+        check(ok_, f'destravado: proxima abertura atualiza para {ver} e abre')
+        check('ROLLBACK' not in read_text(ulog), 'sem rollback na tentativa final')
+        check_data_preserved('apos atualizar')
+        if FAIL:
+            dump_logs()
+    finally:
+        if lock is not None:
+            win32file.CloseHandle(lock)
+        srv.shutdown()
+        _unhosts()
 
 
 def cmd_setup_over(setup, ver):
@@ -633,16 +759,27 @@ def main():
         print('Recusado: este teste instala em Program Files e mexe no arquivo hosts.')
         print('So roda no CI (MBCHAT_E2E=1).')
         sys.exit(2)
+    global LIMITED
     args = sys.argv[1:]
     flag83 = '--8dot3' in args
-    args = [a for a in args if a != '--8dot3']
+    LIMITED = '--limited' in args
+    api_calls = None
+    if '--api-calls' in args:
+        i = args.index('--api-calls')
+        api_calls = int(args[i + 1])
+        del args[i:i + 2]
+    args = [a for a in args if a not in ('--8dot3', '--limited')]
     cmd = args[0] if args else ''
     if cmd == 'install-release':
         cmd_install_release(args[1])
+    elif cmd == 'install-setup':
+        cmd_install_setup(args[1], args[2])
     elif cmd == 'seed':
         cmd_seed(args[1])
     elif cmd == 'update-flow':
-        cmd_update_flow(args[1], args[2], flag83)
+        cmd_update_flow(args[1], args[2], flag83, api_calls)
+    elif cmd == 'update-blocked':
+        cmd_update_blocked(args[1], args[2])
     elif cmd == 'setup-over':
         cmd_setup_over(args[1], args[2])
     elif cmd == 'webinstaller':

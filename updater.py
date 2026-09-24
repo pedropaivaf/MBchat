@@ -4,6 +4,7 @@
 import os
 import re
 import sys
+import time
 import shutil
 import hashlib
 import subprocess
@@ -77,6 +78,15 @@ def _verify_sha256(zip_path, expected):
     return h.hexdigest().lower() == expected.lower()
 
 
+# Ultima resposta da API que achou update (monotonic, resultado). O download
+# silencioso reaproveita em vez de consultar de novo: 1 chamada por update em
+# vez de 2. Os PCs do escritorio saem pelo MESMO IP e o GitHub limita a 60
+# chamadas/hora por IP sem login -- com a API esgotada, a 2a chamada falhava e
+# o download nao acontecia.
+_LAST_FOUND = {'at': 0.0, 'result': None}
+_LAST_FOUND_TTL = 15 * 60
+
+
 def check_update_github():
     # Retorna (has_update, version_str, download_url, notes, sha256).
     # Procura MBChat_update.zip nos assets. notes = primeiras linhas do body.
@@ -102,7 +112,11 @@ def check_update_github():
                      if l.strip() and not l.strip().startswith('http')
                      and not l.strip().upper().startswith('SHA256')]
             notes = '\n'.join(('• ' + l) for l in lines[:5])
-            return True, remote_ver, download_url, notes, sha256
+            result = (True, remote_ver, download_url, notes, sha256)
+            if download_url:
+                _LAST_FOUND['at'] = time.monotonic()
+                _LAST_FOUND['result'] = result
+            return result
         return False, remote_ver, '', '', None
     except Exception as e:
         log.warning(f'GitHub update check falhou: {e}')
@@ -151,7 +165,11 @@ def download_update(arg1=None, progress_cb=None):
 
 def _download_from_github(dst, progress_cb=None):
     try:
-        has_update, ver, url, _notes, sha256 = check_update_github()
+        cached = _LAST_FOUND['result']
+        if cached and time.monotonic() - _LAST_FOUND['at'] < _LAST_FOUND_TTL:
+            has_update, ver, url, _notes, sha256 = cached
+        else:
+            has_update, ver, url, _notes, sha256 = check_update_github()
         if not url:
             return None, None
         log.info(f'Baixando update v{ver} do GitHub...')

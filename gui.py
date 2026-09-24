@@ -18866,6 +18866,13 @@ class LanMessengerApp:
                 else:
                     def _on_failed():
                         self._is_downloading_update = False
+                        # Download falhou (rede, limite da API do GitHub):
+                        # libera o _pending_update para a checagem periodica
+                        # (30 min) tentar de novo. Antes o sino ficava em
+                        # "Baixando atualizacao..." ate o app ser reaberto.
+                        if not getattr(self, '_update_ready_to_install', False):
+                            self._pending_update = None
+                            self._refresh_bell_badge()
                     self.root.after(0, _on_failed)
             def _on_ready():
                 self._update_ready_to_install = True

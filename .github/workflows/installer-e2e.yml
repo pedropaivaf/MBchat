@@ -8,8 +8,12 @@
 #   2. instala a release OFICIAL (setup publicado no GitHub) num Windows limpo;
 #   3. deixa o proprio exe oficial baixar, conferir o SHA256, extrair e aplicar
 #      o build novo (api.github.com falso local), como no escritorio;
-#   4. roda o setup novo por cima da versao oficial com o app aberto;
-#   5. roda o instalador web publicado e confere que ele baixa e abre o setup.
+#   4. repete com o app aberto SEM admin (como no escritorio: o script pede o
+#      UAC) e com a pasta do app travada (efeito de clicar "Nao" no UAC);
+#   5. roda o setup novo por cima da versao oficial com o app aberto;
+#   6. testa o updater NOVO: build de teste instalado se atualiza para outro
+#      build mais novo (o que vai rodar da proxima versao em diante);
+#   7. roda o instalador web publicado e confere que ele baixa e abre o setup.
 # Tudo em windows-2022 (familia do Windows 10, build 20348) e windows-2025
 # (familia do Windows 11, build 26100), com e sem %TEMP% em caminho 8.3
 # (contas "nome.sobrenome" do escritorio).
@@ -49,14 +53,18 @@ concurrency:
 
 env:
   BASE_TAG: ${{ inputs.base_tag || 'v1.8.38' }}
-  # Versao "de mentira" so do build de teste (o version.py do repo nao muda).
+  # Versoes "de mentira" so dos builds de teste (o version.py do repo nao muda).
   NEW_VER: '1.8.99'
+  NEXT_VER: '1.9.0'
 
 jobs:
   build:
-    name: Build de teste (sem publicar)
+    name: Build de teste ${{ matrix.ver }} (sem publicar)
     runs-on: windows-2022
     timeout-minutes: 30
+    strategy:
+      matrix:
+        ver: ['1.8.99', '1.9.0']
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +90,7 @@ jobs:
       - name: Build do app + setup + instalador web (versao de teste)
         shell: pwsh
         run: |
-          python build.py --version $env:NEW_VER --skip-checks
+          python build.py --version ${{ matrix.ver }} --skip-checks
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -c "import build, sys; sys.exit(0 if build._do_web_installer() else 1)"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -90,7 +98,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: e2e-build
+          name: e2e-build-${{ matrix.ver }}
           retention-days: 3
           path: |
             dist/MBChat_update.zip
@@ -104,7 +112,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-2022, windows-2025]
-        scenario: [auto-update, auto-update-8dot3, setup-over, webinstaller]
+        scenario: [auto-update, auto-update-8dot3, auto-update-uac, auto-update-bloqueado,
+                   setup-over, next-update, webinstaller]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -122,7 +131,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: e2e-build
+          pattern: e2e-build-*
           path: e2e-build
 
       - name: Ambiente do runner
@@ -135,29 +144,50 @@ jobs:
           "PowerShell do update: $((Get-Command powershell.exe).Source) $($PSVersionTable.PSVersion)"
           & powershell.exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
           fsutil 8dot3name query C:
-          Get-ChildItem e2e-build | Format-Table Name, Length
+          Get-ChildItem e2e-build -Recurse -File | Format-Table FullName, Length
 
       # ── auto-update: o exe oficial se atualiza sozinho ──
       - name: Instala a release oficial
-        if: matrix.scenario != 'webinstaller'
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'next-update'
         run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
 
       - name: Primeira abertura + historico de teste
-        if: matrix.scenario != 'webinstaller'
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'next-update'
         run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
 
       - name: Auto-update (download silencioso + aplicacao no boot)
         if: matrix.scenario == 'auto-update'
-        run: python tools/e2e_installer.py update-flow e2e-build/MBChat_update.zip ${{ env.NEW_VER }}
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
 
       - name: Auto-update com TEMP em caminho 8.3
         if: matrix.scenario == 'auto-update-8dot3'
-        run: python tools/e2e_installer.py update-flow e2e-build/MBChat_update.zip ${{ env.NEW_VER }} --8dot3
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} --8dot3
+
+      - name: Auto-update com o app SEM admin (UAC)
+        if: matrix.scenario == 'auto-update-uac'
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} --limited
+
+      - name: Auto-update com a pasta travada (UAC negado)
+        if: matrix.scenario == 'auto-update-bloqueado'
+        run: python tools/e2e_installer.py update-blocked e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
 
       # ── setup novo por cima da versao oficial ──
       - name: Setup novo por cima (app aberto)
         if: matrix.scenario == 'setup-over'
-        run: python tools/e2e_installer.py setup-over e2e-build/MBChat_Setup.exe ${{ env.NEW_VER }}
+        run: python tools/e2e_installer.py setup-over e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }}
+
+      # ── updater NOVO: o que roda da proxima versao em diante ──
+      - name: Instala o build novo
+        if: matrix.scenario == 'next-update'
+        run: python tools/e2e_installer.py install-setup e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }}
+
+      - name: Primeira abertura do build novo + historico
+        if: matrix.scenario == 'next-update'
+        run: python tools/e2e_installer.py seed ${{ env.NEW_VER }}
+
+      - name: Build novo se atualiza sozinho (SEM admin, 1 chamada de API)
+        if: matrix.scenario == 'next-update'
+        run: python tools/e2e_installer.py update-flow e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --limited --api-calls 1
 
       # ── instalador web: o publicado (o que os usuarios tem) e o novo ──
       - name: Baixa o instalador web publicado
@@ -177,11 +207,11 @@ jobs:
 
       - name: Instalador web novo
         if: matrix.scenario == 'webinstaller'
-        run: python tools/e2e_installer.py webinstaller e2e-build/MBChat_WebInstaller.exe
+        run: python tools/e2e_installer.py webinstaller e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_WebInstaller.exe
 
       - name: Instalador web novo com TEMP 8.3
         if: matrix.scenario == 'webinstaller'
-        run: python tools/e2e_installer.py webinstaller e2e-build/MBChat_WebInstaller.exe --8dot3
+        run: python tools/e2e_installer.py webinstaller e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_WebInstaller.exe --8dot3
 
       - name: Coleta logs
         if: always()
