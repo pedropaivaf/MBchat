@@ -114,8 +114,8 @@ jobs:
         os: [windows-2022, windows-2025]
         scenario: [auto-update, auto-update-8dot3, auto-update-uac, auto-update-bloqueado,
                    auto-update-zip-real, auto-update-cliques, auto-update-logon, setup-over,
-                   next-update, next-update-bloqueado, next-update-cliques, next-update-logon,
-                   webinstaller, wizard]
+                   logon-duplo, next-update, next-update-bloqueado, next-update-cliques,
+                   next-update-logon, next-logon-duplo, webinstaller, wizard]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -150,11 +150,11 @@ jobs:
 
       # ── auto-update: o exe oficial se atualiza sozinho ──
       - name: Instala a release oficial
-        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-update')
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-')
         run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
 
       - name: Primeira abertura + historico de teste
-        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-update') && matrix.scenario != 'auto-update-uac'
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'wizard' && !startsWith(matrix.scenario, 'next-') && matrix.scenario != 'auto-update-uac'
         run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
 
       # UAC como no escritorio: 2o usuario ADMIN local. Com o UAC ligado ele
@@ -208,6 +208,12 @@ jobs:
         if: matrix.scenario == 'auto-update-logon'
         run: python tools/e2e_installer.py update-logon "${{ runner.temp }}/MBChat_Setup_${{ env.BASE_VER }}.exe" ${{ env.BASE_VER }} e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} 0,0.5,1,2,3,5
 
+      # Logon SEM update: as 2 entradas de inicio automatico abrem o app quase
+      # juntas. 1.8.38: mede quantas vezes nenhum MB Chat fica aberto.
+      - name: Logon com 2 aberturas quase juntas (1.8.38)
+        if: matrix.scenario == 'logon-duplo'
+        run: python tools/e2e_installer.py double-launch ${{ env.BASE_VER }} 0,0.05,0.1,0.2,0.4,0.8,1.5,3
+
       # ── assistente do instalador clicado ate o fim, "Abrir MB Chat" marcado ──
       - name: Assistente pelo instalador web publicado (PC sem MB Chat)
         if: matrix.scenario == 'wizard'
@@ -235,7 +241,7 @@ jobs:
 
       # ── updater NOVO: o que roda da proxima versao em diante ──
       - name: Instala o build novo
-        if: startsWith(matrix.scenario, 'next-update')
+        if: startsWith(matrix.scenario, 'next-')
         run: python tools/e2e_installer.py install-setup e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }}
 
       - name: Primeira abertura do build novo + historico
@@ -243,7 +249,7 @@ jobs:
         run: python tools/e2e_installer.py seed ${{ env.NEW_VER }} --limited
 
       - name: Primeira abertura do build novo + historico (admin)
-        if: matrix.scenario == 'next-update-bloqueado' || matrix.scenario == 'next-update-cliques' || matrix.scenario == 'next-update-logon'
+        if: matrix.scenario == 'next-update-bloqueado' || matrix.scenario == 'next-update-cliques' || matrix.scenario == 'next-update-logon' || matrix.scenario == 'next-logon-duplo'
         run: python tools/e2e_installer.py seed ${{ env.NEW_VER }}
 
       - name: Updater novo com a pasta travada (reabre sozinho, sem loop)
@@ -253,6 +259,10 @@ jobs:
       - name: Logon com as 2 entradas de inicio automatico (updater novo)
         if: matrix.scenario == 'next-update-logon'
         run: python tools/e2e_installer.py update-logon e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }} e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} 0,0.5,1,2,3,5 --strict
+
+      - name: Logon com 2 aberturas quase juntas (codigo novo, trava de inicializacao)
+        if: matrix.scenario == 'next-logon-duplo'
+        run: python tools/e2e_installer.py double-launch ${{ env.NEW_VER }} 0,0.05,0.1,0.2,0.4,0.8,1.5,3 --strict
 
       - name: Updater novo com o app sendo aberto durante a troca
         if: matrix.scenario == 'next-update-cliques'

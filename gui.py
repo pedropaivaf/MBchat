@@ -21753,17 +21753,153 @@ def _ensure_start_menu_shortcut():
         log.exception('Falha ao criar atalho Start Menu com AUMID')
 
 
+# Nome da trava de inicializacao: mesma chave da porta de instancia unica
+# (usuario Windows + --instance), entao o dev com --instance segue isolado.
+def _startup_lock_name():
+    try:
+        import getpass
+        key = (getpass.getuser() or 'default').lower()
+        for i, arg in enumerate(sys.argv):
+            if arg == '--instance' and i + 1 < len(sys.argv):
+                key += f"_{sys.argv[i + 1]}"
+                break
+        return 'Local\\MBChatStartup_' + hashlib.md5(key.encode('utf-8')).hexdigest()[:16]
+    except Exception:
+        return 'Local\\MBChatStartup'
+
+
+# Trava de inicializacao (mutex nomeado do Windows). Serializa o trecho
+# "checa instancia unica -> mata zumbis -> abre a porta de instancia unica".
+# Sem ela, duas aberturas quase juntas (o logon abre o app 2x; o updater reabre
+# o app enquanto a pessoa clica no icone) passavam AS DUAS pela checagem -- a
+# porta so era aberta segundos depois, com a janela ja montada -- e cada uma
+# matava a outra no _cleanup_zombie_processes: nenhum MB Chat ficava aberto.
+# Reproduzido no Windows real (installer-e2e, next-update-cliques).
+# Devolve o handle (soltar com _release_startup_lock) ou None se a trava nao
+# deu para usar -- ai o boot segue como antes, nunca fica travado.
+def _acquire_startup_lock(timeout_s=30.0):
+    if platform.system() != 'Windows':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.WaitForSingleObject.restype = wintypes.DWORD
+        k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        name = _startup_lock_name()
+        deadline = time.time() + timeout_s
+        while True:
+            h = k32.CreateMutexW(None, False, name)
+            if h:
+                break
+            err = ctypes.get_last_error()
+            # 5 = acesso negado: a trava existe mas foi criada por um MB Chat
+            # ELEVADO (ex. reaberto como admin pelo update da 1.8.38). Ele
+            # fecha o handle ao sair do trecho, entao e so esperar sumir.
+            if err != 5 or time.time() >= deadline:
+                log.warning('Trava de inicializacao indisponivel (erro %d); seguindo sem ela', err)
+                return None
+            time.sleep(0.1)
+        left_ms = max(0, int((deadline - time.time()) * 1000))
+        r = k32.WaitForSingleObject(h, left_ms)
+        if r in (0x0, 0x80):  # WAIT_OBJECT_0 / WAIT_ABANDONED (dono morreu segurando)
+            return h
+        log.warning('Trava de inicializacao nao liberou em %.0fs; seguindo sem ela', timeout_s)
+        k32.CloseHandle(h)
+        return None
+    except Exception:
+        log.exception('Falha na trava de inicializacao; seguindo sem ela')
+        return None
+
+
+# Solta a trava de inicializacao e fecha o handle (o objeto some quando ninguem
+# mais o tem aberto). Na mesma thread que pegou (a main thread do boot).
+def _release_startup_lock(h):
+    if not h:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.ReleaseMutex(h)
+        k32.CloseHandle(h)
+    except Exception:
+        pass
+
+
+# O script de update (updater.apply_update) segura o mutex Local\MBChatUpdate
+# do comeco ao fim. Se o app e aberto nesse meio tempo (clique impaciente, 2a
+# entrada do logon), o boot NAO dispara outro script nem conta tentativa: o
+# proprio script reabre o app ao terminar. Antes, a 4a abertura "desistia" do
+# update e subia o app NO MEIO da troca de arquivos. Script da 1.8.38 nao cria
+# o mutex: ai devolve False e vale o fluxo de antes. Valvula: com o update.log
+# parado ha mais de 15 min (script travado), tambem devolve False.
+def _update_script_running():
+    if platform.system() != 'Windows':
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.OpenMutexW.restype = wintypes.HANDLE
+        k32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k32.OpenMutexW(0x00100000, False, 'Local\\MBChatUpdate')  # SYNCHRONIZE
+        if h:
+            k32.CloseHandle(h)
+            running = True
+        else:
+            running = ctypes.get_last_error() == 5  # existe, criado por processo elevado
+        if not running:
+            return False
+        try:
+            ulog = os.path.join(updater._UPDATE_DIR, 'update.log')
+            if time.time() - os.path.getmtime(ulog) > 15 * 60:
+                log.warning('Mutex de update ativo mas update.log parado ha mais de 15 min; ignorando')
+                return False
+        except OSError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+# Abre a porta de instancia unica (loopback) JA no inicio do boot, antes de
+# montar a janela: quem abrir o app nesse meio tempo acha a porta e so manda
+# SHOW -- o pedido espera na fila do listen() e e atendido quando a janela
+# existir. None se nao deu bind (porta reservada pelo SO / em uso): o app segue
+# sem ela, como sempre foi.
+def _bind_instance_socket():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # socket TCP
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # reutiliza porta imediatamente
+    try:
+        srv.bind(('127.0.0.1', SINGLE_INSTANCE_PORT))  # bind na porta de lock loopback
+    except OSError:
+        srv.close()
+        return None
+    srv.listen(5)              # aceita ate 5 conexoes na fila
+    srv.settimeout(0.2)        # timeout curto para responder notificacoes rapidamente
+    return srv
+
+
 # Verifica se ja existe uma instancia do MB Chat rodando.
 #
-# Tenta conectar na porta loopback 50199. Se conseguir, envia 'SHOW' para
-# restaurar a instancia existente e retorna False (ja existe outra instancia).
-# Se a conexao for recusada (porta livre), somos a primeira instancia: retorna True.
-def _check_single_instance():
+# Tenta conectar na porta loopback de instancia unica. Se conseguir, envia
+# 'SHOW' (se send_show) para restaurar a instancia existente e retorna False
+# (ja existe outra instancia). Se a conexao for recusada (porta livre), somos
+# a primeira instancia: retorna True.
+def _check_single_instance(send_show=True):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(0.3)   # loopback e rapido, 300ms e suficiente
         sock.connect(('127.0.0.1', SINGLE_INSTANCE_PORT))  # tenta conectar na porta de lock
-        sock.sendall(b'SHOW')  # sinaliza para a instancia existente se mostrar
+        if send_show:
+            sock.sendall(b'SHOW')  # sinaliza para a instancia existente se mostrar
         sock.close()
         return False  # ja existe outra instancia rodando
     except (ConnectionRefusedError, OSError, socket.timeout):
@@ -21777,15 +21913,11 @@ def _check_single_instance():
 # - 'SHOW': restaura a janela principal
 # - 'OPEN:peer_id': restaura e abre chat com o peer (ou grupo)
 # Roda em thread daemon para nao bloquear o loop principal.
-def _start_instance_listener(app):
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # socket TCP
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # reutiliza porta imediatamente
-    try:
-        srv.bind(('127.0.0.1', SINGLE_INSTANCE_PORT))  # bind na porta de lock loopback
-    except OSError:
-        return  # nao conseguiu bind: outra instancia ja esta escutando
-    srv.listen(5)              # aceita ate 5 conexoes na fila
-    srv.settimeout(0.2)        # timeout curto para responder notificacoes rapidamente
+def _start_instance_listener(app, srv=None):
+    if srv is None:  # porta nao foi aberta no inicio do boot: tenta agora
+        srv = _bind_instance_socket()
+        if srv is None:
+            return  # nao conseguiu bind: outra instancia ja esta escutando
 
     # Loop de escuta que processa comandos de outras instancias ou do protocolo URL.
     def listen():
@@ -21859,12 +21991,26 @@ def main():
                             SINGLE_INSTANCE_PORT, e)
             os._exit(0)  # usa os._exit para encerramento imediato e limpo
 
-    if not _check_single_instance():  # ja existe outra instancia rodando?
+    # Trava de inicializacao: so UM processo por vez passa por checagem ->
+    # limpeza de zumbis -> abertura da porta (ver _acquire_startup_lock).
+    startup_lock = _acquire_startup_lock()
+
+    # --silent = inicio automatico do logon (registro Run / atalho da pasta
+    # Inicializacao): com o app ja aberto, nao faz a janela saltar na tela.
+    if not _check_single_instance(send_show='--silent' not in sys.argv[1:]):
+        _release_startup_lock(startup_lock)
         os._exit(0)  # usa os._exit para garantir que nao deixa processos pendentes
 
     # Passamos da verificacao de instancia unica: somos a UNICA instancia legitima.
     # Vamos limpar processos MBChat.exe zumbis que possam ter ficado travados antes.
+    # Seguro so por causa da trava: quem esta esperando nela e duplicata.
     _cleanup_zombie_processes()
+
+    # Porta de instancia unica aberta ANTES de soltar a trava: a proxima
+    # abertura ja a encontra e so manda SHOW, em vez de passar pela checagem
+    # e matar esta instancia que ainda esta subindo.
+    instance_sock = _bind_instance_socket()
+    _release_startup_lock(startup_lock)
 
     # Restauracao de backup preparada por Ferramentas > Restaurar backup:
     # troca o banco AGORA, antes de qualquer conexao SQLite (somos a unica
@@ -21897,6 +22043,12 @@ def main():
             # UAC). O pedido fica para a proxima abertura; o contador de
             # tentativas NAO e zerado, entao continua valendo o limite de 3.
             log.info("Update pendente adiado nesta abertura (--skip-update)")
+        elif pending_update_dir and _update_script_running():
+            # Update sendo aplicado AGORA por um script (clique impaciente ou 2a
+            # entrada do logon): sai sem contar tentativa nem lancar outro
+            # script -- o script reabre o app quando terminar.
+            log.info("Update em andamento (script ativo); esta abertura sai sem mexer em nada")
+            os._exit(0)
         elif pending_update_dir:
             # apply_update() retorna True assim que o PowerShell e LANCADO —
             # ela nao espera nem confere o resultado. Se o script falhar (UAC
@@ -21933,7 +22085,7 @@ def main():
     _ensure_start_menu_shortcut()  # atalho com AUMID para toasts clicaveis
 
     app = LanMessengerApp()             # cria a aplicacao principal
-    _start_instance_listener(app)       # inicia o listener de instancia unica
+    _start_instance_listener(app, instance_sock)  # atende SHOW/OPEN (porta aberta no inicio)
 
     # Setting show_main_on_start: True = mostra janela, False = inicia no tray
     try:

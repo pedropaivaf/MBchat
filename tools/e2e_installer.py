@@ -36,6 +36,13 @@
 #   wizard EXE VER [--fresh]       roda o instalador web (ou o setup) e CLICA o assistente ate
 #                                  "Concluir" com "Abrir MB Chat" marcado; confere que o app
 #                                  abriu de verdade (sem "Failed to load Python DLL")
+#   update-impatient ZIP VER [--strict]
+#                                  update aplicado no boot com o app aberto 3x durante a troca
+#   update-logon SETUP BASEVER ZIP NEWVER ATRASOS [--strict]
+#                                  logon com update pendente: 2 aberturas (Run + Inicializacao)
+#   double-launch VER ATRASOS [--strict]
+#                                  logon SEM update: 2 aberturas quase juntas; tem que sobrar
+#                                  exatamente 1 MB Chat aberto
 
 import os
 import re
@@ -964,17 +971,21 @@ def cmd_update_logon(setup, base_ver, zip_path, new_ver, delays, strict=False):
                 if _dialogs_of({pid}):
                     subprocess.run(['taskkill', '/f', '/pid', str(pid)], capture_output=True)
             time.sleep(3)
-            if not app_processes():
+            # abriu sozinho = sem ninguem clicar no icone depois do logon
+            sozinho = wait_for(lambda: len(app_processes()) == 1, 30, 1)
+            if not sozinho and not strict:
                 launch_app()  # usuario abre pelo icone
             booted = wait_for(lambda: setting('last_version') in (new_ver, base_ver)
                               and len(app_processes()) == 1
                               and not _dialogs_of(_pids('MBChat.exe')), 90, 2)
             updated = file_version(APP_EXE) == new_ver and setting('last_version') == new_ver
             scripts = read_text(ulog).count('Update iniciado')
-            resultados.append((d, updated, booted, len(dialogos), scripts))
+            resultados.append((d, updated, booted, len(dialogos), scripts, sozinho))
             estado = ('ATUALIZOU' if updated and booted else
                       'nao atualizou, mas abre' if booted else 'QUEBRADO (nao abre)')
-            info(f'atraso {d}s: {estado}; janelas de erro={len(dialogos)}; scripts={scripts}')
+            info(f'atraso {d}s: {estado}; '
+                 f'{"abriu sozinho" if sozinho else "SO ABRIU clicando no icone"}; '
+                 f'janelas de erro={len(dialogos)}; scripts={scripts}')
             for t in dialogos:
                 info(f'    janela: {t[:160]}')
         quebrados = [r for r in resultados if not r[2]]
@@ -983,8 +994,8 @@ def cmd_update_logon(setup, base_ver, zip_path, new_ver, delays, strict=False):
               f'atualizaram, {len(com_erro)} com janela de erro, {len(quebrados)} QUEBRADOS')
         if strict:
             check(len(resultados) == len(delays) and not quebrados and not com_erro
-                  and all(r[1] for r in resultados),
-                  'todo logon atualizou e abriu, sem janela de erro', repr(resultados))
+                  and all(r[1] and r[5] for r in resultados),
+                  'todo logon atualizou e abriu sozinho, sem janela de erro', repr(resultados))
         else:
             check(len(resultados) == len(delays), 'todas as tentativas rodaram', repr(resultados))
         kill_app()
@@ -992,6 +1003,55 @@ def cmd_update_logon(setup, base_ver, zip_path, new_ver, delays, strict=False):
     finally:
         srv.shutdown()
         _unhosts()
+
+
+def cmd_double_launch(ver, delays, strict=False):
+    # Logon SEM update pendente: o Windows abre o app 2x (registro Run e atalho
+    # da pasta Inicializacao, os dois com --silent), com poucos ms/segundos de
+    # diferenca. Tem que sobrar EXATAMENTE 1 MB Chat aberto. Sem a trava de
+    # inicializacao (gui.py main) as duas aberturas passavam pela checagem de
+    # instancia unica e cada uma matava a outra no _cleanup_zombie_processes.
+    print(f'\n[double-launch] {ver}: 2 aberturas quase juntas, atrasos {delays}s')
+    lnk = startup_lnk()
+    for f in ('update_pending.txt', 'update_attempts.txt'):
+        try:
+            os.remove(os.path.join(UPD_DIR, f))
+        except OSError:
+            pass
+    res = []
+    for d in delays:
+        kill_app()
+        db_exec("DELETE FROM settings WHERE key='last_version'")
+        launch_app()
+        time.sleep(d)
+        os.startfile(lnk)
+        dialogos, t_end = [], time.time() + 45
+        while time.time() < t_end:
+            for txt in _dialogs_of(_pids('MBChat.exe')):
+                if txt not in dialogos:
+                    dialogos.append(txt)
+            if setting('last_version') == ver and len(app_processes()) == 1:
+                break
+            time.sleep(0.5)
+        time.sleep(8)  # segue de pe? (nenhuma abertura atrasada derrubou a outra)
+        procs = app_processes()
+        booted = setting('last_version') == ver
+        res.append((d, len(procs), booted, len(dialogos)))
+        estado = ('1 MB Chat aberto' if len(procs) == 1 and booted else
+                  'NENHUM MB Chat aberto' if not procs else
+                  f'{len(procs)} processos (boot={booted})')
+        info(f'atraso {d}s: {estado}; janelas de erro={len(dialogos)}')
+        for t in dialogos:
+            info(f'    janela: {t[:160]}')
+    ruins = [r for r in res if not (r[1] == 1 and r[2] and not r[3])]
+    print(f'\n  resumo: {len(res)} aberturas duplas, {len(res) - len(ruins)} com 1 MB Chat aberto, '
+          f'{len([r for r in res if r[1] == 0])} com NENHUM aberto')
+    if strict:
+        check(not ruins, 'toda abertura dupla terminou com exatamente 1 MB Chat aberto', repr(res))
+    else:
+        check(len(res) == len(delays), 'todas as tentativas rodaram', repr(res))
+    kill_app()
+    check_data_preserved('apos as aberturas duplas')
 
 
 def cmd_setup_over(setup, ver):
@@ -1243,6 +1303,8 @@ def main():
     elif cmd == 'update-logon':
         cmd_update_logon(args[1], args[2], args[3], args[4],
                          [float(x) for x in args[5].split(',')], '--strict' in args)
+    elif cmd == 'double-launch':
+        cmd_double_launch(args[1], [float(x) for x in args[2].split(',')], '--strict' in args)
     elif cmd == 'update-impatient':
         cmd_update_impatient(args[1], args[2], '--strict' in args)
     elif cmd == 'wizard':
