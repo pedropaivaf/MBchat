@@ -1606,7 +1606,10 @@ sozinho), tambem com TEMP 8.3.
    a partir da 1.8.38 sem esse risco: instalador web ou `tools/deploy_mbchat.ps1`** (o setup mata o app e
    nao tem essa janela). **Pior caso, tambem reproduzido** (Windows 11, app aberto 3x nos ~10s da troca): os
    3 scripts se atropelaram, o rollback falhou e a pasta ficou **sem `python314.dll`** -- "Failed to load
-   Python DLL" em TODA abertura, ate reinstalar. Conserto (testado no `installer-e2e`): **instalador web**, que
+   Python DLL" em TODA abertura, ate reinstalar. Em outra rodada a 4a abertura "desistiu" do update no meio
+   da troca e o app subiu com `_internal` MISTURADO (abre, mas com `ImportError` de PIL/pywintypes). Aconteceu
+   nas 2 ultimas rodadas no Windows 11 (no Windows 10 nao). Logon com update pendente (sem clique): 6/6
+   atualizaram, 1 com janela de erro (`No module named '_ssl'`). Conserto (testado no `installer-e2e`): **instalador web**, que
    baixa o setup da ultima release; o `[InstallDelete]` recria `_internal` e apaga as sobras `.bak/.new`, e o
    app volta a abrir com o historico intacto. PC nesse estado some da lista de contatos (nao abre, nao anuncia).
    Logon SEM update pendente nao tem esse risco: 1.8.38 com 2 aberturas quase juntas = 8/8 com 1 MB Chat aberto.
