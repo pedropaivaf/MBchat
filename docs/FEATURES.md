@@ -72,6 +72,7 @@
 
 ## Sistema
 - Instancia unica via TCP socket loopback **por usuario** (v1.4.64+): porta deterministica por login Windows em [50200, 51200). Multi-user na mesma maquina nao colide.
+- Trava de inicializacao (mutex nomeado, pos-v1.8.38): duas aberturas quase juntas (logon abre o app 2x; clique enquanto a atualizacao reabre o app) terminam com exatamente 1 MB Chat aberto.
 - Auto-update via GitHub Releases: aviso no sino (pela API ou por um colega ja atualizado na rede), download silencioso com SHA256, aplicacao em "Reiniciar para Atualizar" ou no proximo boot (PowerShell com backup/rollback, pede UAC em Program Files). Se falhar, a versao atual reabre sozinha (`--skip-update`); depois de atualizar o app volta sem admin, na conta de quem usa. Validado em Windows real pelo workflow `installer-e2e`
 - Auto-start, popups fecham com Escape
 - Taskbar LAN Messenger-style com AppUserModelID

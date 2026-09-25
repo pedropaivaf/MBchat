@@ -226,11 +226,17 @@ PyInstaller --onefile --windowed com:
    - Resultado: faixa [50200, 51200). Cada login tem sua porta deterministica.
    - Em maquinas multi-usuario (PC compartilhado), cada sessao tem porta
      distinta, entao o MBChat de um usuario NAO bloqueia o de outro.
-2. main() tenta conectar em 127.0.0.1:{SINGLE_INSTANCE_PORT}
-3. Se conecta -> outra instancia da MESMA sessao existe -> envia SHOW -> exit
-4. Se falha -> somos a unica instancia da sessao -> bind -> inicia app
-5. Listener aceita SHOW/OPEN:{peer_id} -> restaura janela
+2. main() pega a trava de inicializacao (mutex Local\MBChatStartup_<hash>)
+3. tenta conectar em 127.0.0.1:{SINGLE_INSTANCE_PORT}
+   Se conecta -> outra instancia da MESMA sessao existe -> SHOW (sem SHOW
+   se --silent) -> solta a trava -> exit
+4. Se falha -> somos a unica -> mata zumbis -> bind da porta -> solta a trava
+   -> (update pendente / backup) -> monta a janela
+5. Listener aceita SHOW/OPEN:{peer_id} -> restaura janela (pedidos que
+   chegaram durante a montagem esperam na fila do listen)
 ```
+Sem a trava, duas aberturas juntas passavam as duas pelo passo 3 (a porta
+so abria depois da janela) e cada uma matava a outra ao limpar zumbis.
 
 Antes da v1.4.64 a porta era fixa (50199), o que causava bug: se usuario A
 deixasse MBChat rodando em background, usuario B na mesma maquina nao

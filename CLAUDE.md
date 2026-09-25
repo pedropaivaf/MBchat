@@ -92,6 +92,11 @@ python build.py --version X.Y.Z --release
   `Local\MBChatUpdate` garante um script por vez. NUNCA voltar a apagar/renomear `_internal` antes de a copia
   nova estar pronta (abrir o app nessa janela = "Failed to load Python DLL", reproduzido no `installer-e2e`).
   Mudou updater/instalador/build? O workflow `installer-e2e` precisa ficar verde antes do release.
+- **Boot / instancia unica**: `main()` pega a trava de inicializacao (mutex `Local\MBChatStartup_<hash>`)
+  ANTES de `_check_single_instance`, roda `_cleanup_zombie_processes` e abre a porta de instancia unica
+  (`_bind_instance_socket`) AINDA segurando a trava, e so entao solta. NUNCA voltar a abrir a porta depois
+  de montar a janela nem matar "zumbis" fora da trava: duas aberturas juntas (logon abre o app 2x; o
+  updater reabre o app enquanto a pessoa clica) se matavam e nenhum MB Chat ficava aberto (`installer-e2e`).
 - **Versionamento**: `_set_version()` atualiza version.py + installer.iss + docs/index.html de uma vez
 - **VPN (v1.4.63+)**: tabela `manual_peers` + setting `vpn_enabled` (default OFF). Lista vazia + OFF = zero overhead no caminho LAN. `_manual_announce_loop` + `MT_PEER_LIST` peer exchange propagam a LAN a partir de 1 IP ancora. NAO alterar defaults. Toggle via **Ferramentas > Conectar fora da LAN (VPN)**.
 
@@ -1558,6 +1563,13 @@ Em windows-2022 (familia Windows 10, build 20348) e windows-2025 (familia Window
   o zip do build de teste e menor (123 arquivos: Python do CI usa Tcl 9 embutido e nao tem numpy).
 - **auto-update-cliques / next-update-cliques**: o app e aberto 3x DURANTE a troca de arquivos (2a entrada de
   inicio automatico no logon, ou alguem clicando no icone) e toda janela de erro de MBChat.exe e registrada.
+  Na 1.8.38, depois de medir, roda o setup novo (o que o instalador web baixa) por cima da pasta -- quebrada
+  de verdade ou no estado simulado que a 1.8.38 deixa -- e exige o app abrindo de novo com o historico.
+- **auto-update-logon / next-update-logon**: logon com update pendente -- as 2 entradas de inicio automatico
+  (registro Run + atalho da Inicializacao) com 0 a 5s de diferenca. No updater novo cada logon tem que
+  atualizar e abrir SOZINHO (sem clique no icone), sem janela de erro.
+- **logon-duplo / next-logon-duplo**: logon SEM update, 2 aberturas com 0 a 3s de diferenca: tem que sobrar
+  exatamente 1 MB Chat aberto (1.8.38 so mede; codigo novo exige).
 - Em todo update-flow o `last_version` e apagado antes do boot: so o app novo rodando Python de verdade grava
   de novo -- prova de que nao houve "Failed to load Python DLL".
 
@@ -1592,8 +1604,12 @@ sozinho), tambem com TEMP 8.3.
    acha o atalho, `_setup_autostart`) -- e alguem pode clicar no icone porque "nao abriu". No teste o
    estado final ficou certo (versao nova, historico intacto), mas a janela de erro apareceu. **Para o salto
    a partir da 1.8.38 sem esse risco: instalador web ou `tools/deploy_mbchat.ps1`** (o setup mata o app e
-   nao tem essa janela). Deixando o auto-update: alguns PCs podem mostrar o erro no logon; clicar OK, o
-   update conclui e o app abre atualizado.
+   nao tem essa janela). **Pior caso, tambem reproduzido** (Windows 11, app aberto 3x nos ~10s da troca): os
+   3 scripts se atropelaram, o rollback falhou e a pasta ficou **sem `python314.dll`** -- "Failed to load
+   Python DLL" em TODA abertura, ate reinstalar. Conserto (testado no `installer-e2e`): **instalador web**, que
+   baixa o setup da ultima release; o `[InstallDelete]` recria `_internal` e apaga as sobras `.bak/.new`, e o
+   app volta a abrir com o historico intacto. PC nesse estado some da lista de contatos (nao abre, nao anuncia).
+   Logon SEM update pendente nao tem esse risco: 1.8.38 com 2 aberturas quase juntas = 8/8 com 1 MB Chat aberto.
 
 ### Corrigido para as proximas versoes (updater novo, testado no next-update*)
 
@@ -1617,6 +1633,19 @@ sozinho), tambem com TEMP 8.3.
   de apagar. Medido no `next-update-cliques`: 0 janelas de erro, 1 script, historico intacto.
 - **Um update por vez**: mutex `Local\MBChatUpdate` no inicio do script (a copia elevada nao pega: quem
   pegou foi a que a chamou). O 2o script loga "Outro update ja esta em andamento" e sai sem mexer em nada.
+- **App aberto durante o update nao dispara outro script** (`gui.py _update_script_running`): com
+  `Local\MBChatUpdate` ativo, o boot sai sem contar tentativa; o script reabre o app no fim. Antes a 4a
+  abertura "desistia" e subia o app NO MEIO da troca. Valvula: `update.log` parado ha > 15 min = script
+  travado, o boot segue o fluxo normal.
+- **Duas aberturas juntas nao se matam mais (trava de inicializacao, `gui.py main`)**: visto no
+  `next-update-cliques` (Windows 11): update aplicado certo, mas o app reaberto pelo script e um clique
+  subiram juntos, os dois passaram na checagem de instancia unica (a porta so abria depois de montar a
+  janela) e cada um matou o outro no `_cleanup_zombie_processes` -- nenhum MB Chat aberto. Agora o mutex
+  `Local\MBChatStartup_<md5(usuario + --instance)>` serializa checagem -> zumbis -> porta, e a porta abre
+  no inicio do boot (SHOW espera na fila do `listen()` ate a janela existir). Trava presa > 30s, erro do
+  Windows ou criada por processo elevado que nao solta: segue sem ela (nunca trava o boot). Abertura
+  `--silent` (logon) nao manda SHOW: com o app ja aberto, a janela nao salta. Medido: `next-update-cliques`
+  verde nos 2 Windows, `next-logon-duplo` 8/8 com 1 MB Chat, `next-update-logon` abrindo sozinho em todos.
 
 ### build.py (protege o instalador web e o auto-update de TODOS)
 
@@ -1632,6 +1661,10 @@ sozinho), tambem com TEMP 8.3.
   MBChat -- o carregador >= 6.10 descarta as variaveis `_PYI_*` herdadas de outro app (conferido no
   bootloader); um antigo podia tentar usar a pasta temporaria do instalador web, ja apagada.
 
+- **Setup limpa sobras de troca pela metade**: `[InstallDelete]` apaga `_internal.bak/.new`,
+  `MBChat.exe.bak/.new/.failed` e `update_attempts.txt`/`update_result.txt` (o `_internal` ja era recriado).
+  E o conserto de PC que o update da 1.8.38 deixou sem abrir; guarda em `test_update_installer_fixes.py`.
+
 **Contrato do instalador web (nao precisa mudar nunca):** baixa sempre
 `releases/latest/download/MBChat_Setup.exe`. Toda release precisa ter esse asset com esse nome
 exato e nao pode ser pre-release/rascunho. `tests/test_build_release.py` trava isso.
@@ -1639,6 +1672,10 @@ exato e nao pode ser pre-release/rascunho. `tests/test_build_release.py` trava i
 Testes novos no gate: `test_build_release.py` (33), `test_update_api_budget.py` (16),
 `test_update_failure_reopen.py` (19 + PowerShell real no Windows) e 2 casos novos no
 `test_update_rollback.py` (dois scripts ao mesmo tempo; troca interrompida no meio).
+`test_startup_lock.py` (14 + 3 so no Windows): ordem do boot, porta aberta cedo com SHOW/OPEN na fila, e
+6 processos abrindo no mesmo instante -- com a trava passa 1; o controle roda o fluxo antigo e exige que
+passe mais de 1 (prova que o teste reproduz a corrida). Tambem trava presa, dono que morre segurando e o
+mutex do script de update.
 
 **Pacote real conferido** (v1.8.38): 1085 arquivos, `python314.dll`, `VCRUNTIME140.dll` +
 `VCRUNTIME140_1.dll`, `ucrtbase.dll` + `api-ms-win-*` (roda em Windows 10 limpo), maior caminho 89

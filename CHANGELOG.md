@@ -25,9 +25,12 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - Publicacao (build.py): reenviar uma versao ja publicada atualiza o codigo de verificacao (SHA256) da release, e um instalador de versao antiga nunca e publicado por engano (o instalador web baixa sempre o da ultima release).
 - Atualizacao automatica: abrir o MB Chat durante a atualizacao (ou o Windows abrindo o app duas vezes ao ligar o PC) podia mostrar "Failed to load Python DLL". Agora a versao nova e preparada ao lado da atual e trocada num instante, e so uma atualizacao roda por vez.
 - Publicacao (build.py): o build e conferido antes de virar instalador (DLL do Python, runtime do Visual C++, versao do PyInstaller, tamanho dos caminhos e zip); build incompleto nao e publicado.
+- Abrir o MB Chat duas vezes quase ao mesmo tempo (o Windows abre o app 2x ao ligar o PC, ou um clique no icone bem na hora em que a atualizacao reabre o app) podia fechar os dois e deixar o MB Chat fechado. Agora so um abre e o outro apenas traz a janela.
+- Abrir o MB Chat durante uma atualizacao nao dispara outra atualizacao por cima: o app espera a atual terminar e reabre sozinho.
+- Instalador: apaga sobras de uma atualizacao interrompida. Rodar o instalador web conserta um PC em que a atualizacao deixou o MB Chat sem abrir ("Failed to load Python DLL"), com o historico intacto.
 
 ### Added
-- Teste automatico do instalador, do instalador web e da atualizacao automatica em Windows de verdade (familias Windows 10 e 11), partindo da versao oficial instalada nas maquinas: `.github/workflows/installer-e2e.yml`.
+- Teste automatico do instalador, do instalador web e da atualizacao automatica em Windows de verdade (familias Windows 10 e 11), partindo da versao oficial instalada nas maquinas: `.github/workflows/installer-e2e.yml`. Cobre tambem o logon (o app aberto 2x), cliques durante a atualizacao e o conserto pelo instalador web.
 
 ## [1.8.17] - 2026-05-19
 

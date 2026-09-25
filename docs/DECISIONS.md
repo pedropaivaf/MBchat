@@ -395,3 +395,46 @@ Decisoes:
 Vale a partir da versao que traz o fix; o salto a partir da 1.8.38 roda o script antigo. Medido com o
 updater novo (`next-update-cliques`, 2 Windows): 0 janelas de erro, 1 script. Cobertura:
 `tests/test_update_rollback.py` (casos 7 e 8) e o `installer-e2e`.
+
+## Boot: trava de inicializacao e porta de instancia unica aberta cedo (pos-v1.8.38)
+
+Reproduzido no `installer-e2e` (updater novo, Windows 11): update aplicado certo, "App lancado via
+CreateProcess OK", e mesmo assim nenhum MB Chat aberto no fim. O app reaberto pelo script e um clique subiram
+juntos. `_check_single_instance` so tenta CONECTAR na porta, e a porta so era aberta depois de
+`LanMessengerApp()` (segundos). Os dois passavam, e os dois rodavam `_cleanup_zombie_processes` (`taskkill` de
+todo outro MBChat.exe): cada um matou o outro. O mesmo vale para o logon, que abre o app 2x.
+
+Decisoes:
+
+1. **Mutex nomeado `Local\MBChatStartup_<md5(usuario + --instance)>`** serializa checagem -> limpeza de
+   zumbis -> abertura da porta. So quem segura a trava mata "zumbis"; quem espera nela e duplicata, entao
+   morrer ali e inofensivo -- e ninguem mais consegue matar quem segura.
+2. **Porta aberta ANTES de soltar a trava**, logo no inicio do boot (`_bind_instance_socket`). A proxima
+   abertura acha a porta e so manda SHOW, que espera na fila do `listen()` ate a janela existir
+   (`_start_instance_listener(app, srv)`).
+3. **Nunca trava o boot**: trava presa > 30s, erro do Windows ou objeto criado por processo ELEVADO (acesso
+   negado: espera ele fechar o handle) -> segue sem ela, como antes. Dono que morreu segurando
+   (`WAIT_ABANDONED`) conta como livre.
+4. **Porta igual ao que era**: mesma porta por usuario, mesmos comandos (SHOW/OPEN). Bind falhou (porta
+   reservada pelo SO)? Segue sem ela, como sempre foi.
+5. **`--silent` nao manda SHOW**: e o inicio automatico do logon; com o app ja aberto, a janela nao salta.
+6. **Update em andamento** (`Local\MBChatUpdate` ativo): o boot sai sem contar tentativa nem lancar outro
+   script; o script reabre o app no fim. Valvula de 15 min pelo `update.log` para script travado.
+
+Por que mutex e nao so a porta: o bind pode falhar por motivo alheio (reserva Hyper-V/WinNAT da faixa) e o
+Windows deixa um 2o bind com `SO_REUSEADDR` "roubar" a porta -- nao serve de trava atomica.
+
+Medido: `tests/test_startup_lock.py` (6 processos no mesmo instante: com a trava passa 1; o controle com o
+fluxo antigo deixa passar mais de 1). `installer-e2e`: `next-update-cliques` verde nos 2 Windows,
+`next-logon-duplo` 8/8 com 1 MB Chat, `next-update-logon` abrindo sozinho em todos os atrasos. A 1.8.38
+congelada no logon SEM update: 8/8 ok -- o caso que falhava era o do update.
+
+## Conserto de PC que o update da 1.8.38 deixou sem abrir (pos-v1.8.38)
+
+Reproduzido no `installer-e2e` (Windows 11): 1.8.38 congelada com o app aberto 3x nos ~10s da troca -> 3
+scripts em paralelo, "ROLLBACK FALHOU", pasta sem `_internal\python314.dll`. "Failed to load Python DLL" em
+toda abertura: o app nao sobe nem para tentar se consertar. Nao da para mudar esse script (congelado nas
+maquinas); o caminho e o **instalador web**, que baixa o setup da ultima release. O `[InstallDelete]` ja
+recriava `_internal`; agora tambem apaga `_internal.bak/.new`, `MBChat.exe.bak/.new/.failed` e os
+`update_attempts/result.txt`. O cenario `auto-update-cliques` roda esse conserto em toda rodada (na pasta
+quebrada de verdade ou no estado simulado) e exige o app abrindo com Python e o historico intacto.
