@@ -47,11 +47,23 @@ Type: filesandordirs; Name: "{commondesktop}\_internal"
 ; pasta limpa sem DLLs/pyd orfas de versoes antigas. Roda apos UninstallPreviousVersion
 ; e antes de [Files]. O processo ja foi morto em CurStepChanged(ssInstall).
 Type: filesandordirs; Name: "{app}\_internal"
+; Sobras de um auto-update interrompido. Instalador web = conserto de PC em que o
+; update da 1.8.38 quebrou a pasta (visto no installer-e2e: sem _internal, com
+; _internal.bak -> "Failed to load Python DLL" em toda abertura). O setup recria
+; _internal e aqui some o resto (~100MB de .bak) para o updater novo nao
+; confundir com uma troca pela metade.
+Type: filesandordirs; Name: "{app}\_internal.bak"
+Type: filesandordirs; Name: "{app}\_internal.new"
+Type: files; Name: "{app}\MBChat.exe.bak"
+Type: files; Name: "{app}\MBChat.exe.new"
+Type: files; Name: "{app}\MBChat.exe.failed"
 ; Resquicios de update (zip, staging, scripts PS, exes parciais) — NAO mexer no DB (.mbchat)
 Type: filesandordirs; Name: "{userappdata}\MBChat\update_staging"
 Type: files; Name: "{userappdata}\MBChat\MBChat_update.zip"
 Type: files; Name: "{userappdata}\MBChat\update.ps1"
 Type: files; Name: "{userappdata}\MBChat\update_pending.txt"
+Type: files; Name: "{userappdata}\MBChat\update_attempts.txt"
+Type: files; Name: "{userappdata}\MBChat\update_result.txt"
 Type: files; Name: "{userappdata}\MBChat\MBChat_old.exe"
 Type: files; Name: "{userappdata}\MBChat\MBChat_backup.exe"
 Type: files; Name: "{userappdata}\MBChat\update.bat"

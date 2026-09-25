@@ -13,7 +13,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 here = os.path.dirname(os.path.abspath(__file__))

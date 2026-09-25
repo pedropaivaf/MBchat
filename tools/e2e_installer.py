@@ -36,8 +36,10 @@
 #   wizard EXE VER [--fresh]       roda o instalador web (ou o setup) e CLICA o assistente ate
 #                                  "Concluir" com "Abrir MB Chat" marcado; confere que o app
 #                                  abriu de verdade (sem "Failed to load Python DLL")
-#   update-impatient ZIP VER [--strict]
-#                                  update aplicado no boot com o app aberto 3x durante a troca
+#   update-impatient ZIP VER [--strict] [--recover SETUP SETUPVER]
+#                                  update aplicado no boot com o app aberto 3x durante a troca;
+#                                  --recover: depois, conserta a pasta (quebrada pela 1.8.38, ou
+#                                  simulada) com o setup novo e confere que o app volta a abrir
 #   update-logon SETUP BASEVER ZIP NEWVER ATRASOS [--strict]
 #                                  logon com update pendente: 2 aberturas (Run + Inicializacao)
 #   double-launch VER ATRASOS [--strict]
@@ -846,7 +848,52 @@ def cmd_update_blocked(zip_path, ver, expect_reopen=False):
         _unhosts()
 
 
-def cmd_update_impatient(zip_path, ver, strict=False):
+# Sobras de uma troca de arquivos pela metade (updater velho ou novo).
+_APP_JUNK = ('_internal.bak', '_internal.new', 'MBChat.exe.bak', 'MBChat.exe.new', 'MBChat.exe.failed')
+
+
+def _app_dir_state():
+    dll = os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
+    junk = [n for n in _APP_JUNK if os.path.exists(os.path.join(APP_DIR, n))]
+    return dll, junk
+
+
+def _recover_with_setup(setup, ver, broken):
+    # Conserto de um PC em que o update da 1.8.38 quebrou a pasta: o instalador
+    # web baixa o setup da ULTIMA release e roda por cima. Aqui o setup novo e
+    # rodado direto (o instalador web em si e testado no cenario webinstaller).
+    kill_app()
+    if broken:
+        info('a 1.8.38 deixou o MB Chat sem abrir: conserto com o setup novo (o do instalador web)')
+    else:
+        # nesta rodada a 1.8.38 nao quebrou: reproduz o estado que ela deixa
+        # quando quebra (visto no CI: sem _internal, com _internal.bak)
+        internal = os.path.join(APP_DIR, '_internal')
+        os.rename(internal, internal + '.bak')
+        shutil.copy(APP_EXE, APP_EXE + '.bak')
+        info('pasta quebrada simulada como a 1.8.38 deixa (sem _internal, com _internal.bak)')
+    dll, junk = _app_dir_state()
+    info(f'antes do conserto: python314.dll={dll} sobras={junk}')
+    log = os.path.join(WORK, f'setup_conserto_{ver}.log')
+    r = subprocess.run([os.path.abspath(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+                        '/TASKS=desktopicon,autostart', f'/LOG={log}'], timeout=900)
+    check(r.returncode == 0, 'setup novo por cima da pasta quebrada terminou com codigo 0', str(r.returncode))
+    dll, junk = _app_dir_state()
+    check(dll and not junk and file_version(APP_EXE) == ver,
+          f'pasta consertada: MBChat {ver}, python314.dll, sem sobras de update',
+          f'exe={file_version(APP_EXE)} dll={dll} sobras={junk}')
+    kill_app()
+    db_exec("DELETE FROM settings WHERE key='last_version'")
+    launch_app()
+    check(wait_for(lambda: setting('last_version') == ver and len(app_processes()) == 1
+                   and not _dialogs_of(_pids('MBChat.exe')), 90, 2),
+          f'MB Chat {ver} volta a abrir depois do conserto (Python carregou, sem janela de erro)',
+          f'last={setting("last_version")} procs={app_processes()}')
+    check_data_preserved('apos o conserto pelo setup novo')
+    kill_app()
+
+
+def cmd_update_impatient(zip_path, ver, strict=False, recover=None):
     # Update aplicado no boot enquanto o app e aberto de novo 3 vezes durante a
     # troca -- a 2a entrada de inicio automatico (HKCU Run + atalho de
     # Inicializacao) ou alguem clicando no icone porque "nao abriu". Registra
@@ -906,15 +953,16 @@ def cmd_update_impatient(zip_path, ver, strict=False):
         erros = _dialogs_of({p for p, _ in procs})
         cobra(len(procs) == 1 and not erros, 'app continua aberto 15s depois, sem janela de erro',
               f'{procs} {erros}')
-        check(os.path.isfile(os.path.join(APP_DIR, '_internal', 'python314.dll'))
-              and not os.path.exists(os.path.join(APP_DIR, '_internal.bak'))
-              and not os.path.exists(os.path.join(APP_DIR, '_internal.new')),
-              'pasta do app consistente (python314.dll, sem .bak/.new)')
+        dll, junk = _app_dir_state()
+        cobra(dll and not junk, 'pasta do app consistente (python314.dll, sem .bak/.new)',
+              f'python314.dll={dll} sobras={junk}')
         ulog_txt = read_text(ulog)
         info(f'scripts de update que rodaram: {ulog_txt.count("Update iniciado")}')
         check_data_preserved('apos o update com cliques')
-        if FAIL:
+        if FAIL or not (ok_ and dll and not junk):
             dump_logs()
+        if recover:
+            _recover_with_setup(recover[0], recover[1], not (ok_ and dll and not junk))
     finally:
         srv.shutdown()
         _unhosts()
@@ -1273,6 +1321,11 @@ def main():
         i = args.index('--api-calls')
         api_calls = int(args[i + 1])
         del args[i:i + 2]
+    recover = None
+    if '--recover' in args:
+        i = args.index('--recover')
+        recover = (args[i + 1], args[i + 2])
+        del args[i:i + 3]
     content_ver = None
     if '--content-ver' in args:
         i = args.index('--content-ver')
@@ -1306,7 +1359,7 @@ def main():
     elif cmd == 'double-launch':
         cmd_double_launch(args[1], [float(x) for x in args[2].split(',')], '--strict' in args)
     elif cmd == 'update-impatient':
-        cmd_update_impatient(args[1], args[2], '--strict' in args)
+        cmd_update_impatient(args[1], args[2], '--strict' in args, recover)
     elif cmd == 'wizard':
         cmd_wizard(args[1], args[2], '--fresh' in args)
     else:

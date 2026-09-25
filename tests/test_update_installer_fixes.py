@@ -308,6 +308,16 @@ def test_iss_clean_internal():
         ok('{app}\\_internal em [InstallDelete] — _internal recriado limpo a cada install')
     else:
         fail('{app}\\_internal NAO esta em [InstallDelete] — DLLs orfas podem persistir')
+    # Instalador web por cima de pasta que o update da 1.8.38 quebrou (sem
+    # _internal, com _internal.bak): nada de sobra de troca pela metade.
+    for sobra in (r'{app}\_internal.bak', r'{app}\_internal.new', r'{app}\MBChat.exe.bak',
+                  r'{app}\MBChat.exe.new', r'{app}\MBChat.exe.failed',
+                  r'{userappdata}\MBChat\update_attempts.txt',
+                  r'{userappdata}\MBChat\update_result.txt'):
+        if f'Name: "{sobra}"' in instdel:
+            ok(f'{sobra} em [InstallDelete] (sobra de update interrompido)')
+        else:
+            fail(f'{sobra} NAO esta em [InstallDelete] — sobra de update interrompido fica na pasta')
 
 
 def test_iss_no_uninstaller_trigger():

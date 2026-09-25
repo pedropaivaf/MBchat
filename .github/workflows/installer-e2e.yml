@@ -197,10 +197,12 @@ jobs:
           python tools/e2e_installer.py update-flow zip_real.zip ${{ env.NEW_VER }} --content-ver ${{ env.BASE_VER }}
 
       # App aberto de novo 3x DURANTE a troca de arquivos (2a entrada de inicio
-      # automatico no logon, ou alguem clicando no icone). 1.8.38: so registra.
+      # automatico no logon, ou alguem clicando no icone). 1.8.38: so registra
+      # (ja deixou a pasta sem python314.dll). Depois: o setup novo -- o que o
+      # instalador web baixa -- tem que consertar a pasta e o app voltar a abrir.
       - name: Auto-update com o app sendo aberto durante a troca
         if: matrix.scenario == 'auto-update-cliques'
-        run: python tools/e2e_installer.py update-impatient e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }}
+        run: python tools/e2e_installer.py update-impatient e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip ${{ env.NEW_VER }} --recover e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_Setup.exe ${{ env.NEW_VER }}
 
       # Logon real: o Windows abre o app 2x (registro Run + atalho de
       # Inicializacao) com atraso de 0 a 5s, com update pendente. 1.8.38: mede.
