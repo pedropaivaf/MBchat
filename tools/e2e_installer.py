@@ -42,6 +42,9 @@
 #                                  simulada) com o setup novo e confere que o app volta a abrir
 #   update-logon SETUP BASEVER ZIP NEWVER ATRASOS [--strict]
 #                                  logon com update pendente: 2 aberturas (Run + Inicializacao)
+#   stale-pending ZIP              update pendente de versao igual/mais velha que a instalada
+#                                  (sobra do download antigo quando o instalador web rodou
+#                                  com outra conta): o app descarta, sem UAC nem volta de versao
 #   double-launch VER ATRASOS [--strict]
 #                                  logon SEM update: 2 aberturas quase juntas; tem que sobrar
 #                                  exatamente 1 MB Chat aberto
@@ -60,6 +63,7 @@ import tempfile
 import threading
 import subprocess
 import urllib.request
+import zipfile
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 try:
@@ -1102,6 +1106,48 @@ def cmd_double_launch(ver, delays, strict=False):
     check_data_preserved('apos as aberturas duplas')
 
 
+def cmd_stale_pending(zip_path):
+    # Fluxo do escritorio com o instalador web: ao publicar, a versao anterior
+    # baixa o update sozinha no %APPDATA% do funcionario; o instalador web (ou o
+    # deploy) rodado com outra conta -- admin ou SYSTEM -- nao limpa esse
+    # %APPDATA%. Deixa esse pendente (versao igual ou mais velha que a instalada)
+    # e abre o app: nada de script de update, UAC ou volta de versao.
+    inst = file_version(APP_EXE)
+    print(f'\n[stale-pending] app {inst} com update pendente que sobrou de um download antigo')
+    kill_app()
+    staging = os.path.join(UPD_DIR, 'update_staging')
+    pend = os.path.join(UPD_DIR, 'update_pending.txt')
+    ulog = os.path.join(UPD_DIR, 'update.log')
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(staging)
+    staged = file_version(os.path.join(staging, 'MBChat.exe'))
+    info(f'pendente: {staged} (instalado: {inst})')
+    with open(pend, 'w', encoding='utf-8') as f:
+        f.write(staging)
+    for p in (ulog, os.path.join(UPD_DIR, 'update_attempts.txt')):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    db_exec("DELETE FROM settings WHERE key='last_version'")
+    launch_app()
+    check(wait_for(lambda: setting('last_version') == inst and len(app_processes()) == 1
+                   and not _dialogs_of(_pids('MBChat.exe')), 90, 2),
+          f'app {inst} abre normal com o pendente {staged} na pasta',
+          f'last={setting("last_version")} procs={app_processes()}')
+    time.sleep(5)
+    check('Update iniciado' not in read_text(ulog), 'nenhum script de update rodou (sem UAC a toa)',
+          read_text(ulog)[-400:])
+    check(file_version(APP_EXE) == inst, f'continua na {inst} (nao voltou para {staged})',
+          file_version(APP_EXE))
+    check(not os.path.exists(pend) and not os.path.exists(staging), 'pendente e staging descartados')
+    check('descartado' in read_text(os.path.join(UPD_DIR, 'mbchat.log')), 'log registra o descarte')
+    check_data_preserved('apos o pendente velho')
+    kill_app()
+
+
 def cmd_setup_over(setup, ver):
     st = load_state()
     old = (st.get('installed_tag') or '').lstrip('v')
@@ -1356,6 +1402,8 @@ def main():
     elif cmd == 'update-logon':
         cmd_update_logon(args[1], args[2], args[3], args[4],
                          [float(x) for x in args[5].split(',')], '--strict' in args)
+    elif cmd == 'stale-pending':
+        cmd_stale_pending(args[1])
     elif cmd == 'double-launch':
         cmd_double_launch(args[1], [float(x) for x in args[2].split(',')], '--strict' in args)
     elif cmd == 'update-impatient':

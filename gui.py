@@ -21375,6 +21375,10 @@ class LanMessengerApp:
         try:
             import updater
             pending = updater.is_update_pending()
+            if pending and updater.pending_is_stale(pending)[0]:
+                # versao ja instalada ou mais velha: nao reaplica nem volta versao
+                updater.discard_pending(pending)
+                pending = None
             if pending:
                 log.info("Aplicando update via PowerShell no encerramento...")
                 # So reabre o app se o update falhar quando o usuario pediu
@@ -22037,6 +22041,16 @@ def main():
     try:
         import updater
         pending_update_dir = updater.is_update_pending()
+        if pending_update_dir:
+            # Pendente da versao ja instalada (ou mais velha): sobra de um download
+            # da versao anterior, feito antes de o app ser atualizado pelo
+            # instalador web/deploy. Nunca reaplica (UAC a toa) nem volta versao.
+            stale, staged = updater.pending_is_stale(pending_update_dir)
+            if stale:
+                log.info("Update pendente e da versao %s e o app ja e %s -- descartado",
+                         staged, APP_VERSION)
+                updater.discard_pending(pending_update_dir)
+                pending_update_dir = None
         if pending_update_dir and '--skip-update' in sys.argv[1:]:
             # O script de update acabou de falhar (ex. UAC negado) e reabriu
             # esta versao: nao tenta de novo agora (viraria loop de prompts do

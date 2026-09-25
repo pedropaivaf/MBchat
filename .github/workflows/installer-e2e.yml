@@ -266,9 +266,21 @@ jobs:
         if: matrix.scenario == 'next-logon-duplo'
         run: python tools/e2e_installer.py double-launch ${{ env.NEW_VER }} 0,0.05,0.1,0.2,0.4,0.8,1.5,3 --strict
 
+      # Instalador web rodado com outra conta (admin/SYSTEM): o download que a
+      # versao anterior fez no %APPDATA% do funcionario fica la. Mesma versao:
+      # o app descarta, sem script de update nem UAC.
+      - name: Pendente da mesma versao que o instalador web acabou de instalar
+        if: matrix.scenario == 'next-logon-duplo'
+        run: python tools/e2e_installer.py stale-pending e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip
+
       - name: Updater novo com o app sendo aberto durante a troca
         if: matrix.scenario == 'next-update-cliques'
         run: python tools/e2e_installer.py update-impatient e2e-build/e2e-build-${{ env.NEXT_VER }}/MBChat_update.zip ${{ env.NEXT_VER }} --strict
+
+      # Pendente de versao MAIS VELHA que a instalada: nunca volta de versao.
+      - name: Pendente mais velho que a versao instalada (sem voltar de versao)
+        if: matrix.scenario == 'next-update-cliques'
+        run: python tools/e2e_installer.py stale-pending e2e-build/e2e-build-${{ env.NEW_VER }}/MBChat_update.zip
 
       - name: Build novo se atualiza sozinho (SEM admin, 1 chamada de API, reabre sem admin)
         if: matrix.scenario == 'next-update'

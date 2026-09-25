@@ -642,6 +642,76 @@ def is_update_pending():
     return None
 
 
+# Versao do MBChat.exe de uma pasta de staging, lida do recurso VERSIONINFO que o
+# build grava (tools/make_version_info.py). None se nao der para ler -- quem chama
+# segue como antes.
+def staged_version(staging_dir):
+    exe = os.path.join(staging_dir or '', 'MBChat.exe')
+    if os.name != 'nt' or not os.path.isfile(exe):
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ver = ctypes.WinDLL('version', use_last_error=True)
+        ver.GetFileVersionInfoSizeW.restype = wintypes.DWORD
+        ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+        ver.GetFileVersionInfoW.restype = wintypes.BOOL
+        ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                            ctypes.c_void_p]
+        ver.VerQueryValueW.restype = wintypes.BOOL
+        ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
+                                       ctypes.POINTER(ctypes.c_void_p),
+                                       ctypes.POINTER(wintypes.UINT)]
+        size = ver.GetFileVersionInfoSizeW(exe, None)
+        if not size:
+            return None
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(exe, 0, size, buf):
+            return None
+        ptr = ctypes.c_void_p()
+        n = wintypes.UINT()
+        if not ver.VerQueryValueW(buf, '\\', ctypes.byref(ptr), ctypes.byref(n)) or not ptr.value:
+            return None
+
+        class _FixedFileInfo(ctypes.Structure):
+            _fields_ = [(k, wintypes.DWORD) for k in (
+                'sig', 'struc', 'file_ms', 'file_ls', 'prod_ms', 'prod_ls', 'flags_mask',
+                'flags', 'os', 'type', 'subtype', 'date_ms', 'date_ls')]
+        fi = ctypes.cast(ptr, ctypes.POINTER(_FixedFileInfo)).contents
+        if fi.sig != 0xFEEF04BD:
+            return None
+        return f'{fi.file_ms >> 16}.{fi.file_ms & 0xFFFF}.{fi.file_ls >> 16}'
+    except Exception:
+        return None
+
+
+# Update pendente que NAO e mais novo que a versao rodando: sobra de um download
+# feito pela versao anterior quando o app ja foi atualizado por outro caminho --
+# instalador web ou deploy_mbchat.ps1 rodados como admin/SYSTEM, cujo setup limpa
+# o %APPDATA% DELES, nao o do funcionario. Aplicar isso pediria UAC a toa (quem nao
+# e admin ve o pedido ate 3 vezes) ou, pior, VOLTARIA o app para a versao antiga.
+# Devolve (descartar?, versao_do_staging). Sem versao legivel: (False, None).
+def pending_is_stale(staging_dir, current=None):
+    staged = staged_version(staging_dir)
+    if not staged:
+        return False, None
+    return _parse_version(staged) <= _parse_version(current or APP_VERSION), staged
+
+
+# Descarta um update pendente velho: marcador, contador e a pasta de staging
+# (so se estiver dentro da pasta do updater).
+def discard_pending(staging_dir):
+    clear_update_pending()
+    reset_update_attempts()
+    try:
+        base = os.path.normcase(os.path.abspath(_UPDATE_DIR))
+        target = os.path.normcase(os.path.abspath(staging_dir or ''))
+        if staging_dir and target.startswith(base + os.sep) and os.path.isdir(target):
+            shutil.rmtree(target, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def clear_update_pending():
     # Remove o marcador de update pendente. Usado quando o staging e invalido
     # para evitar loop de boot que nunca abre a GUI (app "nao reabre").
