@@ -1649,6 +1649,24 @@ sozinho), tambem com TEMP 8.3.
   Windows ou criada por processo elevado que nao solta: segue sem ela (nunca trava o boot). Abertura
   `--silent` (logon) nao manda SHOW: com o app ja aberto, a janela nao salta. Medido: `next-update-cliques`
   verde nos 2 Windows, `next-logon-duplo` 8/8 com 1 MB Chat, `next-update-logon` abrindo sozinho em todos.
+- **Update pendente velho e descartado** (`updater.pending_is_stale` / `discard_pending`, no boot e no
+  encerramento): o pendente cujo `MBChat.exe` (FileVersion do VERSIONINFO) nao e mais novo que a versao
+  rodando e apagado, sem script. Sem isso, no fluxo do instalador web (abaixo) o app novo reaplicava a
+  mesma versao (UAC a toa, ate 3x para quem nao e admin) ou VOLTAVA para uma versao mais velha. Versao
+  ilegivel: segue como antes. e2e `stale-pending`: mesma versao e versao mais velha.
+
+### Fluxo do escritorio: sempre o instalador web mais recente
+
+O Pedro atualiza as maquinas rodando o `MBChat_WebInstaller.exe` (baixa o setup da ultima release). E o
+caminho sem o risco da limitacao 6 acima e o mais testado (`webinstaller`, `wizard` com o app aberto,
+`setup-over`, conserto de pasta quebrada). Cuidados:
+1. **Ao publicar, as maquinas na versao anterior baixam o update sozinhas em ate 30 min** e aplicam na
+   proxima abertura do app (reiniciar o PC). Para ninguem passar pelo auto-update CONGELADO da 1.8.38, rodar
+   o instalador web no mesmo dia, antes de os PCs reiniciarem.
+2. **Instalador web rodado com a conta de admin (funcionario sem admin) ou `deploy_mbchat.ps1` (SYSTEM)**: o
+   setup limpa o `%APPDATA%\MBChat` da conta que o rodou, nao o do funcionario. O download pendente que a
+   versao anterior deixou la e descartado pelo app novo no primeiro boot (item acima) -- a partir da versao
+   que traz o fix; e o app novo que faz isso, entao ja vale no salto 1.8.38 -> proxima.
 
 ### build.py (protege o instalador web e o auto-update de TODOS)
 

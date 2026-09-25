@@ -438,3 +438,20 @@ maquinas); o caminho e o **instalador web**, que baixa o setup da ultima release
 recriava `_internal`; agora tambem apaga `_internal.bak/.new`, `MBChat.exe.bak/.new/.failed` e os
 `update_attempts/result.txt`. O cenario `auto-update-cliques` roda esse conserto em toda rodada (na pasta
 quebrada de verdade ou no estado simulado) e exige o app abrindo com Python e o historico intacto.
+
+## Update pendente velho: descartar, nunca reaplicar (pos-v1.8.38)
+
+No escritorio a atualizacao e feita pelo instalador web (ou `deploy_mbchat.ps1`). Ao publicar, a versao
+anterior baixa o update sozinha no `%APPDATA%\MBChat` do funcionario (`update_pending.txt` + staging). Se o
+setup roda com OUTRA conta -- admin digitando a senha num PC sem admin, ou SYSTEM no deploy -- o
+`[InstallDelete]` limpa o `%APPDATA%` dessa conta, nao o do funcionario. O app novo reaplicava o pendente
+sem olhar versao: mesma versao = script + UAC a toa (quem nao e admin veria o pedido ate 3 vezes, ate o
+contador desistir); versao mais velha = o app voltava de versao.
+
+Decisao: no boot (antes de contar tentativa ou aplicar) e no encerramento, ler a FileVersion do
+`MBChat.exe` do staging (recurso VERSIONINFO gravado pelo build via `tools/make_version_info.py`, lido com
+`version.dll` por ctypes -- sem pywin32) e descartar o pendente se ele nao for mais novo que a versao
+rodando (marcador, contador e staging, este so se estiver dentro da pasta do updater). Versao ilegivel:
+segue como antes. Como e o app NOVO que decide, vale ja no salto a partir da 1.8.38.
+Cobertura: `tests/test_update_stale_pending.py` (leitura real do VERSIONINFO no Windows) e o cenario
+`stale-pending` do `installer-e2e` (mesma versao e versao mais velha).
