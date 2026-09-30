@@ -1426,6 +1426,20 @@ aba Reunioes sem uso. Por isso o app "subia do nada" e voltava a ~130MB ao reini
 Janelas de chat NAO eram a causa: 40 ciclos de abrir/fechar chat com 150 mensagens
 (links, codigo, emojis) ficaram estaveis (medido).
 
+**Medido de novo com o app inteiro sob trafego real (`tools/soak/run_soak.py`)**: 30 colegas
+falsos em loopback (UDP announce a cada 0,5s = 30x o ritmo real, sync de reunioes respondido
+como um colega responde, ~1.170 mensagens TCP com emoji/link/codigo e "digitando..."), 8 min
+(~4 h de escritorio em announces), mesmo trafego nas duas versoes:
+- **1.8.38: 122 -> 628 MB (+506 MB)**, 21.589 syncs de reuniao (1 por announce). Bate com o
+  1,2 GB visto em producao depois de um dia com 2 chats abertos.
+- **Codigo com o fix: 67 -> 106 MB (+39 MB)**, 60 syncs. O que sobe e o conteudo das janelas de
+  chat (o app abre a janela de quem manda mensagem: 30 janelas, ~5 mil linhas); fechando as
+  janelas, widgets 854 -> 43 e objetos Python 44.760 -> 27.314 (abaixo da abertura) e a RSS
+  fica parada. Abertura sem trafego identica nas duas versoes (57,8 vs 57,9 MB).
+- `run_soak.py` recusa rodar com o MB Chat aberto (UDP 50100/TCP 50101 em uso) e usa pasta de
+  dados temporaria. `--repo` mede outra versao (`git archive vX | tar -x -C pasta`),
+  `--close-at` fecha os chats no meio. Precisa de `pip install psutil` (so a ferramenta).
+
 ### Testes
 
 `tests/test_memory_leak_fixes.py` (30 checks): 5000 threads curtas via `_safe` (todos
