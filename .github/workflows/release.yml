@@ -1,0 +1,278 @@
+# Release do MB Chat pelo GitHub Actions (quando nao da para rodar o build.py no PC).
+#
+# Mesmo caminho do `python build.py --release`, com tres travas antes de publicar:
+#   1. build com o MESMO Python da release que esta nas maquinas (python.org 3.14.4,
+#      Tcl/Tk 8.6.15) -- o Python do setup-python e outro build (Tcl 9);
+#   2. paridade: o pacote novo tem que ter o mesmo Python/Tcl/Tk e nenhuma pasta a
+#      menos que o pacote publicado da base (tools/release_parity.py);
+#   3. o pacote REAL e testado no Windows 10 e 11: a base instalada se atualiza
+#      sozinha para ele (com e sem admin), o setup novo por cima com o app aberto,
+#      o assistente clicado e o instalador web novo.
+# So publica com Run workflow na main e "publicar = sim". Push em claude/** que mexe
+# neste arquivo faz so o ensaio (build + paridade + testes), sem publicar nada.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publicar:
+        description: 'Publicar a release no fim? (sim/nao) -- so vale na main'
+        default: 'nao'
+      notas:
+        description: 'Notas do sino: 5 linhas separadas por |'
+        default: ''
+      base_tag:
+        description: 'Release que esta nas maquinas'
+        default: 'v1.8.38'
+  push:
+    branches: ['claude/**']
+    paths: ['.github/workflows/release.yml', 'tools/release_parity.py']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_TAG: ${{ inputs.base_tag || 'v1.8.38' }}
+  # Python do build da base (python314.dll 3.14.4, tcl86t/tk86t 8.6.15 no pacote publicado)
+  PY_VER: '3.14.4'
+  TCL_VER: '8.6.15'
+
+jobs:
+  build:
+    name: Build (Python do python.org, igual a base) + paridade
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      ver: ${{ steps.ver.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python ${{ env.PY_VER }} do python.org (o mesmo da base)
+        shell: pwsh
+        run: |
+          $inst = Join-Path $env:RUNNER_TEMP "python-$env:PY_VER-amd64.exe"
+          Invoke-WebRequest "https://www.python.org/ftp/python/$env:PY_VER/python-$env:PY_VER-amd64.exe" -OutFile $inst
+          $p = Start-Process $inst -ArgumentList '/quiet', 'InstallAllUsers=1', 'TargetDir=C:\PyRel', 'PrependPath=0',
+               'Include_test=0', 'Include_launcher=0', 'Shortcuts=0' -Wait -PassThru
+          if ($p.ExitCode) { throw "instalador do Python saiu com $($p.ExitCode)" }
+          'C:\PyRel\Scripts' | Out-File -Append $env:GITHUB_PATH -Encoding utf8
+          'C:\PyRel' | Out-File -Append $env:GITHUB_PATH -Encoding utf8
+
+      - name: Confere Python e Tcl/Tk
+        shell: python
+        run: |
+          import os, sys, tkinter
+          t = tkinter.Tcl().eval('info patchlevel')
+          print(sys.executable, sys.version, 'Tcl', t)
+          assert sys.executable.lower().startswith('c:\\pyrel'), 'python errado no PATH'
+          assert sys.version.split()[0] == os.environ['PY_VER'], 'Python diferente da base'
+          assert t == os.environ['TCL_VER'], 'Tcl/Tk diferente da base'
+
+      - name: Dependencias (as da base, inclusive numpy/yaml/charset que entram no pacote)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt numpy==2.4.6 pyyaml charset-normalizer pefile
+          pip list
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { choco install innosetup -y --no-progress }
+
+      - name: Versao
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import version; print(version.APP_VERSION)"
+          "ver=$v" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          "Versao: $v"
+
+      - name: Gate de verificacao (modo release)
+        run: python tools/prerelease_check.py --release
+
+      - name: Build do app + setup + instalador web
+        shell: pwsh
+        run: |
+          python -c "import build, sys; sys.exit(0 if build._do_build() and build._do_installer() and build._do_web_installer() else 1)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist -File | Format-Table Name, Length
+
+      - name: Paridade com o pacote publicado da base
+        shell: pwsh
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP 'base_update.zip'
+          Invoke-WebRequest "https://github.com/pedropaivaf/MBchat/releases/download/$env:BASE_TAG/MBChat_update.zip" -OutFile $base
+          python tools/release_parity.py dist/MBChat_update.zip $base ${{ steps.ver.outputs.ver }} 2>&1 | Tee-Object -Variable saida
+          $code = $LASTEXITCODE
+          "## Paridade com $env:BASE_TAG" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $saida | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          exit $code
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-build
+          retention-days: 14
+          path: |
+            dist/MBChat_update.zip
+            dist/MBChat_Setup.exe
+            dist/MBChat_WebInstaller.exe
+
+  verify:
+    name: ${{ matrix.scenario }} (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        scenario: [auto-update, auto-update-uac, setup-over, wizard, webinstaller]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      MBCHAT_E2E: '1'
+      NEW_VER: ${{ needs.build.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python (so para o script de teste)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Dependencias do teste
+        run: pip install pywin32 cryptography pywinauto
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build
+          path: rel
+
+      - name: Ambiente
+        shell: pwsh
+        run: |
+          "BASE_VER=$($env:BASE_TAG.TrimStart('v'))" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+          python -c "import platform; print(platform.platform())"
+          Get-ChildItem rel -File | Format-Table Name, Length
+
+      - name: Instala a release que esta nas maquinas
+        if: matrix.scenario != 'webinstaller'
+        run: python tools/e2e_installer.py install-release ${{ env.BASE_TAG }}
+
+      - name: Primeira abertura + historico
+        if: matrix.scenario != 'webinstaller' && matrix.scenario != 'auto-update-uac'
+        run: python tools/e2e_installer.py seed ${{ env.BASE_VER }}
+
+      - name: Usuario de teste (admin com UAC)
+        if: matrix.scenario == 'auto-update-uac'
+        run: python tools/e2e_installer.py make-user
+
+      - name: Primeira abertura como usuario de teste + historico
+        if: matrix.scenario == 'auto-update-uac'
+        run: python tools/e2e_installer.py seed ${{ env.BASE_VER }} --limited
+
+      - name: A base se atualiza sozinha para o pacote novo (atalho de Inicializacao)
+        if: matrix.scenario == 'auto-update'
+        run: python tools/e2e_installer.py update-flow rel/MBChat_update.zip ${{ env.NEW_VER }} --via-startup
+
+      - name: A base se atualiza para o pacote novo com o app SEM admin
+        if: matrix.scenario == 'auto-update-uac'
+        run: python tools/e2e_installer.py update-flow rel/MBChat_update.zip ${{ env.NEW_VER }} --limited
+
+      - name: Setup novo por cima (app aberto)
+        if: matrix.scenario == 'setup-over'
+        run: python tools/e2e_installer.py setup-over rel/MBChat_Setup.exe ${{ env.NEW_VER }}
+
+      - name: Assistente do setup novo clicado ate o fim, com o app aberto
+        if: matrix.scenario == 'wizard'
+        run: python tools/e2e_installer.py wizard rel/MBChat_Setup.exe ${{ env.NEW_VER }}
+
+      - name: Instalador web novo (baixa o setup da ultima release e abre)
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller rel/MBChat_WebInstaller.exe
+
+      - name: Instalador web novo com TEMP 8.3
+        if: matrix.scenario == 'webinstaller'
+        run: python tools/e2e_installer.py webinstaller rel/MBChat_WebInstaller.exe --8dot3
+
+      - name: Coleta logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory rel-logs -Force | Out-Null
+          foreach ($p in @("$env:APPDATA\MBChat\*.log", "$env:APPDATA\.mbchat\*.log", "$env:RUNNER_TEMP\*.log",
+                           "C:\Users\mbteste*\AppData\Roaming\MBChat\*.log")) {
+            Copy-Item $p rel-logs -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-logs-${{ matrix.scenario }}-${{ matrix.os }}
+          retention-days: 7
+          path: rel-logs
+
+  publish:
+    name: Publica a release
+    needs: [build, verify]
+    if: github.event_name == 'workflow_dispatch' && inputs.publicar == 'sim' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VER: ${{ needs.build.outputs.ver }}
+      NOTAS: ${{ inputs.notas }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build
+          path: dist
+
+      # A tag nasce no HEAD da main: tem que ser o commit que foi buildado e testado.
+      # Release que ja existe nunca e sobrescrita por aqui.
+      - name: Travas
+        run: |
+          set -e
+          remoto=$(git ls-remote origin refs/heads/main | cut -f1)
+          echo "main=$remoto buildado=$GITHUB_SHA versao=$VER"
+          test "$remoto" = "$GITHUB_SHA" || { echo "a main andou depois do build"; exit 1; }
+          if gh release view "v$VER" >/dev/null 2>&1; then echo "release v$VER ja existe"; exit 1; fi
+          test -n "$(echo "$NOTAS" | tr -d ' |')" || { echo "faltam as notas do sino"; exit 1; }
+          ls -la dist
+
+      - name: Publica (build._do_release, o mesmo do build.py --release)
+        run: |
+          python - <<'EOF'
+          import os, sys
+          import build
+          notas = '\n'.join(l.strip() for l in os.environ['NOTAS'].split('|') if l.strip())
+          print(notas)
+          sys.exit(0 if build._do_release(os.environ['VER'], notes=notas) else 1)
+          EOF
+
+      - name: Confere o que as maquinas e o instalador web vao ver
+        run: |
+          set -e
+          gh release view "v$VER" --json tagName,isDraft,isPrerelease,assets,body -q '.tagName, .isDraft, .isPrerelease, [.assets[].name], .body'
+          latest=$(gh api repos/${{ github.repository }}/releases/latest -q .tag_name)
+          echo "latest=$latest"
+          test "$latest" = "v$VER"
+          tag_sha=$(git ls-remote origin "refs/tags/v$VER" | cut -f1)
+          echo "tag=$tag_sha"
+          test "$tag_sha" = "$GITHUB_SHA"
+          curl -sSIL "https://github.com/${{ github.repository }}/releases/latest/download/MBChat_Setup.exe" | grep -i '^location' | tail -2
