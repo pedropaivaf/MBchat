@@ -6,6 +6,7 @@
 #   python tools/soak/run_soak.py 480                     # codigo atual, 8 min
 #   python tools/soak/run_soak.py 480 --repo C:\v1838     # outra versao (git archive)
 #   python tools/soak/run_soak.py 260 --close-at 200      # fecha os chats aos 200s
+#   python tools/soak/run_soak.py 1080 --perfil dia       # 3 conversas no ritmo de gente
 #
 # FECHE O MB CHAT ANTES: com ele aberto os 30 colegas falsos iriam para o app de
 # verdade. Por isso o script se recusa a rodar se UDP 50100 ou TCP 50101 estao em uso.
@@ -36,7 +37,11 @@ def _porta_livre(tipo, porta):
 
 def main():
     args = sys.argv[1:]
-    repo, close_at = ROOT, None
+    repo, close_at, perfil = ROOT, None, 'extremo'
+    if '--perfil' in args:
+        i = args.index('--perfil')
+        perfil = args[i + 1]
+        del args[i:i + 2]
     if '--repo' in args:
         i = args.index('--repo')
         repo = os.path.abspath(args[i + 1])
@@ -52,18 +57,39 @@ def main():
     work = os.path.join(tempfile.gettempdir(), 'mbchat_soak')
     os.makedirs(work, exist_ok=True)
     info = os.path.join(work, 'soak_info.json')
-    if os.path.exists(info):
-        os.remove(info)
-    tag = os.path.basename(repo.rstrip('\\/')) or 'app'
-    gen = subprocess.Popen([sys.executable, os.path.join(HERE, 'soak_gen.py'), dur])
-    cmd = [sys.executable, os.path.join(HERE, 'soak_app.py'), repo, tag, str(float(dur) + 20)]
-    if close_at:
-        cmd.append(close_at)
+    gen_out = os.path.join(work, 'soak_gen.json')
+    for f in (info, gen_out):
+        if os.path.exists(f):
+            os.remove(f)
+    tag = (os.path.basename(repo.rstrip('\\/')) or 'app') + '_' + perfil
+    gen = subprocess.Popen([sys.executable, os.path.join(HERE, 'soak_gen.py'), dur, perfil])
+    cmd = [sys.executable, os.path.join(HERE, 'soak_app.py'), repo, tag, str(float(dur) + 20),
+           close_at or '-', perfil]
     t0 = time.time()
     rc = subprocess.call(cmd)
     gen.wait(timeout=120)
     print(f'fim ({round(time.time() - t0)}s, rc={rc}); resultado em {os.path.join(work, "soak_" + tag + ".json")}')
+    _resumo(os.path.join(work, 'soak_' + tag + '.json'), gen_out)
     sys.exit(rc)
+
+
+# Resumo: memoria na abertura (1a medida) x fim, e mensagens enviadas x gravadas
+def _resumo(rows_path, gen_path):
+    import json
+    try:
+        rows = json.load(open(rows_path))
+        gen = json.load(open(gen_path))
+    except Exception as e:
+        print('sem resumo:', e)
+        return
+    a, b = rows[0], rows[-1]
+    for k in ('rss', 'uss', 'private'):
+        if a.get(k) is not None and b.get(k) is not None:
+            pico = max(r[k] for r in rows if r.get(k) is not None)
+            print(f'RESUMO {k}: {a[k]} -> {b[k]} MB (pico {pico} MB)')
+    print(f"RESUMO mensagens: enviadas {gen.get('msg')}, gravadas no banco {b.get('db_msgs')}; "
+          f"anuncios {gen.get('ann')}, syncs de reuniao {gen.get('sync')}, erros {gen.get('err')}; "
+          f"chats abertos {b.get('chats')}")
 
 
 if __name__ == '__main__':

@@ -2,8 +2,10 @@
 # Uso (feche o MB Chat antes; precisa das portas UDP 50100 e TCP 50101 livres):
 #   python tools/soak/run_soak.py [SEGUNDOS] [--repo CAMINHO] [--close-at SEGUNDOS]
 # Sobe o app do repositorio com dados numa pasta temporaria (nunca toca no
-# %APPDATA% de verdade), abre 2 chats quando os colegas aparecem e mede a cada 15s,
-# na main thread: RSS, threads, imagens e timers do Tk, widgets e objetos Python.
+# %APPDATA% de verdade), abre os chats das conversas quando os colegas aparecem e
+# mede a cada 15s, na main thread: RSS, USS (memoria so do app -- a coluna "Memoria"
+# do Gerenciador de Tarefas), threads, imagens e timers do Tk, widgets, objetos
+# Python e quantas mensagens dos colegas estao gravadas no banco.
 # A unica troca: o pedido de sync de reunioes vai para o gerador (que responde como o
 # colega responderia), em vez de 127.0.0.x:50101 (que seria o proprio app).
 import sys, os, time, json, socket, threading, gc, shutil
@@ -11,7 +13,9 @@ import tempfile, types
 S = os.path.join(tempfile.gettempdir(), 'mbchat_soak')
 os.makedirs(S, exist_ok=True)
 repo, tag, duration = sys.argv[1], sys.argv[2], float(sys.argv[3])
-close_at = float(sys.argv[4]) if len(sys.argv) > 4 else None
+close_at = float(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != '-' else None
+perfil = sys.argv[5] if len(sys.argv) > 5 else 'extremo'
+CONVERSAS = ['soakpeer%02d' % i for i in range(3 if perfil == 'dia' else 2)]
 closed = {'done': False}
 home = os.path.join(S, 'home_' + tag)
 shutil.rmtree(home, ignore_errors=True)
@@ -63,7 +67,7 @@ def nwidgets(w):
 def sample():
     el = time.time() - t0
     peers = app.messenger.discovery.peers if getattr(app, 'messenger', None) else {}
-    for uid in ('soakpeer00', 'soakpeer01'):
+    for uid in CONVERSAS:
         if uid in peers and uid not in opened:
             try:
                 app._open_chat(uid)
@@ -85,12 +89,24 @@ def sample():
             lines.append(int(cw.chat_text.index('end-1c').split('.')[0]))
         except Exception:
             pass
-    row = dict(t=round(el), rss=round(proc.memory_info().rss / 1e6, 1),
+    try:
+        uss = round(proc.memory_full_info().uss / 1e6, 1)
+    except Exception:
+        uss = None
+    try:
+        db_msgs = app.messenger.db.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE from_user LIKE 'soakpeer%'").fetchone()[0]
+    except Exception:
+        db_msgs = None
+    row = dict(t=round(el), rss=round(proc.memory_info().rss / 1e6, 1), uss=uss,
                threads=threading.active_count(),
                images=len(app.root.tk.call('image', 'names')),
                afters=len(app.root.tk.call('after', 'info')),
                widgets=nwidgets(app.root), peers=len(peers),
-               gc=len(gc.get_objects()), chats=len(app.chat_windows), chat_lines=lines)
+               gc=len(gc.get_objects()), chats=len(app.chat_windows), chat_lines=lines,
+               db_msgs=db_msgs)
+    if sys.platform == 'win32':
+        row['private'] = round(proc.memory_info().private / 1e6, 1)
     rows.append(row)
     print(json.dumps(row), flush=True)
     if el >= duration:

@@ -1,12 +1,19 @@
 # tools/soak/soak_gen.py -- gerador de trafego para o tools/soak/soak_app.py.
 # 30 colegas (cada um com seu IP 127.0.0.x), anunciando por UDP a cada 0.5s (30x o
 # ritmo real de 15s), respondendo o sync de reunioes como um colega responde, e
-# mandando mensagens por TCP real: 2 colegas conversando sem parar (com
-# "digitando..."), os outros mandando de vez em quando. So fala com 127.0.0.1.
+# mandando mensagens por TCP real. So fala com 127.0.0.1. Perfis (2o argumento):
+#   extremo (padrao): 2 colegas conversando sem parar (1 mensagem/s cada, com
+#            "digitando..."), os outros mandando a cada 2s -- ~1.170 mensagens em 8 min
+#   dia:     3 conversas no ritmo de gente (1 mensagem a cada ~6s cada) e um colega
+#            qualquer mandando a cada 90s -- o dia de quem usa muito o chat
 import socket, json, time, struct, threading, random, uuid, sys, os
 import tempfile
 S = os.path.join(tempfile.gettempdir(), 'mbchat_soak')
 duration = float(sys.argv[1])
+perfil = sys.argv[2] if len(sys.argv) > 2 else 'extremo'
+CONVERSAS = 3 if perfil == 'dia' else 2
+PAUSA_CONVERSA = 5.6 if perfil == 'dia' else 0.6
+PAUSA_AVULSA = 90 if perfil == 'dia' else 2
 info_path = os.path.join(S, 'soak_info.json')
 t_end = time.time() + 120
 while not os.path.exists(info_path) and time.time() < t_end:
@@ -109,24 +116,26 @@ def conversa(p):
         if tcp_send(p, msg(p, random.choice(TEXTOS))):
             stats['msg'] += 1
         tcp_send(p, {'type': 'typing', 'from_user': p['uid'], 'to_user': APP_UID, 'is_typing': False})
-        time.sleep(0.6)
+        time.sleep(PAUSA_CONVERSA)
 
 
 def avulsas():
     time.sleep(15)
     while time.time() < stop:
-        p = random.choice(peers[2:])
+        p = random.choice(peers[CONVERSAS:])
         if tcp_send(p, msg(p, random.choice(TEXTOS))):
             stats['msg'] += 1
-        time.sleep(2)
+        time.sleep(PAUSA_AVULSA)
 
 
 random.seed(7)
 ts = [threading.Thread(target=f, daemon=True) for f in (sink, announcer, sync_responder, avulsas)]
-ts += [threading.Thread(target=conversa, args=(peers[i],), daemon=True) for i in (0, 1)]
+ts += [threading.Thread(target=conversa, args=(peers[i],), daemon=True) for i in range(CONVERSAS)]
 for t in ts:
     t.start()
 while time.time() < stop:
     time.sleep(30)
     print('gen', json.dumps(stats), flush=True)
 print('gen FIM', json.dumps(stats), flush=True)
+with open(os.path.join(S, 'soak_gen.json'), 'w') as f:
+    json.dump(stats, f)

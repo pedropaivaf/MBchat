@@ -1,0 +1,92 @@
+# Memoria do MB Chat no Windows de verdade (a coluna "Memoria" do Gerenciador de
+# Tarefas = USS: so o que e do app, sem as DLLs compartilhadas).
+#
+# Roda tools/soak/run_soak.py: o app REAL (codigo fonte) contra 30 colegas falsos em
+# loopback, anunciando 30x mais rapido que o normal, com sync de reunioes e mensagens
+# TCP de verdade. Compara o codigo atual com a release que esta nas maquinas.
+#   dia:     18 min = ~9 h de anuncios de 30 colegas; 3 conversas no ritmo de gente
+#   extremo: 8 min, ~1.170 mensagens, a janela de chat de todos os 30 colegas aberta
+# Nunca publica nada.
+
+name: ram-soak
+
+on:
+  push:
+    branches: ['claude/**']
+    paths: ['tools/soak/**', '.github/workflows/ram-soak.yml']
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: 'Release que esta nas maquinas (comparacao)'
+        default: 'v1.8.38'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ram-soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  soak:
+    name: ${{ matrix.versao }} ${{ matrix.perfil }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2025, versao: atual, perfil: dia, seg: 1080 }
+          - { os: windows-2022, versao: atual, perfil: dia, seg: 1080 }
+          - { os: windows-2025, versao: base, perfil: dia, seg: 1080 }
+          - { os: windows-2025, versao: atual, perfil: extremo, seg: 480 }
+          - { os: windows-2025, versao: base, perfil: extremo, seg: 480 }
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instala Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Instala dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt psutil
+
+      - name: Codigo da release base
+        if: matrix.versao == 'base'
+        shell: pwsh
+        run: |
+          $tag = '${{ github.event.inputs.base_tag }}'
+          if (-not $tag) { $tag = 'v1.8.38' }
+          git worktree add C:\base $tag
+          "BASE_REPO=C:\base" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+
+      - name: Soak
+        shell: pwsh
+        env:
+          # pasta de trabalho do soak (tempfile.gettempdir) dentro do runner.temp
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          $args_ = @('tools/soak/run_soak.py', '${{ matrix.seg }}', '--perfil', '${{ matrix.perfil }}')
+          if ($env:BASE_REPO) { $args_ += @('--repo', $env:BASE_REPO) }
+          python @args_ 2>&1 | Tee-Object -Variable saida | Select-String -Pattern '^\{|RESUMO|fim \(|hook ok|Recusado|Traceback|Error'
+          $code = $LASTEXITCODE
+          "## ${{ matrix.versao }} ${{ matrix.perfil }} (${{ matrix.os }})" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $saida | Select-String -Pattern 'RESUMO' | ForEach-Object { $_.Line } | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          exit $code
+
+      - name: Resultado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ matrix.versao }}-${{ matrix.perfil }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/mbchat_soak/soak_*.json
+          if-no-files-found: ignore
