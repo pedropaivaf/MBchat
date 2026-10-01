@@ -20,6 +20,7 @@ import getpass    # Username Windows para migracao de user_id
 import calendar as _cal_mod
 from datetime import datetime as _dt, timedelta as _td
 from pathlib import Path  # Manipulação moderna de caminhos
+from identity import uid_login  # Login gravado no user_id (nome de ultimo recurso)
 
 
 def _compute_next_occurrence(last_ts, rule, now_ts):
@@ -259,6 +260,16 @@ class Database:
                 c.commit()
             except Exception:
                 pass
+
+        # Migration: last_announce_at em contacts -- ultima vez que o PEER se
+        # anunciou de verdade. O last_seen nao serve para isso: e reescrito
+        # para "agora" em TODOS os contatos a cada boot e ao fechar
+        # (set_all_contacts_offline). NULL = nao visto desde esta versao.
+        try:
+            c.execute("ALTER TABLE contacts ADD COLUMN last_announce_at REAL")
+            c.commit()
+        except Exception:
+            pass
 
         # Migration: ramal em local_user
         try:
@@ -587,6 +598,48 @@ class Database:
                         )
             except Exception:
                 pass
+            # reactions: PK (msg_id, emoji, from_user) -- se a mesma reacao ja
+            # existe no ID novo, a do antigo e duplicata e sai
+            try:
+                c.execute("UPDATE OR IGNORE reactions SET from_user=? WHERE from_user=?",
+                          (new_uid, old_uid))
+                c.execute("DELETE FROM reactions WHERE from_user=?", (old_uid,))
+            except Exception:
+                pass
+            # lembretes compartilhados: criador + listas JSON de uids
+            # (json.dumps grava cada uid entre aspas -> troca exata de '"uid"')
+            try:
+                c.execute("UPDATE reminders SET creator_uid=? WHERE creator_uid=?",
+                          (new_uid, old_uid))
+                old_q, new_q = f'"{old_uid}"', f'"{new_uid}"'
+                for col in ('invited_uids', 'accepted_uids', 'completed_by_uids'):
+                    c.execute(
+                        f"UPDATE reminders SET {col}=REPLACE({col}, ?, ?) "
+                        f"WHERE instr({col}, ?) > 0", (old_q, new_q, old_q))
+            except Exception:
+                pass
+            # grupos: criador
+            try:
+                c.execute("UPDATE groups SET creator_uid=? WHERE creator_uid=?",
+                          (new_uid, old_uid))
+            except Exception:
+                pass
+            # reunioes: criador e participantes (UNIQUE(booking_id, uid))
+            try:
+                c.execute("UPDATE bookings SET creator_uid=? WHERE creator_uid=?",
+                          (new_uid, old_uid))
+                c.execute("UPDATE OR IGNORE booking_participants SET uid=? WHERE uid=?",
+                          (new_uid, old_uid))
+                c.execute("DELETE FROM booking_participants WHERE uid=?", (old_uid,))
+            except Exception:
+                pass
+            # bloqueio: quem estava bloqueado continua bloqueado no ID novo
+            try:
+                c.execute("UPDATE OR IGNORE block_list SET user_id=? WHERE user_id=?",
+                          (new_uid, old_uid))
+                c.execute("DELETE FROM block_list WHERE user_id=?", (old_uid,))
+            except Exception:
+                pass
             c.commit()
         except Exception:
             pass
@@ -734,15 +787,19 @@ class Database:
     # UPSERT: cria novos e atualiza existentes. Não atualiza first_seen em updates
     # commit=False: o caller agrupa varias gravacoes numa transacao so e chama
     # commit() no fim (usado pelo announce -- 1 fsync em vez de 3).
+    # announced=True: o dado veio de um announce do proprio peer (prova de que
+    # aquele user_id esta vivo) -> grava last_announce_at.
     def upsert_contact(self, user_id, display_name, ip_address,
                        hostname='', os_info='', status='online', note='',
-                       avatar_index=0, avatar_data='', winuser='', commit=True):
+                       avatar_index=0, avatar_data='', winuser='', commit=True,
+                       announced=False):
         now = time.time()
         self.conn.execute("""
             INSERT INTO contacts (user_id, display_name, ip_address, hostname,
                                   os_info, status, note, avatar_index,
-                                  avatar_data, winuser, last_seen, first_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  avatar_data, winuser, last_seen, first_seen,
+                                  last_announce_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name=excluded.display_name,
                 ip_address=excluded.ip_address,
@@ -753,9 +810,12 @@ class Database:
                 avatar_index=excluded.avatar_index,
                 avatar_data=excluded.avatar_data,
                 winuser=excluded.winuser,
-                last_seen=excluded.last_seen
+                last_seen=excluded.last_seen,
+                last_announce_at=COALESCE(excluded.last_announce_at,
+                                          contacts.last_announce_at)
         """, (user_id, display_name, ip_address, hostname, os_info, status,
-              note, avatar_index, avatar_data, winuser or '', now, now))
+              note, avatar_index, avatar_data, winuser or '', now, now,
+              now if announced else None))
         if commit:
             self.conn.commit()
 
@@ -786,16 +846,24 @@ class Database:
     # Remove contatos com nome "[Desconhecido]" ou vazio acumulados por bugs antigos de discovery
     def cleanup_unknown_contacts(self):
         try:
-            # Remove mensagens de peers sem nome em nenhuma tabela
-            # PROTECAO: mensagens de grupo (to_user='group:...'), broadcast
-            # e sistema NUNCA sao apagadas — esses peers nao existem em
-            # contacts/group_members e eram destruidos a cada boot.
+            # Remove mensagens de peers FANTASMA: contato gravado com nome
+            # vazio/desconhecido (lixo de bug antigo de discovery).
+            # PROTECAO 1: peer que simplesmente NAO esta em contacts NAO e
+            # fantasma -- e historico real cujo contato sumiu (a lista de
+            # contatos apagava duplicados de nome no boot; troca de ID).
+            # Antes a regra era "nao esta em contacts com nome" e isso apagava
+            # conversas inteiras no boot seguinte. Nunca voltar a essa regra.
+            # PROTECAO 2: mensagens de grupo (to_user='group:...'), broadcast
+            # e sistema NUNCA sao apagadas.
             self.conn.execute("""
                 DELETE FROM messages
                 WHERE (CASE WHEN is_sent=1 THEN to_user ELSE from_user END)
-                    NOT IN (
+                    IN (
                         SELECT user_id FROM contacts
-                        WHERE display_name != '' AND display_name IS NOT NULL
+                        WHERE display_name = '' OR display_name IS NULL
+                           OR display_name = 'Desconhecido'
+                           OR display_name LIKE '[Desconhecido]%'
+                           OR display_name = 'Unknown'
                     )
                 AND (CASE WHEN is_sent=1 THEN to_user ELSE from_user END)
                     NOT IN (
@@ -866,6 +934,11 @@ class Database:
                 return row['display_name']
         except Exception:
             pass
+        # 3. Login do Windows gravado no proprio user_id (mac_host_login):
+        #    melhor "pedro.paiva" do que "[Desconhecido]" no historico.
+        login = uid_login(uid)
+        if login:
+            return login
         return None
 
     # ========================================

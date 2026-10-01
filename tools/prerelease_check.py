@@ -36,9 +36,10 @@ SKIP = []
 
 # Modulos do app (nao inclui build.py/tools, que nao vao no executavel)
 APP_MODULES = ['gui.py', 'messenger.py', 'network.py', 'database.py',
-               'updater.py', 'version.py', 'audio_recorder.py']
+               'updater.py', 'version.py', 'audio_recorder.py', 'identity.py',
+               'diagnostics.py']
 IMPORTABLE = ['gui', 'messenger', 'network', 'database', 'updater', 'version',
-              'audio_recorder']
+              'audio_recorder', 'identity', 'diagnostics']
 
 
 def ok(msg):

@@ -52,6 +52,7 @@
 - **Busca por trecho literal, sem diferenciar maiusculas/minusculas inclusive acentuadas** (pos-v1.8.38): "atenção" acha "ATENÇÃO"/"Atenção"; `%` e `_` sao procurados como texto (nao curinga). Mesmo criterio nas duas janelas
 - **Destaque em todas as linhas** da mensagem (antes so a 1a linha) e nunca na data/hora
 - **Historico do chat sem limite**: mostra todas as mensagens com o contato (antes as 5000 mais recentes). Validado com 500 mensagens reais e com 6000/20000 (`tests/test_history_search.py`)
+- **Historico permanente de verdade** (pos-v1.8.38): contato com nome repetido nao e mais apagado no boot (levava a conversa junto no boot seguinte); a limpeza so apaga mensagens de contato fantasma explicito (nome vazio); sem contato, o historico mostra o login do ID em vez de "[Desconhecido]"
 
 ## Lembretes
 - Tres tipos: Simples (sem data), Programado (calendario + HH:MM), Recorrente pattern-based (diario/semanal/mensal/anual)
@@ -75,6 +76,8 @@
 - Trava de inicializacao (mutex nomeado, pos-v1.8.38): duas aberturas quase juntas (logon abre o app 2x; clique enquanto a atualizacao reabre o app) terminam com exatamente 1 MB Chat aberto.
 - Auto-update via GitHub Releases: aviso no sino (pela API ou por um colega ja atualizado na rede), download silencioso com SHA256, aplicacao em "Reiniciar para Atualizar" ou no proximo boot (PowerShell com backup/rollback, pede UAC em Program Files). Se falhar, a versao atual reabre sozinha (`--skip-update`); depois de atualizar o app volta sem admin, na conta de quem usa. Validado em Windows real pelo workflow `installer-e2e`
 - Auto-start, popups fecham com Escape
+- **Identidade por login do Windows** (pos-v1.8.38): o ID termina com o login de quem o criou. Pasta `.mbchat` de outra conta (backup/perfil copiado) ganha ID proprio no boot, sem perder historico; a mesma pessoa em PC novo (conta de dominio) tem o historico do ID antigo juntado no novo depois de 7 dias sem o antigo aparecer
+- **Ferramentas > Diagnostico de rede com verificacao automatica** (pos-v1.8.38): aponta o problema e o que fazer -- outro PC usando o meu ID, mensagens com o meu ID descartadas, quem manda mensagem mas nao aparece na lista, status Offline, placa de rede errada, porta 50100, firewall, VPN, nomes repetidos, ID antigo a juntar, versoes antigas. A faixa da janela principal usa a mesma regra
 - Taskbar LAN Messenger-style com AppUserModelID
 
 ## VPN / Home-office (v1.4.63+)

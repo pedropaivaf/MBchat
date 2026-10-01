@@ -15,6 +15,8 @@ gui.py -> messenger.py -> network.py / database.py
 - **messenger.py** (~360 linhas) - Controller (orquestra rede + banco + GUI via callbacks, grupos)
 - **network.py** (~730 linhas) - Rede (UDP discovery multicast/broadcast + TCP messaging + file transfer)
 - **database.py** (~290 linhas) - SQLite local (WAL mode, threading.local)
+- **identity.py** - Funcoes puras de identidade: de quem e o user_id (login do Windows no final), hostname/login de dentro do ID, conta de dominio x local
+- **diagnostics.py** - Funcao pura do Diagnostico de rede: foto do app -> achados (problema, causa, o que fazer) + texto da janela; a mesma regra alimenta a faixa da janela principal
 - **version.py** - APP_VERSION (fonte unica de verdade)
 - **updater.py** - Auto-update via GitHub Releases
 - **build.py** - Build interativo (PyInstaller --onedir + Inno Setup + GitHub Release)
@@ -81,6 +83,7 @@ python build.py --version X.Y.Z --release
   NUNCA `LIKE` (acento/maiuscula e curinga `%`/`_`). Destaque via `_highlight_all` (gui.py), NUNCA
   `text.search(nocase=True)` (segfault do Tk 8.6 com emoji).
 - **Dependencias opcionais**: sempre try/except com HAS_* flag (PIL, pystray, winotify, windnd)
+- **Identidade/historico**: o user_id termina com o login do Windows de quem o criou (`identity.py`). NUNCA apagar contato do banco (nem "duplicado" de nome) e NUNCA apagar mensagem porque o contato nao existe -- contato e o "livro de nomes" do historico. Trocar ID so por `_rename_user_id_everywhere` (todas as tabelas). Ver secao "Identidade por login".
 - **Banco**: threading.local() para conexao por thread, parametros ? em SQL
 - **Comentarios**: usar apenas `#`, NUNCA `"""docstrings"""`
 - **Commits**: NUNCA "Co-Authored-By" ou referencia a Claude/AI. Autoria exclusiva de Pedro Paiva
@@ -179,6 +182,10 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    - **AMARELO** se uptime>30s, pacotes enviados>0, mas zero recebidos (firewall inbound bloqueado)
    - **AMARELO** se uptime>60s, multicast nao joinado e nenhum peer (rede filtrando)
    - Nos PCs saudaveis o banner NUNCA aparece (condicionais sao `and not healthy`).
+   - **Atualizado (pos-v1.8.38):** a decisao saiu daqui e foi para `diagnostics.build_findings` +
+     `banner_finding` (mesma regra da janela de Diagnostico). Entrou a faixa de **ID repetido**. Dois bugs
+     antigos corrigidos: a faixa VERMELHA da porta ocupada era escondida no mesmo ciclo pelo `else` da cadeia
+     de avisos, e faixa ja aberta nao mudava de cor ao mudar a gravidade. Ver secao "Diagnostico de rede".
 
 4. **Auto-fix de firewall via UAC** (primeira execucao pos-update). `_check_firewall_on_startup`
    roda 4s apos o _deferred_init, em thread background, so em build frozen. Chama
@@ -195,6 +202,8 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    health dict formatado, lista de peers conhecidos, ultimas 60 linhas do `network.log`,
    botoes **Copiar tudo** (clipboard), **Atualizar**, **Fechar**. Reusa `_center_window` e
    `_apply_rounded_corners`.
+   **Atualizado (pos-v1.8.38):** abre com a "Verificacao automatica" no topo -- ver secao "Diagnostico de
+   rede: verificacao automatica".
 
 6. **tools/fix_firewall.bat** — Script standalone para casos extremos: executa como admin,
    deleta todas as regras MBChat, recria Allow Inbound por porta, reinicia o MBChat.
@@ -1274,6 +1283,7 @@ obrigado a dizer "nao".** Agora existe um so, rodado em dois lugares.
 
 1. **Sintaxe** — `ast.parse` em todo `.py` da raiz, `tools/` e `tests/`.
 2. **Imports** — `gui, messenger, network, database, updater, version, audio_recorder`.
+   (pos-v1.8.38: tambem `identity` e `diagnostics`; os dois estao em `build.py --hidden-import`.)
 3. **Suites de teste** — TODAS as `tests/test_*.py`, exit 0 obrigatorio (timeout 180s cada).
 4. **Invariantes de janela** (a regressao da .37) — `_center_window` nao pode usar
    `winfo_rootx/rooty` (posicao do pai como origem → janela cola na root) nem
@@ -1715,3 +1725,110 @@ mutex do script de update.
 **Pacote real conferido** (v1.8.38): 1085 arquivos, `python314.dll`, `VCRUNTIME140.dll` +
 `VCRUNTIME140_1.dll`, `ucrtbase.dll` + `api-ms-win-*` (roda em Windows 10 limpo), maior caminho 89
 caracteres, nenhum nome com `[ ] ` $` (curinga do PowerShell) nem acento.
+
+## Identidade por login + historico permanente de verdade (pos-v1.8.38, SEM release ainda)
+
+### O caso (30/set/2026)
+Dois funcionarios usaram o mesmo PC (logins diferentes); depois cada um foi para o seu PC, mas o MB Chat
+de um ficou com a pasta `.mbchat` -- e portanto o **user_id** -- do outro. O user_id e criado UMA vez e
+fica gravado no banco (`messenger.py` usa o persistido desde a v1.6.9), entao acompanha a PASTA, nao o
+PC. Os dois anunciavam o mesmo ID: cada PC descartava o outro como eco (`network._handle_packet` e o
+filtro de eco do TCP) e, para o resto da rede, viravam UM contato so (lista e por ID) -- um deles
+"sumia" para todo mundo, so quando os dois estavam online. Mensagem para "ele" caia no PC de quem
+anunciou por ultimo. Reinstalar nao resolve (instalador nao toca em `%APPDATA%\.mbchat`).
+
+### A regra
+`user_id` = `<mac>_<hostname>_<login do Windows>`; **o login no final diz de quem e o ID** (`identity.py`:
+`uid_belongs_to`, `uid_hostname`, `uid_login`, `login_scope`). Mesmo login = mesma pessoa (conta de
+dominio), em qualquer PC.
+
+| Situacao | O que acontece |
+|---|---|
+| Pasta `.mbchat` de OUTRA conta (backup restaurado, perfil copiado) | Boot (`Messenger._ensure_identity_owner`): ID nao termina com o login atual -> gera ID deste login e renomeia o banco local inteiro para ele (a pessoa continua vendo o historico que via). O dono original nao muda nada. |
+| Mesmo login em PC novo levando a pasta | Nada muda: login bate, ID e historico de todo mundo continuam. |
+| Mesmo login em PC novo SEM a pasta (ID novo) | Em cada PC que recebe o announce (`_merge_previous_identities`): o ID antigo da MESMA pessoa e juntado no novo (mensagens, grupos, lembretes, reunioes, bloqueio). Travas: login de DENTRO do ID (o campo `winuser` do contato e mutavel e alternou entre duas pessoas no conflito); conta de dominio (conta local so no mesmo PC); ID antigo offline E sem se anunciar ha 7 dias (`IDENTITY_MERGE_MIN_OFFLINE_S`); nunca o meu ID; ID copiado de outra pessoa nunca puxa historico. Voltou ao PC antigo e largou o novo: a mesma regra devolve depois do prazo. |
+| Mesmo ID anunciado por outro PC/login (versao antiga ainda em conflito) | `UDPDiscovery._check_uid_conflict`: nao e eco -> `network.log` `[ID] CONFLITO` + **Ferramentas > Diagnostico de rede** ("Conflitos de ID", com PC, login, IP e versao). So diagnostico; quem e a copia se corrige no boot da versao nova. |
+| Mesmo login ativo em 2 PCs ao mesmo tempo com IDs diferentes | Duas entradas com o mesmo nome (cada PC recebe as suas). Nada e juntado enquanto os dois estao em uso. |
+| Mesmo login ativo em 2 PCs ao mesmo tempo com o MESMO ID (pasta da propria pessoa copiada, os dois ligados) | Um contato so, como se fosse a mesma pessoa (e e); mensagem cai no PC que anunciou por ultimo. Aparece como conflito no Diagnostico (mesmo login, outro PC). Correcao manual: desligar o MB Chat de um dos PCs ou apagar a pasta `.mbchat` dele. |
+
+`contacts.last_announce_at` (migration) = ultima vez que o peer SE ANUNCIOU. O `last_seen` nao serve:
+`set_all_contacts_offline` reescreve para "agora" em TODOS os contatos a cada boot e ao fechar. Para
+contato sem o dado, o prazo de 7 dias conta a partir de `settings.identity_tracking_since` (1o boot da
+versao nova) -- entao juntar historico antigo comeca 7 dias apos cada PC atualizar.
+
+`login_scope` ('domain'/'local') vai no announce. Peer em versao antiga nao manda -> so junta no mesmo PC.
+
+### Bug de PERDA DE HISTORICO corrigido junto (existia desde antes da v1.8.28)
+`_load_saved_contacts` (gui.py) "deduplicava" contatos por `display_name` e **apagava do banco** um deles
+-- escolhido quase ao acaso, porque o `last_seen` de todos e igual apos o boot. No boot seguinte,
+`cleanup_unknown_contacts` apagava **todas as mensagens** de quem nao estava em `contacts`. Pegava
+exatamente a mesma pessoa com ID antigo + novo, e tambem duas pessoas com o mesmo nome. A frase "Nao
+existe nenhuma outra poda" (secao v1.8.28) **nao era verdade ate este fix**.
+- `_load_saved_contacts` nao apaga mais nada (offline ja nao aparece na lista; nao havia o que esconder).
+- `cleanup_unknown_contacts` so apaga mensagens de contato FANTASMA EXPLICITO (linha em `contacts` com nome
+  vazio/"Unknown"/"[Desconhecido]"). Peer ausente de `contacts` = historico real, fica.
+- `MT_STATUS` sem nome no pacote nao sobrescreve mais o nome do contato com "" (viraria fantasma).
+- `find_user_name`: sem contato, o nome vem do login de dentro do ID ("pedro.paiva"), nao "[Desconhecido]".
+- `_rename_user_id_everywhere` agora cobre reactions, reminders (criador + JSON de convidados/aceitos/
+  concluidos, troca exata de `"uid"`), groups.creator_uid, bookings, booking_participants e block_list.
+
+### Validacao
+`tests/test_identity.py` (83 checks, roda no gate): helpers, boot com banco de outra conta (Messenger real),
+conflito x eco na rede, 13 cenarios de juntar/NAO juntar historico, troca em todas as tabelas, historico
+permanente (duas "Ana", 3 boots, contato ausente, status sem nome) e o caso real ponta a ponta. Bugs
+reinjetados um a um (sem checagem de dono, limpeza antiga, merge sem checar online, merge pelo `winuser`
+mutavel, eco sem conflito, dedup antiga do gui.py) -- todos reprovam. Gate completo igual ao baseline +
+o teste novo (no Linux, `test_window_reveal` falha por ambiente antes e depois: precisa de Win32).
+
+### Caso Pedro x Gustavo depois do release
+Nada a fazer no PC do Pedro. O PC do Gustavo atualiza sozinho; na 1a abertura da versao nova ele ganha ID
+proprio e aparece para todos (mesmo com os dois online). Nos PCs dos colegas, o ID antigo dele (do PC
+compartilhado, se existia) volta a ter o historico 7 dias apos cada colega atualizar. O que NAO tem como
+separar: mensagens trocadas com ele enquanto usava o ID do Pedro ficam no contato do Pedro; grupos em que
+ele entrou com o ID do Pedro continuam com o Pedro (re-adicionar o Gustavo); o banco dele e copia do do
+Pedro (conversas antigas do Pedro continuam no PC dele).
+
+## Diagnostico de rede: verificacao automatica (pos-v1.8.38, SEM release ainda)
+
+**Ferramentas > Diagnostico de rede** abre com **"=== VERIFICACAO AUTOMATICA ==="** no topo: cada problema
+conhecido vira um achado `[PROBLEMA]` (vermelho) / `[ATENCAO]` (laranja) / `[INFO]` (azul) / `[OK]` (verde),
+com a causa e **"O que fazer"**. Abaixo, os dados crus: identidade, rede, colegas (com versao e login) e o
+final do `network.log`. "Copiar tudo" leva tudo em texto.
+
+Arquitetura: `Messenger.get_diagnostic_snapshot(full=True)` tira uma foto (so leituras) ->
+`diagnostics.build_findings(foto)` (funcao PURA, sem Tk/rede/banco) -> `build_report` monta o texto. A faixa
+da janela principal (`_update_health_banner`, a cada 30s) usa a MESMA regra com `full=False` (sem placas de
+rede nem contatos do banco -- nenhum achado com faixa precisa) e `banner_finding` (o mais grave com faixa;
+vermelho sempre ganha). Uma regra so -- nunca duas versoes divergentes.
+
+| Codigo | Nivel | Quando | Faixa? |
+|---|---|---|---|
+| `BIND_FALLBACK` | PROBLEMA | porta UDP 50100 ocupada | vermelha |
+| `UID_CONFLICT_OTHER` | PROBLEMA | OUTRO PC/login anuncia o MEU ID ("O PC X (login Y) esta usando o SEU ID"), com IP, versao e quem precisa agir | amarela |
+| `OWN_UID_TCP` | PROBLEMA | chegaram mensagens com o MEU ID de outro IP (descartadas como eco) | -- |
+| `UID_NOT_MINE` | PROBLEMA | ID gravado nao e deste login (nao deveria sobrar apos o boot) | -- |
+| `UID_CONFLICT_SAME_LOGIN` | ATENCAO | a minha conta aberta em outro PC com o MESMO ID | amarela |
+| `VPN_STUCK` / `NO_PACKETS_IN` / `MULTICAST_NO_PEERS` | ATENCAO | mesmas condicoes e textos da faixa antiga | amarela |
+| `SENDTO_ERRORS` | ATENCAO | Windows recusou envios do aviso (antivirus na saida / placa caiu) | -- |
+| `WRONG_ADAPTER` | ATENCAO | IP usado fora da rede /24 da maioria dos colegas (>=2), sem VPN: aviso indo pela placa errada | -- |
+| `STATUS_INVISIBLE` | ATENCAO | status "Offline" (`invisible`): some da lista de todos | -- |
+| `TCP_BUT_NOT_LISTED` | ATENCAO | alguem mandou mensagem nos ultimos 30 min mas NAO esta na lista (aviso UDP dele se perde) -- o sintoma do caso Pedro x Gustavo visto de qualquer PC | -- |
+| `SAME_NAME` | ATENCAO | 2 pessoas diferentes online com o mesmo nome | -- |
+| `SAME_PERSON_TWO_PCS` | INFO | mesma conta online em 2 PCs com IDs diferentes | -- |
+| `OLD_ID_PENDING` / `OLD_ID_NO_MERGE` | INFO | ID antigo da mesma pessoa: junta em ~N dias / nao junta (conta local em outro PC) | -- |
+| `MERGED` / `ID_CHANGED` | INFO | historico juntado nesta sessao / este PC trocou de ID no boot (e de quem era o banco) | -- |
+| `MULTI_ADAPTER` / `OLD_VERSIONS` | INFO | varias placas com IP / colegas em versao anterior | -- |
+| `OK` | OK | nenhum PROBLEMA/ATENCAO | -- |
+
+Evidencias novas coletadas so em memoria (zero custo no caminho feliz): `health['uid_conflict_sources']`
+(network, por PC de origem do conflito), `_tcp_recent` (ultima mensagem TCP por remetente) e `_own_uid_tcp`
+(TCP com o meu ID vindo de outro IP; loopback e IPs deste PC nao contam) -- os dois ultimos sao funcoes do
+modulo `messenger` (`_note_tcp_sender`, `_note_own_uid_tcp`) e nao metodos, porque testes antigos chamam
+`Messenger._on_tcp_message` com objetos simulados. `_identity_merges` (historicos juntados na sessao) e
+`identity_changed_at` (setting, quando o boot trocou o ID).
+
+Teste: `tests/test_diagnostics.py` (69 checks): cada achado, ordem de gravidade, faixa (inclusive os 2 bugs
+antigos), texto da janela, evidencias coletadas por um Messenger real e a janela/faixa de verdade no Tk.
+Reinjecoes (sem preferir a vermelha, TCP com meu ID nao contado, faixa que so troca texto, `_update_health_banner`
+antigo) reprovam. `diagnostics.MERGE_MIN_OFFLINE_S` precisa ser igual a `messenger.IDENTITY_MERGE_MIN_OFFLINE_S`
+(o teste confere).

@@ -24,6 +24,7 @@ import time        # Timestamps e intervalos
 import uuid        # Geracao de IDs unicos
 import os          # Caminhos de arquivos
 from version import APP_VERSION
+from identity import login_scope  # Conta de dominio x conta local (announce)
 import sys         # sys.executable para caminho do exe (UAC firewall fix)
 import platform    # Deteccao de OS
 import subprocess  # Execucao de netsh para firewall
@@ -308,6 +309,19 @@ def _get_local_ip_uncached():
     return '127.0.0.1'
 
 
+# Todos os IPv4 das placas de rede deste PC (Diagnostico de rede: mais de uma
+# placa ativa e a causa classica de "os colegas nao me veem, mas mensagem vai")
+def get_local_ipv4s():
+    ips = []
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
 # Detecta IP especifico do Tailscale (virtual), comeca com 100.
 # Usado para priorizar comunicacao na VPN quando ha conflito de sub-redes fisicas
 def get_tailscale_ip():
@@ -403,6 +417,8 @@ class UDPDiscovery:
         self.on_peer_found = on_peer_found  # Callback: peer descoberto
         self.on_peer_lost = on_peer_lost    # Callback: peer perdido
         self.on_newer_version = None        # Callback(version) quando acha versão mais recente na rede
+        self.on_uid_conflict = None         # Callback(info) quando OUTRO PC anuncia o MEU user_id
+        self._uid_conflict_logged = {}      # (host, login) -> ultimo log/callback (evita spam)
         self.peers = {}          # user_id -> {info + last_seen}
         self.running = False     # Flag de controle do loop
         self._sock_recv = None   # Socket de recebimento (Unicast/Broadcast)
@@ -421,6 +437,9 @@ class UDPDiscovery:
             'last_peer_seen_at': None,  # Timestamp do ultimo peer anunciado
             'started_at': None,         # Timestamp do start() — uptime
             'bind_errors': [],          # Lista de (port, errno_str) nas tentativas
+            'uid_conflicts': 0,         # Pacotes de OUTRO PC/login com o MEU user_id
+            'uid_conflict_last': None,  # Dados do ultimo conflito (host, login, ip...)
+            'uid_conflict_sources': {}, # 'host|login' -> ultimo pacote de cada PC em conflito
         }
 
         # === Peers manuais (VPN/fora-da-LAN) ===
@@ -640,6 +659,7 @@ class UDPDiscovery:
             'ts_ip': get_tailscale_ip(),# IP Tailscale (VPN), se houver
             'hostname': socket.gethostname(),   # Nome da maquina
             'winuser': get_windows_user(),  # Conta Windows logada (multi-user)
+            'login_scope': login_scope(),   # 'domain'/'local': mesmo login = mesma pessoa em outro PC?
             'os': f"{platform.system()} {platform.release()}",  # OS info
             'version': APP_VERSION,     # Versao do app para aviso de update
             'tcp_port': getattr(self, 'tcp_port', TCP_PORT),         # Porta TCP para mensagens
@@ -729,6 +749,51 @@ class UDPDiscovery:
             except Exception as e:
                 _log().warning('_receive_loop erro inesperado: %s', e)
 
+    # Pacote com o MEU user_id. Quase sempre e eco (o proprio broadcast volta).
+    # Se veio de OUTRO PC ou de OUTRO login do Windows, nao e eco: e outra
+    # instalacao usando o mesmo ID (pasta .mbchat copiada de um perfil para
+    # outro). Cada PC descarta o outro como eco e, para o resto da rede, os
+    # dois viram UM contato so -- um deles "some" da lista de todo mundo.
+    # Aqui so registra (network.log + Diagnostico de rede): quem e a copia se
+    # corrige sozinho no boot (Messenger._ensure_identity_owner).
+    def _check_uid_conflict(self, pkt, addr):
+        host = (pkt.get('hostname') or '').strip()
+        login = (pkt.get('winuser') or '').strip()
+        if not host:
+            return
+        my_login = get_windows_user()
+        same_host = host.lower() == socket.gethostname().lower()
+        same_login = (not login or not my_login
+                      or login.lower() == my_login.lower())
+        if same_host and same_login:
+            return  # eco do proprio announce
+        info = {
+            'hostname': host,
+            'winuser': login,
+            'ip': addr[0] if addr else '',
+            'display_name': pkt.get('display_name', ''),
+            'version': pkt.get('version', ''),
+            'at': time.time(),
+        }
+        self.health['uid_conflicts'] += 1
+        self.health['uid_conflict_last'] = info
+        key = (host.lower(), login.lower())
+        self.health['uid_conflict_sources'][f'{key[0]}|{key[1]}'] = info
+        now = time.time()
+        if now - self._uid_conflict_logged.get(key, 0) < 600:
+            return
+        self._uid_conflict_logged[key] = now
+        _log().warning(
+            '[ID] CONFLITO: PC %s (login %s, IP %s, v%s, nome %r) anuncia o MEU '
+            'user_id %s -- para a rede os dois viram um contato so',
+            host, login or '?', info['ip'], info['version'] or '?',
+            info['display_name'], self.user_id)
+        if self.on_uid_conflict:
+            try:
+                self.on_uid_conflict(info)
+            except Exception:
+                pass
+
     # Fix 3: rate limiting por IP — janela 10s, max 15 pacotes (tolerante para DISCOVERY_INTERVAL=5s)
     def _is_rate_ok(self, ip):
         now = time.time()
@@ -753,7 +818,8 @@ class UDPDiscovery:
         if pkt.get('app') != 'mbchat':
             return  # Pacote de outro app, ignora
         if pkt.get('user_id') == self.user_id:
-            return  # Pacote proprio (eco), ignora
+            self._check_uid_conflict(pkt, addr)  # eco ou outro PC com o meu ID
+            return  # Pacote com o meu ID nunca vira contato
 
         # Fix 3: rate limit — ignora silenciosamente spam de mesmo IP
         if not self._is_rate_ok(addr[0]):
@@ -978,6 +1044,7 @@ class UDPDiscovery:
                 'ts_ip': pkt.get('ts_ip', None),
                 'hostname': pkt.get('hostname', ''),
                 'winuser': pkt.get('winuser', ''),  # Conta Windows do peer
+                'login_scope': pkt.get('login_scope', ''),  # 'domain'/'local'/'' (versao antiga)
                 'os': pkt.get('os', ''),
                 'status': pkt.get('status', 'online'),
                 'note': pkt.get('note', ''),
