@@ -309,6 +309,19 @@ def _get_local_ip_uncached():
     return '127.0.0.1'
 
 
+# Todos os IPv4 das placas de rede deste PC (Diagnostico de rede: mais de uma
+# placa ativa e a causa classica de "os colegas nao me veem, mas mensagem vai")
+def get_local_ipv4s():
+    ips = []
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
 # Detecta IP especifico do Tailscale (virtual), comeca com 100.
 # Usado para priorizar comunicacao na VPN quando ha conflito de sub-redes fisicas
 def get_tailscale_ip():
@@ -426,6 +439,7 @@ class UDPDiscovery:
             'bind_errors': [],          # Lista de (port, errno_str) nas tentativas
             'uid_conflicts': 0,         # Pacotes de OUTRO PC/login com o MEU user_id
             'uid_conflict_last': None,  # Dados do ultimo conflito (host, login, ip...)
+            'uid_conflict_sources': {}, # 'host|login' -> ultimo pacote de cada PC em conflito
         }
 
         # === Peers manuais (VPN/fora-da-LAN) ===
@@ -764,6 +778,7 @@ class UDPDiscovery:
         self.health['uid_conflicts'] += 1
         self.health['uid_conflict_last'] = info
         key = (host.lower(), login.lower())
+        self.health['uid_conflict_sources'][f'{key[0]}|{key[1]}'] = info
         now = time.time()
         if now - self._uid_conflict_logged.get(key, 0) < 600:
             return

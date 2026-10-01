@@ -136,6 +136,7 @@ def _do_build():
         '--hidden-import=network',
         '--hidden-import=database',
         '--hidden-import=identity',
+        '--hidden-import=diagnostics',
         '--hidden-import=updater',
         '--hidden-import=version',
         '--hidden-import=winotify',

@@ -48,6 +48,7 @@ log.addHandler(_fh)
 
 # Camada de controle: orquestra rede, banco de dados e callbacks para a GUI
 from messenger import Messenger
+from diagnostics import build_findings, banner_finding, build_report  # Diagnostico de rede
 from version import APP_VERSION
 import updater
 from tools.theme_builder import ThemeBuilderWindow, load_user_themes
@@ -18957,58 +18958,22 @@ class LanMessengerApp:
     # nunca aparece — so quando bind_fallback/multicast_joined/peers indicam
     # que algo esta errado. Rearma a cada 30s.
     def _update_health_banner(self):
+        # Mesma regra da janela Ferramentas > Diagnostico de rede
+        # (diagnostics.build_findings): o achado mais grave que tem texto de
+        # faixa. PC saudavel -> nenhum achado com faixa -> faixa nunca aparece.
+        finding = None
         try:
-            health = None
-            if hasattr(self, 'messenger') and self.messenger \
-               and hasattr(self.messenger, 'discovery') and self.messenger.discovery:
-                health = self.messenger.discovery.get_health()
+            if getattr(self, 'messenger', None) is not None \
+               and getattr(self.messenger, 'discovery', None) is not None:
+                finding = banner_finding(build_findings(
+                    self.messenger.get_diagnostic_snapshot(full=False)))
         except Exception:
-            health = None
-
-        if health:
-            uptime = health.get('uptime', 0) or 0
-            peers = health.get('peers_count', 0)
-            sent = health.get('packets_sent', 0)
-            recv = health.get('packets_received', 0)
-            bind_fb = health.get('bind_fallback', False)
-            mc_ok = health.get('multicast_joined', False)
-
-            # CRITICO: bind caiu em porta aleatoria - discovery quebrado
-            if bind_fb:
-                self._show_health_banner(
-                    severity='critical',
-                    text='Porta UDP 50100 ocupada. A descoberta de colegas '
-                         'nao funciona. Feche outras instancias do MBChat '
-                         'ou reinicie o computador.')
-            # AVISO: VPN ativa mas sem pacotes recebidos apos 120s
-            vpn_stuck = False
-            if uptime > 120 and recv == 0:
-                try:
-                    vpn_on = self.messenger.db.get_setting('vpn_enabled') == '1'
-                    manual = self.messenger.db.get_manual_peers()
-                    vpn_stuck = vpn_on and len(manual) > 0
-                except Exception:
-                    pass
-            if vpn_stuck:
-                self._show_health_banner(
-                    severity='warning',
-                    text='VPN ativa mas sem resposta dos colegas. '
-                         'Verifique a conexão PPTP/Tailscale — '
-                         'o túnel pode estar bloqueando UDP.')
-            # AVISO: 30s rodando mas nenhum pacote recebido (envia mas nao recebe)
-            elif uptime > 30 and recv == 0 and sent > 0:
-                self._show_health_banner(
-                    severity='warning',
-                    text='Nenhum colega detectado. Verifique firewall e '
-                         'antivirus (entrada UDP 50100 / TCP 50101).')
-            # AVISO: multicast falhou e ja faz tempo sem peers
-            elif uptime > 60 and not mc_ok and peers == 0:
-                self._show_health_banner(
-                    severity='warning',
-                    text='Multicast bloqueado e nenhum colega encontrado. '
-                         'Rede pode estar filtrando descoberta.')
-            else:
-                self._hide_health_banner()
+            finding = None
+        if finding:
+            self._show_health_banner(severity=finding['banner_severity'],
+                                     text=finding['banner'])
+        else:
+            self._hide_health_banner()
 
         try:
             self.root.after(30000, self._update_health_banner)
@@ -19017,11 +18982,14 @@ class LanMessengerApp:
 
     def _show_health_banner(self, severity='warning', text=''):
         if hasattr(self, '_health_bar') and self._health_bar.winfo_exists():
-            try:
-                self._health_bar_label.config(text=text)
-            except Exception:
-                pass
-            return
+            if getattr(self, '_health_bar_severity', severity) == severity:
+                try:
+                    self._health_bar_label.config(text=text)
+                except Exception:
+                    pass
+                return
+            self._hide_health_banner()
+        self._health_bar_severity = severity
         if severity == 'critical':
             bg, fg = '#f8d7da', '#721c24'
         else:
@@ -19208,7 +19176,7 @@ class LanMessengerApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title('Diagnostico de rede')
-        _center_window(dlg, 640, 520)
+        _center_window(dlg, 780, 620)
         dlg.configure(bg='#f8fafc')
         try: dlg.transient(prev_grab or self.root)
         except Exception: pass
@@ -19246,80 +19214,37 @@ class LanMessengerApp:
         sb.pack(side='right', fill='y')
         txt.pack(side='left', fill='both', expand=True)
 
+        txt.tag_configure('h', font=('Consolas', 9, 'bold'), foreground='#0f2a5c')
+        txt.tag_configure('erro', font=('Consolas', 9, 'bold'), foreground='#b91c1c')
+        txt.tag_configure('aviso', font=('Consolas', 9, 'bold'), foreground='#b45309')
+        txt.tag_configure('info', font=('Consolas', 9, 'bold'), foreground='#1d4ed8')
+        txt.tag_configure('ok', font=('Consolas', 9, 'bold'), foreground='#15803d')
+
+        # Verificacao automatica (diagnostics.build_findings) no topo: o que
+        # esta errado e o que fazer. Depois os dados crus (identidade, rede,
+        # colegas, log) para quem for investigar.
         def _refresh():
             txt.config(state='normal')
             txt.delete('1.0', 'end')
             try:
-                health = self.messenger.discovery.get_health()
+                snap = self.messenger.get_diagnostic_snapshot()
+                findings = build_findings(snap)
             except Exception as e:
-                txt.insert('end', f'ERRO lendo health: {e}\n')
+                txt.insert('end', f'ERRO montando o diagnostico: {e}\n')
                 txt.config(state='disabled')
                 return
-            try:
-                from version import APP_VERSION
-                txt.insert('end', f'MBChat v{APP_VERSION}\n')
-            except Exception:
-                pass
-            try:
-                txt.insert('end', f'Usuario: {self.messenger.display_name}\n')
-                txt.insert('end', f'User ID: {self.messenger.user_id}\n')
-                import socket as _s
-                txt.insert('end', f'Hostname: {_s.gethostname()}\n')
-            except Exception:
-                pass
-            txt.insert('end', '\n=== DISCOVERY HEALTH ===\n')
-            txt.insert('end', f'Bound port:       {health.get("bound_port")}\n')
-            txt.insert('end', f'Bind fallback:    {health.get("bind_fallback")}')
-            if health.get('bind_fallback'):
-                txt.insert('end', '  <-- DISCOVERY QUEBRADO\n')
-            else:
-                txt.insert('end', '\n')
-            txt.insert('end', f'Multicast joined: {health.get("multicast_joined")}\n')
-            txt.insert('end', f'Uptime:           {int(health.get("uptime", 0))}s\n')
-            txt.insert('end', f'Packets sent:     {health.get("packets_sent")}\n')
-            txt.insert('end', f'Packets received: {health.get("packets_received")}\n')
-            txt.insert('end', f'Sendto errors:    {health.get("sendto_errors")}\n')
-            txt.insert('end', f'Peers conhecidos: {health.get("peers_count")}\n')
-            n_conf = health.get('uid_conflicts') or 0
-            txt.insert('end', f'Conflitos de ID:  {n_conf}')
-            last_conf = health.get('uid_conflict_last') or {}
-            if n_conf and last_conf:
-                txt.insert('end',
-                           f'  <-- OUTRO PC USA O MEU ID: {last_conf.get("hostname", "?")} '
-                           f'(login {last_conf.get("winuser") or "?"}, '
-                           f'IP {last_conf.get("ip", "?")}, '
-                           f'v{last_conf.get("version") or "?"})\n')
-            else:
-                txt.insert('end', '\n')
-            if health.get('bind_errors'):
-                txt.insert('end', '\nBind errors:\n')
-                for p, e in health['bind_errors']:
-                    txt.insert('end', f'  port={p}  {e}\n')
-            txt.insert('end', '\n=== PEERS ===\n')
-            try:
-                with self.messenger.discovery._lock:
-                    peers = dict(self.messenger.discovery.peers)
-                for uid, info in sorted(peers.items(),
-                                        key=lambda x: x[1].get('display_name', '')):
-                    name = info.get('display_name', '?')
-                    ip = info.get('ip', '?')
-                    host = info.get('hostname', '?')
-                    txt.insert('end', f'{name:22} {ip:15} {host}\n')
-            except Exception as e:
-                txt.insert('end', f'erro lendo peers: {e}\n')
-            txt.insert('end', '\n=== ULTIMAS LINHAS DO LOG ===\n')
+            log_tail = []
             try:
                 appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
                 log_path = os.path.join(appdata, '.mbchat', 'network.log')
                 if os.path.exists(log_path):
                     with open(log_path, 'r', encoding='utf-8',
                               errors='ignore') as f:
-                        lines = f.readlines()[-60:]
-                        txt.insert('end', ''.join(lines))
-                else:
-                    txt.insert('end', '(arquivo nao existe ainda)\n')
+                        log_tail = f.readlines()[-60:]
             except Exception as e:
-                txt.insert('end', f'erro lendo log: {e}\n')
+                log_tail = [f'erro lendo log: {e}']
+            for line, tag in build_report(snap, findings, log_tail):
+                txt.insert('end', line + '\n', (tag,) if tag else ())
             txt.config(state='disabled')
 
         _refresh()

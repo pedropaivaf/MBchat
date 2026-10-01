@@ -64,7 +64,7 @@ def check(cond, msg, detail=''):
 # ─────────────────────────────────────────────
 MODULES = ['gui.py', 'messenger.py', 'network.py', 'database.py', 'updater.py',
            'audio_recorder.py', 'meeting_gui.py', 'tools/theme_builder.py',
-           'identity.py']
+           'identity.py', 'diagnostics.py']
 
 # Conhecidos e aceitos (com motivo). Nao acrescentar sem motivo real.
 ALLOWED = {
