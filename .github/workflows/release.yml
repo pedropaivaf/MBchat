@@ -1,8 +1,8 @@
 # Release do MB Chat pelo GitHub Actions (quando nao da para rodar o build.py no PC).
 #
 # Mesmo caminho do `python build.py --release`, com tres travas antes de publicar:
-#   1. build com o MESMO Python da release que esta nas maquinas (python.org 3.14.4,
-#      Tcl/Tk 8.6.15) -- o Python do setup-python e outro build (Tcl 9);
+#   1. build com o MESMO Python da release que esta nas maquinas (3.14.4 com
+#      Tcl/Tk 8.6.15, conferidos antes do build);
 #   2. paridade: o pacote novo tem que ter o mesmo Python/Tcl/Tk e nenhuma pasta a
 #      menos que o pacote publicado da base (tools/release_parity.py);
 #   3. o pacote REAL e testado no Windows 10 e 11: a base instalada se atualiza
@@ -44,7 +44,7 @@ env:
 
 jobs:
   build:
-    name: Build (Python do python.org, igual a base) + paridade
+    name: Build (mesmo Python da base) + paridade
     runs-on: windows-2022
     timeout-minutes: 45
     outputs:
@@ -52,16 +52,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python ${{ env.PY_VER }} do python.org (o mesmo da base)
-        shell: pwsh
-        run: |
-          $inst = Join-Path $env:RUNNER_TEMP "python-$env:PY_VER-amd64.exe"
-          Invoke-WebRequest "https://www.python.org/ftp/python/$env:PY_VER/python-$env:PY_VER-amd64.exe" -OutFile $inst
-          $p = Start-Process $inst -ArgumentList '/quiet', 'InstallAllUsers=1', 'TargetDir=C:\PyRel', 'PrependPath=0',
-               'Include_test=0', 'Include_launcher=0', 'Shortcuts=0' -Wait -PassThru
-          if ($p.ExitCode) { throw "instalador do Python saiu com $($p.ExitCode)" }
-          'C:\PyRel\Scripts' | Out-File -Append $env:GITHUB_PATH -Encoding utf8
-          'C:\PyRel' | Out-File -Append $env:GITHUB_PATH -Encoding utf8
+      # Versao exata (o instalador do python.org nao instala por cima do 3.14 do runner).
+      # O passo seguinte reprova se o Tcl/Tk nao for o mesmo da base.
+      - name: Python ${{ env.PY_VER }} (o mesmo da base)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY_VER }}
 
       - name: Confere Python e Tcl/Tk
         shell: python
@@ -69,7 +65,6 @@ jobs:
           import os, sys, tkinter
           t = tkinter.Tcl().eval('info patchlevel')
           print(sys.executable, sys.version, 'Tcl', t)
-          assert sys.executable.lower().startswith('c:\\pyrel'), 'python errado no PATH'
           assert sys.version.split()[0] == os.environ['PY_VER'], 'Python diferente da base'
           assert t == os.environ['TCL_VER'], 'Tcl/Tk diferente da base'
 
