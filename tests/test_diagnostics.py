@@ -269,6 +269,10 @@ def test_order_and_banner():
     s = healthy(health={'uid_conflicts': 1, 'uid_conflict_sources': {'x|outro': conf}})
     b = banner_finding(build_findings(s))
     check(b and b['code'] == 'UID_CONFLICT_OTHER', 'ID repetido aparece na faixa')
+    amarela = {'code': 'A', 'level': 'erro', 'banner': 'a', 'banner_severity': 'warning'}
+    vermelha = {'code': 'V', 'level': 'erro', 'banner': 'v', 'banner_severity': 'critical'}
+    check(banner_finding([amarela, vermelha])['code'] == 'V',
+          'vermelha ganha mesmo vindo depois na lista')
     s = healthy(status='invisible', tcp_recent={GUS_NEW: {'at': time.time(), 'ip': '1.1.1.1', 'name': 'G'}})
     check(banner_finding(build_findings(s)) is None,
           'status Offline / colega sem aviso nao poluem a faixa (so a janela)')
@@ -408,6 +412,18 @@ def test_gui(m):
     gui.LanMessengerApp._update_health_banner(fake)
     check(shown and shown[-1][0] == 'warning' and '026DKT099' in shown[-1][1],
           'faixa da janela principal mostra o ID repetido', shown)
+
+    # Bug antigo: porta ocupada SEM outro aviso -> a faixa vermelha era
+    # mostrada e escondida no mesmo ciclo (o "else" da cadeia de avisos)
+    shown.clear()
+    snap_bind = healthy(health={'bind_fallback': True, 'bound_port': 61234})
+    fake2 = SimpleNamespace(root=root, messenger=SimpleNamespace(
+        discovery=object(), get_diagnostic_snapshot=lambda full=True: snap_bind))
+    fake2._show_health_banner = fake._show_health_banner
+    fake2._hide_health_banner = fake._hide_health_banner
+    gui.LanMessengerApp._update_health_banner(fake2)
+    check(shown == [('critical', shown[0][1])] if shown else False,
+          'porta ocupada: faixa vermelha fica (nao e escondida em seguida)', shown)
 
     # faixa existente com outra gravidade e recriada (antes so trocava o texto)
     real = SimpleNamespace(root=root, _open_network_diag=lambda: None)
