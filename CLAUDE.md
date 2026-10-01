@@ -81,6 +81,7 @@ python build.py --version X.Y.Z --release
   NUNCA `LIKE` (acento/maiuscula e curinga `%`/`_`). Destaque via `_highlight_all` (gui.py), NUNCA
   `text.search(nocase=True)` (segfault do Tk 8.6 com emoji).
 - **Dependencias opcionais**: sempre try/except com HAS_* flag (PIL, pystray, winotify, windnd)
+- **Identidade/historico**: o user_id termina com o login do Windows de quem o criou (`identity.py`). NUNCA apagar contato do banco (nem "duplicado" de nome) e NUNCA apagar mensagem porque o contato nao existe -- contato e o "livro de nomes" do historico. Trocar ID so por `_rename_user_id_everywhere` (todas as tabelas). Ver secao "Identidade por login".
 - **Banco**: threading.local() para conexao por thread, parametros ? em SQL
 - **Comentarios**: usar apenas `#`, NUNCA `"""docstrings"""`
 - **Commits**: NUNCA "Co-Authored-By" ou referencia a Claude/AI. Autoria exclusiva de Pedro Paiva
@@ -1600,3 +1601,65 @@ exato e nao pode ser pre-release/rascunho. `tests/test_build_release.py` trava i
 
 Testes novos no gate: `test_build_release.py` (25), `test_update_api_budget.py` (16),
 `test_update_failure_reopen.py` (19 + PowerShell real no Windows).
+
+## Identidade por login + historico permanente de verdade (pos-v1.8.38, SEM release ainda)
+
+### O caso (30/set/2026)
+Dois funcionarios usaram o mesmo PC (logins diferentes); depois cada um foi para o seu PC, mas o MB Chat
+de um ficou com a pasta `.mbchat` -- e portanto o **user_id** -- do outro. O user_id e criado UMA vez e
+fica gravado no banco (`messenger.py` usa o persistido desde a v1.6.9), entao acompanha a PASTA, nao o
+PC. Os dois anunciavam o mesmo ID: cada PC descartava o outro como eco (`network._handle_packet` e o
+filtro de eco do TCP) e, para o resto da rede, viravam UM contato so (lista e por ID) -- um deles
+"sumia" para todo mundo, so quando os dois estavam online. Mensagem para "ele" caia no PC de quem
+anunciou por ultimo. Reinstalar nao resolve (instalador nao toca em `%APPDATA%\.mbchat`).
+
+### A regra
+`user_id` = `<mac>_<hostname>_<login do Windows>`; **o login no final diz de quem e o ID** (`identity.py`:
+`uid_belongs_to`, `uid_hostname`, `uid_login`, `login_scope`). Mesmo login = mesma pessoa (conta de
+dominio), em qualquer PC.
+
+| Situacao | O que acontece |
+|---|---|
+| Pasta `.mbchat` de OUTRA conta (backup restaurado, perfil copiado) | Boot (`Messenger._ensure_identity_owner`): ID nao termina com o login atual -> gera ID deste login e renomeia o banco local inteiro para ele (a pessoa continua vendo o historico que via). O dono original nao muda nada. |
+| Mesmo login em PC novo levando a pasta | Nada muda: login bate, ID e historico de todo mundo continuam. |
+| Mesmo login em PC novo SEM a pasta (ID novo) | Em cada PC que recebe o announce (`_merge_previous_identities`): o ID antigo da MESMA pessoa e juntado no novo (mensagens, grupos, lembretes, reunioes, bloqueio). Travas: login de DENTRO do ID (o campo `winuser` do contato e mutavel e alternou entre duas pessoas no conflito); conta de dominio (conta local so no mesmo PC); ID antigo offline E sem se anunciar ha 7 dias (`IDENTITY_MERGE_MIN_OFFLINE_S`); nunca o meu ID; ID copiado de outra pessoa nunca puxa historico. Voltou ao PC antigo e largou o novo: a mesma regra devolve depois do prazo. |
+| Mesmo ID anunciado por outro PC/login (versao antiga ainda em conflito) | `UDPDiscovery._check_uid_conflict`: nao e eco -> `network.log` `[ID] CONFLITO` + **Ferramentas > Diagnostico de rede** ("Conflitos de ID", com PC, login, IP e versao). So diagnostico; quem e a copia se corrige no boot da versao nova. |
+| Mesmo login ativo em 2 PCs ao mesmo tempo com IDs diferentes | Duas entradas com o mesmo nome (cada PC recebe as suas). Nada e juntado enquanto os dois estao em uso. |
+| Mesmo login ativo em 2 PCs ao mesmo tempo com o MESMO ID (pasta da propria pessoa copiada, os dois ligados) | Um contato so, como se fosse a mesma pessoa (e e); mensagem cai no PC que anunciou por ultimo. Aparece como conflito no Diagnostico (mesmo login, outro PC). Correcao manual: desligar o MB Chat de um dos PCs ou apagar a pasta `.mbchat` dele. |
+
+`contacts.last_announce_at` (migration) = ultima vez que o peer SE ANUNCIOU. O `last_seen` nao serve:
+`set_all_contacts_offline` reescreve para "agora" em TODOS os contatos a cada boot e ao fechar. Para
+contato sem o dado, o prazo de 7 dias conta a partir de `settings.identity_tracking_since` (1o boot da
+versao nova) -- entao juntar historico antigo comeca 7 dias apos cada PC atualizar.
+
+`login_scope` ('domain'/'local') vai no announce. Peer em versao antiga nao manda -> so junta no mesmo PC.
+
+### Bug de PERDA DE HISTORICO corrigido junto (existia desde antes da v1.8.28)
+`_load_saved_contacts` (gui.py) "deduplicava" contatos por `display_name` e **apagava do banco** um deles
+-- escolhido quase ao acaso, porque o `last_seen` de todos e igual apos o boot. No boot seguinte,
+`cleanup_unknown_contacts` apagava **todas as mensagens** de quem nao estava em `contacts`. Pegava
+exatamente a mesma pessoa com ID antigo + novo, e tambem duas pessoas com o mesmo nome. A frase "Nao
+existe nenhuma outra poda" (secao v1.8.28) **nao era verdade ate este fix**.
+- `_load_saved_contacts` nao apaga mais nada (offline ja nao aparece na lista; nao havia o que esconder).
+- `cleanup_unknown_contacts` so apaga mensagens de contato FANTASMA EXPLICITO (linha em `contacts` com nome
+  vazio/"Unknown"/"[Desconhecido]"). Peer ausente de `contacts` = historico real, fica.
+- `MT_STATUS` sem nome no pacote nao sobrescreve mais o nome do contato com "" (viraria fantasma).
+- `find_user_name`: sem contato, o nome vem do login de dentro do ID ("pedro.paiva"), nao "[Desconhecido]".
+- `_rename_user_id_everywhere` agora cobre reactions, reminders (criador + JSON de convidados/aceitos/
+  concluidos, troca exata de `"uid"`), groups.creator_uid, bookings, booking_participants e block_list.
+
+### Validacao
+`tests/test_identity.py` (83 checks, roda no gate): helpers, boot com banco de outra conta (Messenger real),
+conflito x eco na rede, 13 cenarios de juntar/NAO juntar historico, troca em todas as tabelas, historico
+permanente (duas "Ana", 3 boots, contato ausente, status sem nome) e o caso real ponta a ponta. Bugs
+reinjetados um a um (sem checagem de dono, limpeza antiga, merge sem checar online, merge pelo `winuser`
+mutavel, eco sem conflito, dedup antiga do gui.py) -- todos reprovam. Gate completo igual ao baseline +
+o teste novo (no Linux, `test_window_reveal` falha por ambiente antes e depois: precisa de Win32).
+
+### Caso Pedro x Gustavo depois do release
+Nada a fazer no PC do Pedro. O PC do Gustavo atualiza sozinho; na 1a abertura da versao nova ele ganha ID
+proprio e aparece para todos (mesmo com os dois online). Nos PCs dos colegas, o ID antigo dele (do PC
+compartilhado, se existia) volta a ter o historico 7 dias apos cada colega atualizar. O que NAO tem como
+separar: mensagens trocadas com ele enquanto usava o ID do Pedro ficam no contato do Pedro; grupos em que
+ele entrou com o ID do Pedro continuam com o Pedro (re-adicionar o Gustavo); o banco dele e copia do do
+Pedro (conversas antigas do Pedro continuam no PC dele).
