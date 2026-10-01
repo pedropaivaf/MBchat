@@ -35,8 +35,10 @@ def _dlls(nomes, prefixo):
                   and n.lower().endswith('.dll') and n.count('/') == 1)
 
 
+# Sem diferenciar maiusculas: no Windows "Pythonwin" e "pythonwin" sao a mesma pasta
+# (o pywin32 novo passou a usar minusculas)
 def _pastas(nomes):
-    return {n.split('/')[1] for n in nomes if n.startswith('_internal/') and n.count('/') >= 2}
+    return {n.split('/')[1].lower() for n in nomes if n.startswith('_internal/') and n.count('/') >= 2}
 
 
 def main():
