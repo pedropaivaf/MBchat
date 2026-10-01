@@ -1377,6 +1377,31 @@ O passo 3 refaz o build, o que e barato perto de publicar tag errada. Se quiser
 evitar o rebuild, rode o passo 1 so depois do commit — mas ai o commit sai antes
 de o gate ter rodado, entao prefira a ordem acima.
 
+### Release pelo GitHub Actions (`.github/workflows/release.yml`, desde a v1.8.39)
+
+Para quando nao da para rodar o `build.py` no PC (ex.: sessao na nuvem). Mesmo caminho do
+`build.py --release` (`_do_build` + `_do_installer` + `_do_web_installer` + `_do_release`), com travas:
+1. **Mesmo Python da release das maquinas**: 3.14.4 com Tcl/Tk 8.6.15 (lidos do `python314.dll`/`tcl86t.dll`
+   do pacote da v1.8.38). O passo "Confere Python e Tcl/Tk" reprova se vier outro (o `setup-python` de
+   `3.14` sem patch traz outro build). numpy 2.4.6/pyyaml/charset-normalizer instalados como no PC do Pedro.
+   O instalador do python.org NAO serve no runner (sai com 1603: ja ha um 3.14 instalado).
+2. **Gate** `prerelease_check.py --release` antes do build.
+3. **Paridade** (`tools/release_parity.py`): o `MBChat_update.zip` novo tem que ter o mesmo Python e Tcl/Tk
+   do pacote publicado da base, `MBChat.exe` na versao do `version.py` e nenhuma pasta de `_internal` a
+   menos (sem diferenciar maiusculas). Lista todo arquivo que entrou/saiu no resumo do run. Na v1.8.39:
+   +🤌 (`assets/emoji`), +portaudio de outras plataformas (sounddevice novo), +3 `api-ms-win-*`,
+   `Pythonwin` -> `pythonwin` (pywin32 novo).
+4. **O pacote REAL testado** no Windows 10 e 11 (`tools/e2e_installer.py`): a base instalada se atualiza
+   sozinha para ele (com e sem admin), setup novo por cima com o app aberto, assistente clicado e o
+   instalador web novo (com e sem TEMP 8.3).
+5. **Publica** (`build._do_release`) so em **Run workflow na main com `publicar = sim`** e as notas do sino
+   em `notas` (linhas separadas por `|`); recusa se a main andou depois do build ou se a release ja existe.
+   No fim confere `releases/latest` = versao nova e a tag no commit buildado.
+
+Push em `claude/**` que mexe no workflow ou em `release_parity.py` roda so o ensaio (sem publicar). A release
+sai como `github-actions[bot]`; o updater e o instalador web so olham `releases/latest`, entao nada muda
+para as maquinas.
+
 ### Notas do sino
 
 O sino mostra as **5 primeiras linhas** do corpo do release, cada uma com "• ",
