@@ -2,7 +2,7 @@
 
 ## O que e este projeto
 
-MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.38 (ha correcoes commitadas SEM release -- ver secoes marcadas "SEM release ainda").
+MB Chat e um mensageiro de rede local (LAN) para MB Contabilidade. Executavel standalone (MBChat.exe) roda em 30+ maquinas Windows simultaneamente sem servidor central. Python + tkinter. Versao atual: 1.8.39.
 
 ## Arquitetura (4 camadas)
 
@@ -1059,9 +1059,9 @@ mockado excluido da lista, online/ausente aparecem), notificacao+som do aviso (t
 envio confirmadas, nao so 1). Build local + instalador Inno Setup + exe empacotado testados antes do
 release (ver checklist de release no historico de commits).
 
-## Posicao/abertura de janelas + notificacao clicavel (pos-v1.8.37, SEM release ainda)
+## Posicao/abertura de janelas + notificacao clicavel (lancado em v1.8.38)
 
-Cinco fixes em `gui.py`. Codigo pronto e commitado, **build/release/deploy pendentes** ate ordem explicita.
+Cinco fixes em `gui.py`.
 
 ### 1. REGRESSAO da v1.8.37: janelas secundarias colando na principal
 
@@ -1165,7 +1165,7 @@ Testado com o app real rodando via `python gui.py --instance test` + dois bots
   sem vazar da tela;
 - chat minimizado restaurando sozinho no duplo-clique do contato.
 
-**Pendente: apenas o build/release.** O codigo esta aprovado e commitado.
+Lancado em v1.8.38.
 
 ### `tools/mock_peer.py`: 2 flags novas
 
@@ -1184,7 +1184,7 @@ Testado com o app real rodando via `python gui.py --instance test` + dois bots
   A principal so volta pra taskbar via `_surface_chat_from_tray` (mensagem chegando com app na bandeja)
   ou com `minimize_on_close=1`.
 
-## Auto-update com rollback: fim do "Failed to load Python DLL" (pos-v1.8.37, SEM release ainda)
+## Auto-update com rollback: fim do "Failed to load Python DLL" (lancado em v1.8.38)
 
 ### O bug
 
@@ -1389,7 +1389,7 @@ Peer que descobre a versao nova pela rede (announce P2P, nao pela API) recebe o
 texto generico "Nova atualizacao disponivel na rede!" ate a checagem via GitHub
 rodar — as notas de verdade vem so pela API.
 
-## RAM subindo para 600MB-1GB com o app aberto (pos-v1.8.38, SEM release ainda)
+## RAM subindo para 600MB-1GB com o app aberto (v1.8.39)
 
 ### Causa raiz (medida)
 
@@ -1459,7 +1459,7 @@ na main thread, FIFO, kwargs, excecao reportada, RAM estavel), guarda estatica d
 apaga) e cache do IP. Reinjetar o `root.after` no `_safe` reprova por dois caminhos
 (+83MB e guarda estatica). Suites existentes identicas ao baseline.
 
-## Historico: gravacao e busca validadas com 500 mensagens (pos-v1.8.38, SEM release ainda)
+## Historico: gravacao e busca validadas com 500 mensagens (v1.8.39)
 
 Teste ponta a ponta com o app REAL (Xvfb): 250 mensagens recebidas por TCP de verdade
 (socket -> `TCPServer` -> `_on_tcp_message` -> banco -> GUI) + 250 enviadas digitando na
@@ -1502,7 +1502,7 @@ janelas com as funcoes reais, buscas (acento, maiuscula, `%`, `_`, emoji, aspas,
 filtro De/Ate digitado, 6000 mensagens com um contato e guardas estaticas (sem LIKE, sem
 `nocase=True`, sem `limit=5000`). Contra o codigo anterior: 25 falhas.
 
-## Emoji 🤌 invisivel no Windows 10 (pos-v1.8.38, SEM release ainda)
+## Emoji 🤌 invisivel no Windows 10 (v1.8.39)
 
 🤌 (U+1F90C, Unicode 13 / 2020) nao existe na Segoe UI Emoji do Windows 10: o PIL nao desenha
 nada, o seletor DESCARTA o emoji (`_populate_grid` so mostra quem renderiza) e no chat/campo de
@@ -1553,7 +1553,7 @@ os 2 fixes de ponta a ponta: explorer /select com o caminho certo, e cancelament
 compartilhado chegando aos 2 convidados (2 Messengers reais + receptor TCP local) e apagando o
 lembrete do lado deles. Contra o codigo anterior: 7 falhas.
 
-## Instalador, instalador web e auto-update testados em Windows real (pos-v1.8.38, SEM release ainda)
+## Instalador, instalador web e auto-update testados em Windows real (v1.8.39)
 
 ### O teste (`installer-e2e`)
 
@@ -1726,7 +1726,7 @@ mutex do script de update.
 `VCRUNTIME140_1.dll`, `ucrtbase.dll` + `api-ms-win-*` (roda em Windows 10 limpo), maior caminho 89
 caracteres, nenhum nome com `[ ] ` $` (curinga do PowerShell) nem acento.
 
-## Identidade por login + historico permanente de verdade (pos-v1.8.38, SEM release ainda)
+## Identidade por login + historico permanente de verdade (v1.8.39)
 
 ### O caso (30/set/2026)
 Dois funcionarios usaram o mesmo PC (logins diferentes); depois cada um foi para o seu PC, mas o MB Chat
@@ -1780,6 +1780,25 @@ reinjetados um a um (sem checagem de dono, limpeza antiga, merge sem checar onli
 mutavel, eco sem conflito, dedup antiga do gui.py) -- todos reprovam. Gate completo igual ao baseline +
 o teste novo (no Linux, `test_window_reveal` falha por ambiente antes e depois: precisa de Win32).
 
+**Ponta a ponta com o app REAL em PCs separados (antes do release da v1.8.39).** 4 "PCs" Linux isolados
+(network namespace: IP 192.168.77.x, hostname, login e pasta de dados proprios em cada um; broadcast e
+multicast de verdade entre eles), o `LanMessengerApp` inteiro em cada PC e as mensagens digitadas na caixa
+do chat. Historico criado na 1.8.38 (Pedro conversa com a Ana no PC compartilhado); depois a pasta do Pedro
+vai para o PC dele e, por engano, para o perfil do Gustavo em outro PC (o caso real).
+- **Todos na 1.8.38 (bug reproduzido):** os dois anunciam o mesmo ID. A Ana ve 1 contato so ("Gustavo
+  Lima"; o Pedro some), as 4 mensagens dela "para o Pedro" caem no PC do Gustavo e o que o Gustavo manda
+  fica gravado como do Pedro. Pedro e Gustavo nao se veem.
+- **Todos na versao nova, 2 boots seguidos:** o Gustavo ganha ID proprio no 1o boot e mantem no 2o; o Pedro
+  mantem o dele. A Ana ve os dois com o nome certo, sem alternar. 6 mensagens cruzadas (Ana, Pedro e Gustavo
+  entre si) chegam so no PC certo, gravadas com o ID de quem mandou. Nenhuma mensagem anterior perdida ou
+  alterada nos 3 bancos; no do Gustavo, 0 mensagens antigas com o ID do Pedro. Diagnostico sem
+  PROBLEMA/ATENCAO e sem faixa nos 3 (no do Gustavo: INFO "este PC trocou de ID").
+- **So o Gustavo atualizado** (Pedro e Ana ainda na 1.8.38): ja resolve. A Ana (1.8.38) ve os dois e as
+  mensagens chegam no PC certo -- a correcao e no PC de quem estava com a pasta copiada.
+- **Gustavo ainda na 1.8.38** (Pedro e Ana atualizados): o Pedro ve a faixa amarela "O PC PC-B esta usando
+  o seu ID do MB Chat (um de voces some da lista). Atualize o MB Chat dele." e o achado no Diagnostico; a
+  Ana continua vendo 1 contato ate o Gustavo atualizar.
+
 ### Caso Pedro x Gustavo depois do release
 Nada a fazer no PC do Pedro. O PC do Gustavo atualiza sozinho; na 1a abertura da versao nova ele ganha ID
 proprio e aparece para todos (mesmo com os dois online). Nos PCs dos colegas, o ID antigo dele (do PC
@@ -1788,7 +1807,7 @@ separar: mensagens trocadas com ele enquanto usava o ID do Pedro ficam no contat
 ele entrou com o ID do Pedro continuam com o Pedro (re-adicionar o Gustavo); o banco dele e copia do do
 Pedro (conversas antigas do Pedro continuam no PC dele).
 
-## Diagnostico de rede: verificacao automatica (pos-v1.8.38, SEM release ainda)
+## Diagnostico de rede: verificacao automatica (v1.8.39)
 
 **Ferramentas > Diagnostico de rede** abre com **"=== VERIFICACAO AUTOMATICA ==="** no topo: cada problema
 conhecido vira um achado `[PROBLEMA]` (vermelho) / `[ATENCAO]` (laranja) / `[INFO]` (azul) / `[OK]` (verde),
