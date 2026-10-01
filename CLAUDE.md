@@ -1450,6 +1450,29 @@ como um colega responde, ~1.170 mensagens TCP com emoji/link/codigo e "digitando
   dados temporaria. `--repo` mede outra versao (`git archive vX | tar -x -C pasta`),
   `--close-at` fecha os chats no meio. Precisa de `pip install psutil` (so a ferramenta).
 
+**Medido no Windows de verdade antes do release da v1.8.39** (workflow `ram-soak`, app pelo codigo fonte,
+Python 3.14). "Gerenciador de Tarefas" = coluna Memoria (conjunto de trabalho privado, `uss` no json);
+"bytes privados" (`private`) = tudo que o app alocou, inclusive o que o Windows tirou da RAM -- e o numero
+que denuncia vazamento, porque o Windows apara o conjunto de trabalho e o Gerenciador "desce" sozinho.
+
+| Cenario | Gerenciador de Tarefas (fim / pico) | Bytes privados (inicio -> fim) |
+|---|---|---|
+| dia, 1.8.39, Windows 11 (2025) | 49 / 80 MB | 61 -> 77 MB |
+| dia, 1.8.39, Windows 10 (2022) | 50 / 76 MB | 59 -> 79 MB |
+| dia, 1.8.38, Windows 11 | 222 / 286 MB | 78 -> **961 MB** (+100 MB a cada 2 min) |
+| extremo, 1.8.39, Windows 11 | 64 / 88 MB | 60 -> 96 MB |
+| extremo, 1.8.38, Windows 11 | 239 / 350 MB | 76 -> 547 MB |
+
+`dia` = 18 min (~9 h de anuncios de 30 colegas), 3 conversas no ritmo de gente + um colega qualquer a cada
+90s: 546 mensagens, 13-15 janelas de chat abertas no fim. `extremo` = o soak de 8 min acima (1.144
+mensagens, 30 janelas). Em todos, mensagens gravadas no banco = enviadas (546/546, 1.144/1.144); syncs
+de reuniao 120 na 1.8.39 x 48.350 na 1.8.38. No Linux (Xvfb), perfil dia: RSS 66 -> 97 MB, USS 58 -> 89
+MB. O que ainda sobe na 1.8.39 e o conteudo das janelas de chat abertas (fechar a janela libera).
+- `ram-soak` roda sozinho em push para `claude/**` que mexe em `tools/soak/` e manual em Actions >
+  ram-soak > Run workflow (`base_tag` = release das maquinas). Resultado no resumo do run e nos artefatos.
+- Local: `python tools/soak/run_soak.py 1080 --perfil dia [--repo PASTA]`; no fim imprime `RESUMO` (memoria
+  na abertura x fim/pico e mensagens enviadas x gravadas).
+
 ### Testes
 
 `tests/test_memory_leak_fixes.py` (30 checks): 5000 threads curtas via `_safe` (todos

@@ -1,4 +1,4 @@
-# MB Chat - Funcionalidades (v1.8.35)
+# MB Chat - Funcionalidades (v1.8.39)
 
 ## Mensagens
 - Mensagens individuais com emojis coloridos (PIL + seguiemj.ttf)
