@@ -136,6 +136,23 @@ Tabelas:
 
 Thread-safety: threading.local() para conexao por thread, PRAGMA journal_mode=WAL.
 
+Pos-v1.8.38: `contacts.last_announce_at` (ultima vez que o peer se anunciou de verdade) e
+`_rename_user_id_everywhere` cobrindo todas as tabelas com ID de usuario (mensagens, arquivos, grupos,
+enquetes, reacoes, lembretes, reunioes, bloqueio).
+
+### identity.py (pos-v1.8.38) - Identidade (funcoes puras)
+
+`uid_belongs_to(uid, login)`, `uid_hostname(uid, login)`, `uid_login(uid)`, `login_scope()`. O user_id e
+`<mac>_<hostname>_<login>`; o login no final diz de quem e o ID. Usado pelo boot (`_ensure_identity_owner`),
+pela juncao de historico da mesma pessoa (`_merge_previous_identities`), pelo nome de ultimo recurso no
+historico (`find_user_name`) e pelo diagnostico.
+
+### diagnostics.py (pos-v1.8.38) - Diagnostico de rede (funcao pura)
+
+`build_findings(foto)` -> achados (nivel, causa, o que fazer, texto de faixa); `banner_finding` escolhe o da
+faixa da janela principal; `build_report` monta o texto da janela. A foto vem de
+`Messenger.get_diagnostic_snapshot(full)`.
+
 ### create_icon.py (~35 linhas) - Gerador de Icone
 
 Gera mbchat.ico a partir de mbchat_icon.png (1024x1024 em assets/):

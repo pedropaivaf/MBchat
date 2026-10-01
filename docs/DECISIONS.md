@@ -371,3 +371,29 @@ Tudo isso vale a partir da versao que o traz: o salto a partir da 1.8.38 roda o 
 (app reaberto como admin ate reiniciar; falha deixa o app fechado ate clicar no icone -- nada
 quebra). Cobertura: `tests/test_update_failure_reopen.py`, `tests/test_update_api_budget.py` e os
 cenarios `next-update*` do `installer-e2e`.
+
+## Identidade = login do Windows; historico de ID antigo so junta apos 7 dias (pos-v1.8.38)
+
+O user_id e criado uma vez e gravado no banco do perfil, entao acompanha a PASTA `.mbchat`, nao o PC. Caso
+real: a pasta de um funcionario foi parar no perfil de outro e os dois anunciavam o mesmo ID -- cada PC
+descartava o outro como eco e, para a rede, viravam um contato so. Decisoes:
+
+- **Dono do ID = login no final do ID** (`identity.uid_belongs_to`). No boot, ID que nao e do login atual
+  vira ID proprio (`_ensure_identity_owner`), com o banco local renomeado. Comparar so o login (nao MAC nem
+  hostname): MAC muda entre Wi-Fi e cabo, e trocar de PC levando a pasta e legitimo.
+- **Juntar historico da mesma pessoa** so com o login de DENTRO do ID (o campo `winuser` do contato e
+  mutavel -- no conflito ele alternou entre as duas pessoas e teria mandado o historico de uma para a outra),
+  conta de dominio (conta local "Usuario"/"Admin" pode ser outra pessoa: so no mesmo PC), ID antigo offline
+  e **7 dias** sem se anunciar. Prazo longo de proposito: quem usa a sala de reuniao por umas horas com o
+  proprio PC desligado nao pode ter o historico movido. `contacts.last_announce_at` existe porque o
+  `last_seen` e reescrito para "agora" em todos os contatos a cada boot.
+- **Nunca apagar contato nem mensagem por contato ausente**: contato e o "livro de nomes" do historico.
+
+## Diagnostico de rede: uma regra so para janela e faixa (pos-v1.8.38)
+
+A faixa da janela principal tinha a propria cadeia de `if/elif/else` e acumulou bugs (faixa vermelha
+escondida no mesmo ciclo; cor que nao mudava). A janela de diagnostico so mostrava numeros e deixava a
+interpretacao para quem le. Agora `diagnostics.build_findings` (funcao pura, testavel sem Tk) e a unica regra:
+a janela mostra todos os achados com "O que fazer"; a faixa mostra o mais grave que tem texto de faixa.
+Achados que dependem de outra pessoa agir (colega sem aviso, nome repetido, status Offline) ficam so na
+janela -- faixa e para o que este PC precisa resolver ou precisa saber ja.

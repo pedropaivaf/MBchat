@@ -15,6 +15,8 @@ gui.py -> messenger.py -> network.py / database.py
 - **messenger.py** (~360 linhas) - Controller (orquestra rede + banco + GUI via callbacks, grupos)
 - **network.py** (~730 linhas) - Rede (UDP discovery multicast/broadcast + TCP messaging + file transfer)
 - **database.py** (~290 linhas) - SQLite local (WAL mode, threading.local)
+- **identity.py** - Funcoes puras de identidade: de quem e o user_id (login do Windows no final), hostname/login de dentro do ID, conta de dominio x local
+- **diagnostics.py** - Funcao pura do Diagnostico de rede: foto do app -> achados (problema, causa, o que fazer) + texto da janela; a mesma regra alimenta a faixa da janela principal
 - **version.py** - APP_VERSION (fonte unica de verdade)
 - **updater.py** - Auto-update via GitHub Releases
 - **build.py** - Build interativo (PyInstaller --onedir + Inno Setup + GitHub Release)
@@ -172,6 +174,10 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    - **AMARELO** se uptime>30s, pacotes enviados>0, mas zero recebidos (firewall inbound bloqueado)
    - **AMARELO** se uptime>60s, multicast nao joinado e nenhum peer (rede filtrando)
    - Nos PCs saudaveis o banner NUNCA aparece (condicionais sao `and not healthy`).
+   - **Atualizado (pos-v1.8.38):** a decisao saiu daqui e foi para `diagnostics.build_findings` +
+     `banner_finding` (mesma regra da janela de Diagnostico). Entrou a faixa de **ID repetido**. Dois bugs
+     antigos corrigidos: a faixa VERMELHA da porta ocupada era escondida no mesmo ciclo pelo `else` da cadeia
+     de avisos, e faixa ja aberta nao mudava de cor ao mudar a gravidade. Ver secao "Diagnostico de rede".
 
 4. **Auto-fix de firewall via UAC** (primeira execucao pos-update). `_check_firewall_on_startup`
    roda 4s apos o _deferred_init, em thread background, so em build frozen. Chama
@@ -188,6 +194,8 @@ Tres camadas foram adicionadas para tornar falhas de discovery visiveis e auto-r
    health dict formatado, lista de peers conhecidos, ultimas 60 linhas do `network.log`,
    botoes **Copiar tudo** (clipboard), **Atualizar**, **Fechar**. Reusa `_center_window` e
    `_apply_rounded_corners`.
+   **Atualizado (pos-v1.8.38):** abre com a "Verificacao automatica" no topo -- ver secao "Diagnostico de
+   rede: verificacao automatica".
 
 6. **tools/fix_firewall.bat** — Script standalone para casos extremos: executa como admin,
    deleta todas as regras MBChat, recria Allow Inbound por porta, reinicia o MBChat.
@@ -1267,6 +1275,7 @@ obrigado a dizer "nao".** Agora existe um so, rodado em dois lugares.
 
 1. **Sintaxe** — `ast.parse` em todo `.py` da raiz, `tools/` e `tests/`.
 2. **Imports** — `gui, messenger, network, database, updater, version, audio_recorder`.
+   (pos-v1.8.38: tambem `identity` e `diagnostics`; os dois estao em `build.py --hidden-import`.)
 3. **Suites de teste** — TODAS as `tests/test_*.py`, exit 0 obrigatorio (timeout 180s cada).
 4. **Invariantes de janela** (a regressao da .37) — `_center_window` nao pode usar
    `winfo_rootx/rooty` (posicao do pai como origem → janela cola na root) nem
@@ -1663,3 +1672,48 @@ compartilhado, se existia) volta a ter o historico 7 dias apos cada colega atual
 separar: mensagens trocadas com ele enquanto usava o ID do Pedro ficam no contato do Pedro; grupos em que
 ele entrou com o ID do Pedro continuam com o Pedro (re-adicionar o Gustavo); o banco dele e copia do do
 Pedro (conversas antigas do Pedro continuam no PC dele).
+
+## Diagnostico de rede: verificacao automatica (pos-v1.8.38, SEM release ainda)
+
+**Ferramentas > Diagnostico de rede** abre com **"=== VERIFICACAO AUTOMATICA ==="** no topo: cada problema
+conhecido vira um achado `[PROBLEMA]` (vermelho) / `[ATENCAO]` (laranja) / `[INFO]` (azul) / `[OK]` (verde),
+com a causa e **"O que fazer"**. Abaixo, os dados crus: identidade, rede, colegas (com versao e login) e o
+final do `network.log`. "Copiar tudo" leva tudo em texto.
+
+Arquitetura: `Messenger.get_diagnostic_snapshot(full=True)` tira uma foto (so leituras) ->
+`diagnostics.build_findings(foto)` (funcao PURA, sem Tk/rede/banco) -> `build_report` monta o texto. A faixa
+da janela principal (`_update_health_banner`, a cada 30s) usa a MESMA regra com `full=False` (sem placas de
+rede nem contatos do banco -- nenhum achado com faixa precisa) e `banner_finding` (o mais grave com faixa;
+vermelho sempre ganha). Uma regra so -- nunca duas versoes divergentes.
+
+| Codigo | Nivel | Quando | Faixa? |
+|---|---|---|---|
+| `BIND_FALLBACK` | PROBLEMA | porta UDP 50100 ocupada | vermelha |
+| `UID_CONFLICT_OTHER` | PROBLEMA | OUTRO PC/login anuncia o MEU ID ("O PC X (login Y) esta usando o SEU ID"), com IP, versao e quem precisa agir | amarela |
+| `OWN_UID_TCP` | PROBLEMA | chegaram mensagens com o MEU ID de outro IP (descartadas como eco) | -- |
+| `UID_NOT_MINE` | PROBLEMA | ID gravado nao e deste login (nao deveria sobrar apos o boot) | -- |
+| `UID_CONFLICT_SAME_LOGIN` | ATENCAO | a minha conta aberta em outro PC com o MESMO ID | amarela |
+| `VPN_STUCK` / `NO_PACKETS_IN` / `MULTICAST_NO_PEERS` | ATENCAO | mesmas condicoes e textos da faixa antiga | amarela |
+| `SENDTO_ERRORS` | ATENCAO | Windows recusou envios do aviso (antivirus na saida / placa caiu) | -- |
+| `WRONG_ADAPTER` | ATENCAO | IP usado fora da rede /24 da maioria dos colegas (>=2), sem VPN: aviso indo pela placa errada | -- |
+| `STATUS_INVISIBLE` | ATENCAO | status "Offline" (`invisible`): some da lista de todos | -- |
+| `TCP_BUT_NOT_LISTED` | ATENCAO | alguem mandou mensagem nos ultimos 30 min mas NAO esta na lista (aviso UDP dele se perde) -- o sintoma do caso Pedro x Gustavo visto de qualquer PC | -- |
+| `SAME_NAME` | ATENCAO | 2 pessoas diferentes online com o mesmo nome | -- |
+| `SAME_PERSON_TWO_PCS` | INFO | mesma conta online em 2 PCs com IDs diferentes | -- |
+| `OLD_ID_PENDING` / `OLD_ID_NO_MERGE` | INFO | ID antigo da mesma pessoa: junta em ~N dias / nao junta (conta local em outro PC) | -- |
+| `MERGED` / `ID_CHANGED` | INFO | historico juntado nesta sessao / este PC trocou de ID no boot (e de quem era o banco) | -- |
+| `MULTI_ADAPTER` / `OLD_VERSIONS` | INFO | varias placas com IP / colegas em versao anterior | -- |
+| `OK` | OK | nenhum PROBLEMA/ATENCAO | -- |
+
+Evidencias novas coletadas so em memoria (zero custo no caminho feliz): `health['uid_conflict_sources']`
+(network, por PC de origem do conflito), `_tcp_recent` (ultima mensagem TCP por remetente) e `_own_uid_tcp`
+(TCP com o meu ID vindo de outro IP; loopback e IPs deste PC nao contam) -- os dois ultimos sao funcoes do
+modulo `messenger` (`_note_tcp_sender`, `_note_own_uid_tcp`) e nao metodos, porque testes antigos chamam
+`Messenger._on_tcp_message` com objetos simulados. `_identity_merges` (historicos juntados na sessao) e
+`identity_changed_at` (setting, quando o boot trocou o ID).
+
+Teste: `tests/test_diagnostics.py` (69 checks): cada achado, ordem de gravidade, faixa (inclusive os 2 bugs
+antigos), texto da janela, evidencias coletadas por um Messenger real e a janela/faixa de verdade no Tk.
+Reinjecoes (sem preferir a vermelha, TCP com meu ID nao contado, faixa que so troca texto, `_update_health_banner`
+antigo) reprovam. `diagnostics.MERGE_MIN_OFFLINE_S` precisa ser igual a `messenger.IDENTITY_MERGE_MIN_OFFLINE_S`
+(o teste confere).
