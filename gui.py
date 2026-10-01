@@ -12484,6 +12484,7 @@ class LanMessengerApp:
             on_aviso=self._safe(self._on_aviso),
         )
         self.messenger.on_reaction = self._safe(self._on_reaction)
+        self.messenger.on_contact_merged = self._safe(self._on_contact_merged)
         self.messenger.start()
         if hasattr(self.messenger, 'discovery'):
             self.messenger.discovery.on_newer_version = self._safe(self._on_newer_version)
@@ -13878,33 +13879,16 @@ class LanMessengerApp:
     def _load_saved_contacts(self):
         contacts = self.messenger.db.get_contacts(online_only=False)  # busca todos do banco
 
-        # Deduplica por display_name: mantém apenas o registro mais recente (last_seen)
-        seen_names = {}   # display_name -> (uid, last_seen)
-        stale_uids = set()
-        for c in contacts:
-            uid = c['user_id']
-            if uid == self.messenger.user_id:
-                continue
-            name = c.get('display_name', 'Unknown')
-            last_seen = c.get('last_seen', 0) or 0
-            if name in seen_names:
-                prev_uid, prev_ls = seen_names[name]
-                if last_seen > prev_ls:
-                    stale_uids.add(prev_uid)
-                    seen_names[name] = (uid, last_seen)
-                else:
-                    stale_uids.add(uid)
-            else:
-                seen_names[name] = (uid, last_seen)
-        # Remove registros obsoletos do banco
-        for stale_uid in stale_uids:
-            self.messenger.db.delete_contact(stale_uid)
-
+        # NUNCA apagar contato aqui (nem "duplicado" de nome). Havia uma
+        # deduplicacao por display_name que apagava do banco um dos contatos
+        # com o mesmo nome -- escolhido quase ao acaso, porque o last_seen de
+        # todos e reescrito no boot -- e no boot seguinte a limpeza apagava
+        # TODAS as mensagens desse contato. Nome repetido e normal: a mesma
+        # pessoa com ID antigo + novo, ou duas pessoas com o mesmo nome.
+        # Offline nao aparece na lista mesmo, entao nao ha o que esconder.
         for c in contacts:
             uid = c['user_id']
             if uid == self.messenger.user_id:  # pula o proprio usuario
-                continue
-            if uid in stale_uids:  # registro obsoleto (duplicata antiga)
                 continue
             if uid in self.peer_items:  # ja esta no TreeView (peer ativo)? pula
                 continue
@@ -19296,6 +19280,17 @@ class LanMessengerApp:
             txt.insert('end', f'Packets received: {health.get("packets_received")}\n')
             txt.insert('end', f'Sendto errors:    {health.get("sendto_errors")}\n')
             txt.insert('end', f'Peers conhecidos: {health.get("peers_count")}\n')
+            n_conf = health.get('uid_conflicts') or 0
+            txt.insert('end', f'Conflitos de ID:  {n_conf}')
+            last_conf = health.get('uid_conflict_last') or {}
+            if n_conf and last_conf:
+                txt.insert('end',
+                           f'  <-- OUTRO PC USA O MEU ID: {last_conf.get("hostname", "?")} '
+                           f'(login {last_conf.get("winuser") or "?"}, '
+                           f'IP {last_conf.get("ip", "?")}, '
+                           f'v{last_conf.get("version") or "?"})\n')
+            else:
+                txt.insert('end', '\n')
             if health.get('bind_errors'):
                 txt.insert('end', '\nBind errors:\n')
                 for p, e in health['bind_errors']:
@@ -19991,6 +19986,25 @@ class LanMessengerApp:
     # Move o contato para a secao Offline no TreeView via _remove_contact().
     def _on_user_lost(self, uid, info):
         self._remove_contact(uid)  # move para secao Offline no TreeView
+
+    # Callback: o historico de um ID antigo da MESMA pessoa (mesmo login, PC
+    # novo) foi juntado no ID atual (Messenger._merge_previous_identities).
+    # O ID antigo sai da lista; chat aberto com ele passa a falar com o novo.
+    def _on_contact_merged(self, old_uid, new_uid):
+        iid = self.peer_items.pop(old_uid, None)
+        if iid is not None:
+            try:
+                self.tree.delete(iid)
+            except Exception:
+                pass
+        self.peer_info.pop(old_uid, None)
+        self._contact_render_cache.pop(old_uid, None)
+        cw = self.chat_windows.get(old_uid)
+        if cw is not None and new_uid not in self.chat_windows:
+            self.chat_windows.pop(old_uid, None)
+            cw.peer_id = new_uid
+            self.chat_windows[new_uid] = cw
+        self._update_general_visibility()
 
     def _on_peer_status(self, uid, new_status):
         if uid in self.peer_info:

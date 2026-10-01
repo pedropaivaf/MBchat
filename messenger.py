@@ -21,7 +21,8 @@ import base64     # Codificacao de imagens para envio via TCP
 # Importa componentes de rede e constantes
 from network import (
     UDPDiscovery, TCPServer, TCPClient, FileSender, FileReceiver,
-    generate_user_id, get_local_ip, get_machine_info,
+    generate_user_id, get_local_ip, get_machine_info, get_windows_user,
+    _log as _net_log,
     MT_ANNOUNCE, MT_DEPART, MT_MESSAGE, MT_FILE_REQ, MT_FILE_ACC,
     MT_FILE_DEC, MT_FILE_CANCEL, MT_STATUS, MT_TYPING, MT_ACK, MT_REACTION,
     MT_GROUP_INV, MT_GROUP_MSG, MT_GROUP_LEAVE, MT_GROUP_JOIN, MT_GROUP_KICK,
@@ -35,6 +36,7 @@ from network import (
     TCP_PORT
 )
 from database import Database  # Banco de dados local
+from identity import uid_belongs_to, uid_hostname  # Dono do user_id (login do Windows)
 
 # Enquanto o peer segue online, o last_seen do contato no banco e renovado no
 # maximo a cada CONTACT_LAST_SEEN_REFRESH_S (qualquer outro campo que mude --
@@ -43,6 +45,15 @@ CONTACT_LAST_SEEN_REFRESH_S = 60
 # Sync de reunioes com um peer: ao (re)conectar e, enquanto ele segue online,
 # no maximo a cada MEETING_SYNC_INTERVAL_S.
 MEETING_SYNC_INTERVAL_S = 300
+# Mesma pessoa (mesmo login) aparecendo com outro user_id (PC novo sem copiar a
+# pasta .mbchat): o historico do ID antigo passa para o novo so depois que o
+# antigo ficou IDENTITY_MERGE_MIN_OFFLINE_S sem se anunciar. Prazo longo de
+# proposito: quem usa outro PC por umas horas (sala de reuniao, PC do colega)
+# com o PC dele desligado NAO pode ter o historico movido para la.
+IDENTITY_MERGE_MIN_OFFLINE_S = 7 * 86400
+# A checagem acima roda no 1o announce de cada peer na sessao e, depois, no
+# maximo a cada IDENTITY_RECHECK_S (app aberto por dias seguidos).
+IDENTITY_RECHECK_S = 6 * 3600
 
 
 # Controller principal do MB Chat
@@ -88,6 +99,8 @@ class Messenger:
         self._file_senders = {}  # file_id -> FileSender (envios ativos)
         self._file_receiver = None  # FileReceiver (receptor de arquivos)
         self._meeting_sync_at = {}  # uid -> (ip, time.time()) do ultimo sync de reunioes
+        self._identity_check_at = {}  # uid -> ultima checagem de ID antigo da mesma pessoa
+        self.on_contact_merged = None  # Callback(old_uid, new_uid): historico juntado na mesma pessoa
 
         # === Callbacks para notificar a GUI ===
         self.on_user_found = on_user_found      # Peer encontrado
@@ -146,6 +159,14 @@ class Messenger:
         if instance_name:
             if not self.user_id.endswith(f"_{instance_name}"):
                 self.user_id += f"_{instance_name}"
+        else:
+            # O ID gravado precisa ser DESTE login do Windows (ver metodo)
+            self._ensure_identity_owner()
+
+        # Marco de quando este PC passou a registrar last_announce_at: contato
+        # sem esse dado so conta como "parado" depois do prazo a partir daqui
+        if not self.db.get_setting('identity_tracking_since', ''):
+            self.db.set_setting('identity_tracking_since', str(time.time()))
 
         # Migracao: usuarios pre-1.4.60 tem user_id no formato mac_host
         # (sem winuser). Renomeia tudo para o formato novo para que historico,
@@ -298,6 +319,11 @@ class Messenger:
         self._persist_announced_contact(uid, info)
         if self.db.is_blocked(uid):
             return  # Computador bloqueado: nao aparece na GUI nem sincroniza
+        # Mesma pessoa com outro ID (PC novo): traz o historico do ID antigo
+        try:
+            self._merge_previous_identities(uid, info)
+        except Exception as e:
+            _net_log().warning('[ID] juntar historico de %s falhou: %s', uid, e)
         if self.on_user_found:
             self.on_user_found(uid, info)  # Notifica GUI
         # Sync de reuniões ao reconectar peer
@@ -306,6 +332,114 @@ class Messenger:
             threading.Thread(
                 target=lambda ip=peer_ip: self.sync_meetings_with_peer(ip),
                 daemon=True).start()
+
+    # O ID gravado no banco precisa ser DESTE login do Windows (o user_id
+    # termina com o login de quem o criou). Se nao for, a pasta .mbchat veio de
+    # outro perfil (backup restaurado, perfil copiado, migracao de PC) e esta
+    # instalacao estava se passando pela outra pessoa: os dois PCs anunciam o
+    # mesmo ID, cada um descarta o outro como eco e, para o resto da rede, os
+    # dois viram UM contato so -- um deles some da lista de todo mundo.
+    # Gera o ID deste login e passa para ele o historico DESTE banco (o que a
+    # pessoa ja via continua aparecendo igual). O dono original nao muda nada.
+    # Troca de PC com o mesmo login (pasta levada junto) NAO cai aqui: o login
+    # bate e o ID -- e o historico de todo mundo com ele -- continua o mesmo.
+    def _ensure_identity_owner(self):
+        login = get_windows_user()
+        old = self.user_id
+        if not login or uid_belongs_to(old, login):
+            return
+        new = generate_user_id()
+        if not new or new == old or not uid_belongs_to(new, login):
+            return
+        self.db._rename_user_id_everywhere(old, new)
+        self.user_id = new
+        try:
+            self.db.set_setting('identity_previous_uid', old)
+        except Exception:
+            pass
+        _net_log().warning(
+            '[ID] o banco deste perfil usava o user_id %s, que nao e do login %s '
+            '(pasta .mbchat de outra conta). Novo user_id: %s (historico local mantido)',
+            old, login, new)
+
+    # Mesma pessoa (mesmo login do Windows) aparecendo com OUTRO user_id -- PC
+    # novo sem levar a pasta .mbchat. Sem isto o historico com ela ficava no
+    # contato antigo (offline para sempre) e o novo comecava vazio.
+    # Junta o ID antigo no novo SO se todas as condicoes valerem:
+    #  - o ID novo e mesmo dela (termina com o login que ela anuncia) -- ID de
+    #    banco copiado de outra pessoa nunca puxa historico de ninguem;
+    #  - o antigo tambem termina com esse login (o login de dentro do ID, que
+    #    nao muda; o campo winuser do contato muda a cada announce e, num
+    #    conflito de ID, chegou a alternar entre duas pessoas);
+    #  - conta de dominio (mesmo login = mesma pessoa em qualquer PC). Conta
+    #    local ("Usuario", "Admin") so junta se for o mesmo PC;
+    #  - o antigo nao esta online e esta sem se anunciar ha 7 dias (usar outro
+    #    PC por umas horas com o seu desligado nao move nada);
+    #  - nunca o meu proprio ID.
+    # Se a pessoa voltar a usar o PC antigo e largar o novo, a mesma regra
+    # devolve tudo depois do prazo. Nada e apagado: mensagens so trocam de ID.
+    def _merge_previous_identities(self, uid, info):
+        now = time.time()
+        if now - self._identity_check_at.get(uid, 0) < IDENTITY_RECHECK_S:
+            return
+        self._identity_check_at[uid] = now
+        login = (info.get('winuser') or '').strip()
+        if not login or uid == self.user_id or not uid_belongs_to(uid, login):
+            return
+        same_pc_only = info.get('login_scope', '') != 'domain'
+        host = (info.get('hostname') or '').strip().lower()
+        try:
+            since = float(self.db.get_setting('identity_tracking_since', '') or now)
+        except (TypeError, ValueError):
+            since = now
+        discovery = getattr(self, 'discovery', None)
+        if discovery is not None:
+            with discovery._lock:
+                online = set(discovery.peers.keys())
+        else:
+            online = set()
+        merged = []
+        for c in self.db.get_contacts():
+            old = c.get('user_id') or ''
+            if not old or old in (uid, self.user_id) or old in online:
+                continue
+            if not uid_belongs_to(old, login):
+                continue
+            if same_pc_only and uid_hostname(old, login).lower() != host:
+                continue
+            last = c.get('last_announce_at') or since
+            if now - last < IDENTITY_MERGE_MIN_OFFLINE_S:
+                continue
+            self.db._rename_user_id_everywhere(old, uid)
+            self._rename_uid_in_groups(old, uid)
+            merged.append(old)
+            _net_log().warning(
+                '[ID] mesma pessoa (login %s) com ID novo: historico de %s '
+                'juntado em %s (antigo parado ha %.0f dias)',
+                login, old, uid, (now - last) / 86400)
+        if merged and self.on_contact_merged:
+            for old in merged:
+                self.on_contact_merged(old, uid)
+
+    # Troca o user_id nos grupos em memoria (o banco ja foi trocado por
+    # _rename_user_id_everywhere). Sem isto, ate reiniciar, mensagem de grupo
+    # ia para o ID antigo, que nao esta mais na rede.
+    def _rename_uid_in_groups(self, old_uid, new_uid):
+        for g in list(self._groups.values()):
+            members = g.get('members', [])
+            has_new = any(m.get('uid') == new_uid for m in members)
+            if has_new:
+                g['members'] = [m for m in members if m.get('uid') != old_uid]
+            else:
+                for m in members:
+                    if m.get('uid') == old_uid:
+                        m['uid'] = new_uid
+            admins = g.get('admins')
+            if admins and old_uid in admins:
+                g['admins'] = [new_uid if a == old_uid else a for a in admins]
+                g['admins'] = list(dict.fromkeys(g['admins']))
+            if g.get('creator_uid') == old_uid:
+                g['creator_uid'] = new_uid
 
     # Grava no banco os dados de um announce. Cada peer anuncia a cada 15s (as
     # vezes em dobro: multicast + broadcast) e antes cada announce fazia 2-3
@@ -333,6 +467,7 @@ class Messenger:
                 and (not dept or row.get('department') == dept)
                 and row.get('ramal') == ramal
                 and time.time() - (row.get('last_seen') or 0) < CONTACT_LAST_SEEN_REFRESH_S
+                and time.time() - (row.get('last_announce_at') or 0) < CONTACT_LAST_SEEN_REFRESH_S
             )
             if unchanged:
                 return
@@ -346,7 +481,8 @@ class Messenger:
                 avatar_index=info.get('avatar_index', 0),
                 avatar_data=info.get('avatar_data', ''),
                 winuser=winuser,
-                commit=False
+                commit=False,
+                announced=True
             )
             if dept:
                 self.db.set_contact_department(uid, dept, commit=False)
@@ -581,9 +717,11 @@ class Messenger:
         # --- Mudanca de status ---
         elif msg_type == MT_STATUS:
             new_status = msg.get('status', 'online')
-            self.db.upsert_contact(
-                from_user, msg.get('display_name', ''),
-                addr[0], status=new_status)
+            # Sem nome no pacote, mantem o nome salvo: contato gravado com nome
+            # vazio e tratado como fantasma pela limpeza do boot
+            name = msg.get('display_name', '') or self.db.find_user_name(from_user) or ''
+            if name:
+                self.db.upsert_contact(from_user, name, addr[0], status=new_status)
             if self.on_status:
                 self.on_status(from_user, new_status)
 

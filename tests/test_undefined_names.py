@@ -63,7 +63,8 @@ def check(cond, msg, detail=''):
 # 1 — Guarda geral de nomes inexistentes
 # ─────────────────────────────────────────────
 MODULES = ['gui.py', 'messenger.py', 'network.py', 'database.py', 'updater.py',
-           'audio_recorder.py', 'meeting_gui.py', 'tools/theme_builder.py']
+           'audio_recorder.py', 'meeting_gui.py', 'tools/theme_builder.py',
+           'identity.py']
 
 # Conhecidos e aceitos (com motivo). Nao acrescentar sem motivo real.
 ALLOWED = {

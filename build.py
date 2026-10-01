@@ -135,6 +135,7 @@ def _do_build():
         '--hidden-import=messenger',
         '--hidden-import=network',
         '--hidden-import=database',
+        '--hidden-import=identity',
         '--hidden-import=updater',
         '--hidden-import=version',
         '--hidden-import=winotify',
