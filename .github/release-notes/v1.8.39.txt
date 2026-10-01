@@ -1,0 +1,5 @@
+App mais leve: a memoria nao sobe mais com o passar do dia
+Colega que trocou de PC nao some mais da lista nem recebe mensagem trocada
+Historico nunca mais perde mensagens e a busca acha acentos e maiusculas
+Diagnostico de rede mostra o problema e o que fazer
+Atualizacao mais segura: sem erro de Python DLL e o app reabre sozinho

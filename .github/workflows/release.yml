@@ -8,10 +8,13 @@
 #   3. o pacote REAL e testado no Windows 10 e 11: a base instalada se atualiza
 #      sozinha para ele (com e sem admin), o setup novo por cima com o app aberto,
 #      o assistente clicado e o instalador web novo.
-# Publica de dois jeitos: Run workflow na main com "publicar = sim" (notas no campo
-# "notas"), ou push da tag anotada vX.Y.Z no commit da main (notas = mensagem da tag;
-# a tag tem que bater com o version.py). Push em claude/** que mexe neste arquivo faz
-# so o ensaio (build + paridade + testes), sem publicar nada.
+# Publica de tres jeitos (sempre no commit que e o HEAD da main):
+#   - Run workflow na main com "publicar = sim" (notas no campo "notas");
+#   - push da tag anotada vX.Y.Z (notas = mensagem da tag; tag = version.py);
+#   - push na main de um commit com "[publicar]" na mensagem que traz
+#     .github/release-notes/vX.Y.Z.txt (as 5 linhas do sino; X.Y.Z = version.py).
+# Push em claude/** que mexe neste arquivo, na paridade ou nas notas faz so o ensaio
+# (build + paridade + testes), sem publicar nada.
 
 name: release
 
@@ -28,10 +31,10 @@ on:
         description: 'Release que esta nas maquinas'
         default: 'v1.8.38'
   push:
-    branches: ['claude/**']
+    branches: ['claude/**', main]
     # paths nao vale para tag: toda tag v* dispara (e publica, se passar nas travas)
     tags: ['v*']
-    paths: ['.github/workflows/release.yml', 'tools/release_parity.py']
+    paths: ['.github/workflows/release.yml', 'tools/release_parity.py', '.github/release-notes/**']
 
 permissions:
   contents: read
@@ -224,6 +227,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.publicar == 'sim' && github.ref == 'refs/heads/main')
       || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publicar]'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -258,6 +262,11 @@ jobs:
             git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
             msg=$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)')
             NOTAS=$(printf '%s\n' "$msg" | grep -v '^-----BEGIN' | sed '/^\s*$/d' | paste -sd'|')
+            echo "NOTAS_TAG=$NOTAS" >> "$GITHUB_ENV"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            arq=".github/release-notes/v$VER.txt"
+            test -f "$arq" || { echo "falta $arq (notas do sino desta versao)"; exit 1; }
+            NOTAS=$(sed '/^\s*$/d' "$arq" | paste -sd'|')
             echo "NOTAS_TAG=$NOTAS" >> "$GITHUB_ENV"
           fi
           test -n "$(echo "$NOTAS" | tr -d ' |')" || { echo "faltam as notas do sino"; exit 1; }

@@ -1394,12 +1394,13 @@ Para quando nao da para rodar o `build.py` no PC (ex.: sessao na nuvem). Mesmo c
 4. **O pacote REAL testado** no Windows 10 e 11 (`tools/e2e_installer.py`): a base instalada se atualiza
    sozinha para ele (com e sem admin), setup novo por cima com o app aberto, assistente clicado e o
    instalador web novo (com e sem TEMP 8.3).
-5. **Publica** (`build._do_release`) de dois jeitos: **Run workflow na main com `publicar = sim`** e as notas
-   do sino em `notas` (linhas separadas por `|`), ou **push da tag anotada `vX.Y.Z`** no HEAD da main com as
-   notas na mensagem da tag (1 linha por item; a tag tem que bater com o `version.py`). Recusa se o commit
-   buildado nao for o HEAD da main ou se a release ja existe. No fim confere `releases/latest` = versao nova
-   e a tag no commit buildado. A v1.8.39 saiu pela tag (o token da sessao na nuvem nao pode dar Run workflow):
-   `git tag -a v1.8.39 -F notas.txt && git push origin v1.8.39`.
+5. **Publica** (`build._do_release`) de tres jeitos, sempre no commit que e o HEAD da main: **Run workflow na
+   main com `publicar = sim`** e as notas do sino em `notas` (linhas separadas por `|`); **push da tag anotada
+   `vX.Y.Z`** com as notas na mensagem da tag; ou **push na main de um commit com `[publicar]` na mensagem**
+   que traz `.github/release-notes/vX.Y.Z.txt` (1 linha por item do sino). A versao vem do `version.py` e
+   tem que bater com a tag/arquivo. Recusa se o commit buildado nao for o HEAD da main ou se a release ja
+   existe. No fim confere `releases/latest` = versao nova e a tag no commit buildado. A v1.8.39 saiu pelo
+   commit `[publicar]` (a sessao na nuvem nao pode dar Run workflow nem enviar tag).
 
 Push em `claude/**` que mexe no workflow ou em `release_parity.py` roda so o ensaio (sem publicar). A release
 sai como `github-actions[bot]`; o updater e o instalador web so olham `releases/latest`, entao nada muda
